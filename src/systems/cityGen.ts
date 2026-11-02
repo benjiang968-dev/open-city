@@ -68,6 +68,7 @@ export interface CityData {
   // materials the day/night system adjusts
   litWindowMat: THREE.MeshBasicMaterial;
   lampMat: THREE.MeshBasicMaterial;
+  lampPoolMat: THREE.MeshBasicMaterial;
   water: THREE.Mesh;
   waterBase: Float32Array;
   boats: Boat[];
@@ -578,6 +579,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   for (let z = coastZ + 10; z < pierRect.z1; z += 20) lampSpots.push({ x: pierRect.x0 + 0.8, z, ax: 1, az: 0 });
 
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff1c4 });
+  const lampPoolMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
   {
     const poleGeo = new THREE.CylinderGeometry(0.09, 0.12, 6, 6).translate(0, 3, 0);
     const armGeo = new THREE.BoxGeometry(0.08, 0.08, 1.6).translate(0, 5.95, 0.75);
@@ -596,6 +598,26 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       physics.createCollider(R.ColliderDesc.cylinder(3, 0.14).setTranslation(l.x, 3, l.z), staticBody);
     });
     poles.castShadow = true;
+    // pools of light on the ground under each lamp (additive, faded in at night)
+    const tex = document.createElement('canvas');
+    tex.width = tex.height = 64;
+    const tg = tex.getContext('2d')!;
+    const grad = tg.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,220,150,1)');
+    grad.addColorStop(0.5, 'rgba(255,200,120,0.45)');
+    grad.addColorStop(1, 'rgba(255,190,110,0)');
+    tg.fillStyle = grad;
+    tg.fillRect(0, 0, 64, 64);
+    lampPoolMat.map = new THREE.CanvasTexture(tex);
+    const poolGeo = new THREE.PlaneGeometry(13, 13).rotateX(-Math.PI / 2).translate(0, 0.07, 1.6);
+    const pools = new THREE.InstancedMesh(poolGeo, lampPoolMat, lampSpots.length);
+    lampSpots.forEach((l, k) => {
+      m.makeRotationY(Math.atan2(l.ax, l.az)).setPosition(l.x, 0, l.z);
+      pools.setMatrixAt(k, m);
+    });
+    pools.renderOrder = 1;
+    pools.computeBoundingSphere();
+    scene.add(pools);
     for (const im of [poles, arms, heads]) {
       im.computeBoundingSphere();
       scene.add(im);
@@ -742,7 +764,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
 
   return {
     xs, zs, roadHalfX, roadHalfZ, streetNamesX, streetNamesZ, nodes, sideNodes, pois, taxiRanks, parkingSpots,
-    coastZ, bounds, buildingRects, parkRects, pierRect, marinaRects, center, litWindowMat, lampMat, water, waterBase, boats,
+    coastZ, bounds, buildingRects, parkRects, pierRect, marinaRects, center, litWindowMat, lampMat, lampPoolMat, water, waterBase, boats,
     nodeAt,
   };
 

@@ -34,8 +34,10 @@ export class TaxiJob implements JobSystem {
   private beacon: THREE.Group;
   private beaconMat: THREE.MeshBasicMaterial;
   private ringMat: THREE.MeshBasicMaterial;
+  private cam: THREE.Vector3;
 
   constructor(w: World) {
+    this.cam = w.camera.position;
     this.beacon = new THREE.Group();
     this.beaconMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
     this.ringMat = new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide });
@@ -250,7 +252,10 @@ export class TaxiJob implements JobSystem {
     this.beacon.position.set(x, 0, z);
     this.beaconMat.color.setHex(color);
     this.ringMat.color.setHex(color);
-    this.beaconMat.opacity = 0.25 + Math.sin(t * 3) * 0.08;
+    // fade the column when the camera is close so it never washes out the screen
+    const camD = Math.hypot(this.cam.x - x, this.cam.z - z);
+    const fade = Math.min(1, Math.max(0.12, (camD - 6) / 30));
+    this.beaconMat.opacity = (0.25 + Math.sin(t * 3) * 0.08) * fade;
   }
 
   status(w: World): string {

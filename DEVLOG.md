@@ -41,3 +41,9 @@ Format: date · what changed · what to test · known issues.
   - **Escape:** stay unseen for 8–22 s (by star level) to drop a star. Switching cars unseen clears half the timer.
   - **Busted:** stopped next to a police car for 3.5 s costs a 20% fine and releases you at Precinct 4.
   - Scripted tests: got busted when standing still; lost 2 stars about 12 s after hiding in a different car.
+- **Step 9: Polish.**
+  - **Minimap:** rotates with the camera and shows roads, buildings, parks, the pier and marina, taxi ranks, job markers (pinned to the edge when far) and flashing police dots.
+  - **WebAudio (no files):** a 3-oscillator engine with a fake gearbox, band-passed noise tyre screech driven by lateral slip, two-tone horns from traffic and the player (H), crash/hit thuds, a siren that swells with the nearest police car, and a cash chime. M mutes.
+  - **Other:** F3 debug overlay (fps, seed, position, speed/hp/slip, job, heat, clock, entity counts, draw calls); `?seed=` changes the city; player headlight at night; additive light pools under street lamps.
+  - Measured: game logic 1.5 ms/frame; 136 draw calls, 169k triangles.
+  - Known issue: real GPU fps can't be measured headless (SwiftShader). Needs a check on real hardware.

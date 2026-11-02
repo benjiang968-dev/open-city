@@ -310,3 +310,52 @@ export async function bust(page, S) {
     return { s, cashLost: cash0 - w.cash };
   });
 }
+
+export async function debug(page, S) {
+  await S.start(page);
+  await page.keyboard.press('F3');
+  await page.evaluate(() => window.__ocRun(1));
+  await page.waitForTimeout(1500);
+  return page.evaluate(() => document.getElementById('debug').textContent);
+}
+
+// jump the clock to night and look at the lights
+export async function night(page, S) {
+  await S.start(page);
+  await page.evaluate(() => { const w = window.__oc; w.dayNight.hour = 21.5; window.__ocRun(0.5); });
+  await page.waitForTimeout(1500);
+  return page.evaluate(() => window.__oc.dayNight.night);
+}
+
+export async function nightdrive(page, S) {
+  await S.start(page);
+  await page.evaluate(() => {
+    const w = window.__oc; w.dayNight.hour = 22;
+    const v = w.vehicles.find((c) => c.type === 'sedan'); const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+    w.input.keys.add('KeyW'); window.__ocRun(2); w.input.keys.delete('KeyW');
+  });
+  await page.waitForTimeout(1500);
+  return state(page);
+}
+
+export async function perf(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc;
+    // drive around so peds/traffic react
+    const v = w.vehicles.find((c) => c.type === 'sedan'); const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.1);
+    w.police.heat = 120;
+    const t0 = performance.now();
+    window.__ocRun(10, 60);
+    const simMs = (performance.now() - t0) / 600;
+    // water + render-side CPU (without GPU): time updateCity-like work by rendering a few frames
+    const r0 = performance.now();
+    for (let k = 0; k < 20; k++) w.renderer.render(w.scene, w.camera);
+    const renderMs = (performance.now() - r0) / 20;
+    return { simMsPerFrame: +simMs.toFixed(2), swiftshaderRenderMs: +renderMs.toFixed(1), calls: w.renderer.info.render.calls, tris: w.renderer.info.render.triangles };
+  });
+}

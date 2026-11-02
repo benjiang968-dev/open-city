@@ -12,18 +12,19 @@ export interface DayNightState {
   sky: THREE.Mesh;
   skyTop: THREE.Color;
   skyHorizon: THREE.Color;
+  headlight: THREE.SpotLight;
 }
 
 const KEYS: { h: number; top: string; hor: string; sun: number; hemi: number }[] = [
-  { h: 0, top: '#0b1026', hor: '#1c2541', sun: 0.0, hemi: 0.18 },
-  { h: 5, top: '#141b3a', hor: '#3a3a5e', sun: 0.0, hemi: 0.22 },
+  { h: 0, top: '#0b1026', hor: '#1c2541', sun: 0.0, hemi: 0.3 },
+  { h: 5, top: '#141b3a', hor: '#3a3a5e', sun: 0.0, hemi: 0.32 },
   { h: 6.5, top: '#5b7db1', hor: '#f6a96b', sun: 1.0, hemi: 0.6 },
   { h: 9, top: '#4a90d9', hor: '#bfe0f5', sun: 3.0, hemi: 1.25 },
   { h: 16, top: '#3f86d4', hor: '#c6e4f5', sun: 3.0, hemi: 1.25 },
   { h: 18.3, top: '#5a7bc0', hor: '#f4b27a', sun: 2.0, hemi: 0.9 },
   { h: 19.5, top: '#2a2f5e', hor: '#e07a5f', sun: 0.3, hemi: 0.35 },
-  { h: 21, top: '#0f1530', hor: '#253055', sun: 0.0, hemi: 0.2 },
-  { h: 24, top: '#0b1026', hor: '#1c2541', sun: 0.0, hemi: 0.18 },
+  { h: 21, top: '#0f1530', hor: '#253055', sun: 0.0, hemi: 0.3 },
+  { h: 24, top: '#0b1026', hor: '#1c2541', sun: 0.0, hemi: 0.3 },
 ];
 
 export function createDayNight(scene: THREE.Scene): DayNightState {
@@ -57,7 +58,14 @@ export function createDayNight(scene: THREE.Scene): DayNightState {
   sky.frustumCulled = false;
   scene.add(sky);
   scene.fog = new THREE.Fog(0xbfe0f5, 180, 750);
-  return { hour: TUNING.time.startHour, day: 1, night: 0, sun, hemi, sky, skyTop, skyHorizon };
+  // one headlight for the player's car (cheap: a single spot light that follows whichever car you drive)
+  const headlight = new THREE.SpotLight(0xfff2d0, 0, 60, 0.55, 0.5, 1.2);
+  headlight.position.set(0, 0.4, 2);
+  headlight.target.position.set(0, -1.5, 18);
+  headlight.add(headlight.target);
+  scene.add(headlight); // always in the scene so the light count never changes (no shader recompiles)
+  return {
+    headlight, hour: TUNING.time.startHour, day: 1, night: 0, sun, hemi, sky, skyTop, skyHorizon };
 }
 
 const ca = new THREE.Color();
@@ -75,7 +83,7 @@ export function updateDayNight(w: World, dt: number): void {
   s.skyHorizon.copy(ca.set(A.hor)).lerp(cb.set(B.hor), t);
   const sunI = THREE.MathUtils.lerp(A.sun, B.sun, t);
   const hemiI = THREE.MathUtils.lerp(A.hemi, B.hemi, t);
-  s.night = THREE.MathUtils.clamp((0.75 - hemiI) / 0.55, 0, 1);
+  s.night = THREE.MathUtils.clamp((0.75 - hemiI) / 0.45, 0, 1);
 
   // sun arcs east -> south -> west; at night a dim moonlight from above keeps things readable
   const ang = ((s.hour - 6) / 12) * Math.PI;
@@ -97,9 +105,17 @@ export function updateDayNight(w: World, dt: number): void {
   (w.scene.fog as THREE.Fog).color.copy(s.skyHorizon);
   w.renderer.toneMappingExposure = 1.0 + s.night * 0.25;
 
+  // the player's headlights
+  const v = w.player.vehicle;
+  if (v && s.headlight.parent !== v.mesh) v.mesh.add(s.headlight);
+  if (!v && s.headlight.parent !== w.scene) w.scene.add(s.headlight);
+  s.headlight.intensity = v && !v.wrecked ? THREE.MathUtils.clamp((s.night - 0.2) * 2, 0, 1) * 60 : 0;
+
   // street lights and windows glow at night
   const lampOn = THREE.MathUtils.clamp((s.night - 0.3) * 3, 0, 1);
   w.city.lampMat.color.setRGB(0.55 + 0.45 * lampOn, 0.55 + 0.4 * lampOn, 0.5 + 0.25 * lampOn);
+  w.city.lampPoolMat.opacity = lampOn * 0.55;
+  w.city.lampPoolMat.visible = lampOn > 0.01;
   const win = THREE.MathUtils.clamp((s.night - 0.15) * 2, 0, 1);
   w.city.litWindowMat.color.setRGB(0.22 + 0.78 * win, 0.28 + 0.62 * win, 0.36 + 0.24 * win);
 }
