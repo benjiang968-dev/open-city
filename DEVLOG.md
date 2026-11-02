@@ -47,3 +47,14 @@ Format: date · what changed · what to test · known issues.
   - **Other:** F3 debug overlay (fps, seed, position, speed/hp/slip, job, heat, clock, entity counts, draw calls); `?seed=` changes the city; player headlight at night; additive light pools under street lamps.
   - Measured: game logic 1.5 ms/frame; 136 draw calls, 169k triangles.
   - Known issue: real GPU fps can't be measured headless (SwiftShader). Needs a check on real hardware.
+- **Step 10: Deploy (partly blocked).**
+  - `npm run deploy` builds and pushes `dist/` to `gh-pages`. Relative base, `.nojekyll` included. A local `gh-pages` branch already holds the current build.
+  - **Blocked:** pushing to `benjiang968-dev/open-city` was refused because this session has no linked GitHub account.
+  - **Stopgap:** the same build is published as a private playable page: https://claude.ai/artifact/AqU3Z46r4MKgcvjQpStCzV
+
+### Known issues (end of day 1)
+- AI traffic and police are velocity-driven bodies, not raycast vehicles. They get shoved on impact and recover, but don't skid realistically.
+- Real-GPU 60 fps is unverified; headless SwiftShader only manages about 10 fps.
+- No rain yet (the weather field is fixed to `clear`). Shops don't open or close yet.
+- Pedestrians don't collide with the player on foot (you walk through them).
+- The three starter cars are parked nose-to-tail, so it's easy to bump the one in front when pulling out.
