@@ -128,3 +128,41 @@ export async function traffic2(page, S) {
   }
   return out;
 }
+
+// Taxi loop: get in a car, then for 3 fares teleport the car to the pickup kerb and the drop-off kerb.
+export async function taxi(page, S) {
+  await S.start(page);
+  const res = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const taxi = w.jobs.get('taxi');
+    const v = w.vehicles.find((c) => c.type === 'sedan');
+    const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const out = { inCar: !!w.player.vehicle, fares: [] };
+    const tp = (x, z) => {
+      v.body.setTranslation({ x, y: 1.0, z }, true); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.prevVel.set(0, 0, 0);
+    };
+    for (let k = 0; k < 3; k++) {
+      let guard = 0;
+      while (taxi.phase !== 'waiting' && guard++ < 100) run(0.2);
+      const startCash = w.cash;
+      const pk = { x: taxi.pickup.x, z: taxi.pickup.y, name: taxi.pickupName };
+      tp(pk.x, pk.z); run(2.5);
+      const boarded = taxi.phase;
+      const dest = taxi.dest ? { name: taxi.dest.name, street: taxi.dest.street, dist: Math.round(taxi.tripDist), allowance: Math.round(taxi.allowance) } : null;
+      run(Math.max(5, (dest?.dist ?? 300) / 20)); // pretend we drove at ~72 km/h
+      if (k === 2) { v.health -= 10; } // crash on the last fare: tip should be lost
+      if (taxi.dest) tp(taxi.dest.curbX, taxi.dest.curbZ);
+      run(1.5);
+      out.fares.push({ pickup: pk.name, boarded, dest, paid: w.cash - startCash, phase: taxi.phase });
+    }
+    out.completed = taxi.completed;
+    out.cash = w.cash;
+    out.hud = w.jobs.statusText();
+    return out;
+  });
+  await page.waitForTimeout(800);
+  return res;
+}

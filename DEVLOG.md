@@ -25,3 +25,8 @@ Format: date · what changed · what to test · known issues.
   - **Pedestrians:** 40 people with name, job, personality and a daily routine (home → work → leisure → home) on the pavement graph. They wait at kerbs for passing cars, dodge cars heading at them, get knocked down (fly, lie down, get up, flee), and flee from violence nearby.
   - Measured: 26/26 cars and 40/40 people moving after 20 s; average traffic speed 7–8 m/s over 2 minutes with no gridlock.
   - Test: stand in the road in front of a car (it honks), then drive at people.
+- **Step 6: Money and the taxi job.**
+  - HUD shows cash (counts up), wanted stars and the clock. The job banner shows the target, distance and a countdown.
+  - A fare waits waving at a taxi rank, under a yellow beacon and minimap dot. Stop beside them in any car and they get in and name a POI 280–900 m away (green beacon).
+  - Stop at the kerb there to get paid: base + $/m + a speed bonus for beating the time allowance + a 25% tip. The tip is lost if the car takes 3+ hp of damage, and pay drops 40% if you're very late. Getting out mid-ride abandons the fare. A new fare appears 2 s later at another rank.
+  - Scripted test: 3 fares paid $55, $57 and $54; the last lost its tip after a crash.
