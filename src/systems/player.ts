@@ -7,6 +7,9 @@ import { emit } from '../world';
 import { act } from './input';
 import { makePerson, animatePerson, type PersonRig } from '../art/person';
 import type { Vehicle } from './vehicles';
+import { nearestPed } from './pedestrians';
+import { openChat } from './chat';
+import { toast } from './hud';
 
 const P = TUNING.player;
 
@@ -57,6 +60,19 @@ export function updatePlayer(w: World, dt: number): void {
   if (p.vehicle) {
     const v = p.vehicle;
     p.mesh.position.copy(v.mesh.position);
+    // drove into the bay: swim back to the promenade
+    if (v.mesh.position.y < TUNING.world.waterLevel - 0.8) {
+      v.inWaterTimer += dt;
+      if (v.inWaterTimer > 1.5) {
+        v.health = 0;
+        v.wrecked = true;
+        exitVehicle(w);
+        const z = w.city.coastZ - 12;
+        p.body.setTranslation({ x: Math.max(w.city.bounds.minX + 5, Math.min(w.city.bounds.maxX - 5, v.mesh.position.x)), y: 1.2, z }, true);
+        toast(w, 'You swam back to shore', 2.5);
+      }
+      return;
+    }
     // ride inside; hidden
     if (act.interact(inp) && Math.abs(v.speed) < 6) exitVehicle(w);
     else p.prompt = Math.abs(v.speed) < 6 ? 'E  get out' : '';
@@ -72,7 +88,16 @@ export function updatePlayer(w: World, dt: number): void {
     const d = Math.hypot(t.x - pos.x, t.z - pos.z) - v.spec.halfExtents[0];
     if (d < bd) { bd = d; best = v; }
   }
-  if (best && !w.chat.open) {
+  // nearest person to talk to (preferred over a car when closer)
+  const ped = w.chat.open ? null : nearestPed(w, pos.x, pos.z, P.talkRange);
+  const pedD = ped ? Math.hypot(ped.pos.x - pos.x, ped.pos.z - pos.z) : Infinity;
+  if (ped && (!best || pedD < bd + 0.5)) {
+    p.prompt = `E  talk to ${ped.npc.name}`;
+    if (act.interact(inp)) {
+      openChat(w, ped);
+      return;
+    }
+  } else if (best && !w.chat.open) {
     p.prompt = best.wrecked ? `${best.spec.label} is wrecked` : `E  drive ${best.spec.label}`;
     if (act.interact(inp) && !best.wrecked) {
       enterVehicle(w, best);

@@ -522,6 +522,13 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     taxiRanks.push(p);
   }
 
+  // ---------- police precinct ----------
+  {
+    const b = blocks.find((q) => q.bi === 1 && q.bj === 1 && q.kind !== 'park') ?? blocks[0];
+    const p = addPoi('police', b, 'e');
+    p.name = 'Precinct 4';
+  }
+
   // ---------- parking spots along kerbs ----------
   const parkingSpots: ParkingSpot[] = [];
   const kerbOff = T.roadWidth / 2 - 1.3;

@@ -93,3 +93,38 @@ export async function drivecam(page, S) {
   await page.waitForTimeout(1500);
   return state(page);
 }
+
+// let the city run and measure that traffic and pedestrians actually move
+export async function life(page, S) {
+  await S.start(page);
+  const snap = () => page.evaluate(() => {
+    const w = window.__oc;
+    return { cars: w.traffic.map((c) => { const t = c.body.translation(); return [t.x, t.z, c.phase, c.speed]; }), peds: w.peds.map((p) => [p.pos.x, p.pos.z, p.state]) };
+  });
+  const a = await snap();
+  await page.evaluate(() => window.__ocRun(20));
+  const b = await snap();
+  const moved = (A, B) => A.filter((p, i) => Math.hypot(p[0] - B[i][0], p[1] - B[i][1]) > 2).length;
+  const states = {};
+  for (const p of b.peds) states[p[2]] = (states[p[2]] || 0) + 1;
+  const phases = {};
+  for (const c of b.cars) phases[c[2]] = (phases[c[2]] || 0) + 1;
+  // look at a busy junction from above the player
+  return { carsMoved: moved(a.cars, b.cars) + '/' + a.cars.length, pedsMoved: moved(a.peds, b.peds) + '/' + a.peds.length, pedStates: states, carPhases: phases, simTime: await page.evaluate(() => window.__oc.time) };
+}
+
+export async function traffic2(page, S) {
+  await S.start(page);
+  const out = [];
+  for (let k = 0; k < 6; k++) {
+    await page.evaluate(() => window.__ocRun(20));
+    out.push(await page.evaluate(() => {
+      const w = window.__oc;
+      const ph = {}; let stopped = 0, sum = 0, stun = 0;
+      for (const c of w.traffic) { ph[c.phase] = (ph[c.phase] || 0) + 1; if (c.speed < 0.3) stopped++; sum += c.speed; if (c.stunT > 0) stun++; }
+      const t0 = w.traffic[0]; const tt = t0.body.translation();
+      return { t: Math.round(w.time), ph, stopped, avg: +(sum / w.traffic.length).toFixed(1), stun, c0: [Math.round(tt.x), Math.round(tt.y * 10) / 10, Math.round(tt.z), t0.phase, +t0.speed.toFixed(1), t0.from, t0.to] };
+    }));
+  }
+  return out;
+}

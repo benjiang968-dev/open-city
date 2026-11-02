@@ -5,6 +5,7 @@ import type { World } from '../world';
 
 export interface DayNightState {
   hour: number; // 0..24 game time
+  day: number; // days elapsed
   night: number; // 0 = full day, 1 = full night
   sun: THREE.DirectionalLight;
   hemi: THREE.HemisphereLight;
@@ -56,7 +57,7 @@ export function createDayNight(scene: THREE.Scene): DayNightState {
   sky.frustumCulled = false;
   scene.add(sky);
   scene.fog = new THREE.Fog(0xbfe0f5, 180, 750);
-  return { hour: TUNING.time.startHour, night: 0, sun, hemi, sky, skyTop, skyHorizon };
+  return { hour: TUNING.time.startHour, day: 1, night: 0, sun, hemi, sky, skyTop, skyHorizon };
 }
 
 const ca = new THREE.Color();
@@ -64,7 +65,8 @@ const cb = new THREE.Color();
 
 export function updateDayNight(w: World, dt: number): void {
   const s = w.dayNight;
-  s.hour = (s.hour + (dt * 24) / TUNING.time.realSecondsPerGameDay) % 24;
+  s.hour += (dt * 24) / TUNING.time.realSecondsPerGameDay;
+  if (s.hour >= 24) { s.hour -= 24; s.day++; }
   let k = 0;
   while (k < KEYS.length - 2 && KEYS[k + 1].h <= s.hour) k++;
   const A = KEYS[k], B = KEYS[k + 1];
@@ -99,7 +101,7 @@ export function updateDayNight(w: World, dt: number): void {
   const lampOn = THREE.MathUtils.clamp((s.night - 0.3) * 3, 0, 1);
   w.city.lampMat.color.setRGB(0.55 + 0.45 * lampOn, 0.55 + 0.4 * lampOn, 0.5 + 0.25 * lampOn);
   const win = THREE.MathUtils.clamp((s.night - 0.15) * 2, 0, 1);
-  w.city.litWindowMat.color.setRGB(0.36 + 0.64 * win, 0.44 + 0.46 * win, 0.55 + 0.05 * win);
+  w.city.litWindowMat.color.setRGB(0.22 + 0.78 * win, 0.28 + 0.62 * win, 0.36 + 0.24 * win);
 }
 
 export function formatClock(hour: number): string {

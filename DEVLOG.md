@@ -20,3 +20,8 @@ Format: date · what changed · what to test · known issues.
   - braking from 100 km/h reaches 26 km/h in 2 s
 
   Test: press E by a car, drive, Space to drift, R to flip upright.
+- **Step 5: Traffic and pedestrians.**
+  - **Traffic:** 26 AI cars on the road graph. They are dynamic bodies steered by velocity, so you can shove them. They drive on the right, stop at every junction, take one car per junction at a time, keep a following gap and stop for people. They honk when you block them, swerve and honk when you charge at them, and recycle out of sight if knocked off their lane or stuck.
+  - **Pedestrians:** 40 people with name, job, personality and a daily routine (home → work → leisure → home) on the pavement graph. They wait at kerbs for passing cars, dodge cars heading at them, get knocked down (fly, lie down, get up, flee), and flee from violence nearby.
+  - Measured: 26/26 cars and 40/40 people moving after 20 s; average traffic speed 7–8 m/s over 2 minutes with no gridlock.
+  - Test: stand in the road in front of a car (it honks), then drive at people.

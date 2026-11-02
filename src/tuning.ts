@@ -1,7 +1,7 @@
 // Every gameplay number lives here. Units: metres, seconds, kilograms, Newtons, radians unless noted.
 // When feedback arrives as a measurement, change the named value here and nothing else.
 
-export const TUNING = {
+const RAW = {
   world: {
     defaultSeed: 1337, // used when the URL has no ?seed=
     blocksX: 9, // downtown grid blocks across (scale this up later for bigger districts)
@@ -276,6 +276,10 @@ export const TUNING = {
     minimapSize: 190, // pixels
   },
 } as const;
+
+/** Numbers widen to `number` (so code can compute with them); strings stay literal. */
+type Widen<T> = T extends number ? number : T extends boolean ? boolean : T extends string ? T : T extends readonly (infer U)[] ? readonly Widen<U>[] : { readonly [K in keyof T]: Widen<T[K]> };
+export const TUNING: Widen<typeof RAW> = RAW;
 
 export type CarTypeName = keyof typeof TUNING.vehicles.types;
 export type CarSpec = (typeof TUNING.vehicles.types)[CarTypeName];
