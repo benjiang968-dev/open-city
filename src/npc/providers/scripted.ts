@@ -61,10 +61,15 @@ export class ScriptedProvider implements DialogueProvider {
         };
         return map[k] ?? k;
       });
-    const say = (lines: string[] | undefined, extra?: Record<string, string>, flavour = true) => {
+    // Personality lines are already in voice; shared lines get a personality tic so everyone sounds different.
+    const say = (lines: string[] | undefined, extra?: Record<string, string>, flavour = false) => {
       const base = fill(pick(lines && lines.length ? lines : SHARED.thanks!), extra);
-      return flavour ? `${pick(tics.pre)}${base}${pick(tics.post)}`.replace(/^(\W*)(\w)/, (m, a, b) => a + b.toUpperCase()) : base;
+      if (!flavour) return base;
+      const pre = pick(tics.pre);
+      const lower = pre && !/^I\b|^I'/.test(base) ? base[0].toLowerCase() + base.slice(1) : base;
+      return `${pre}${lower}${pick(tics.post)}`;
     };
+    const sayShared = (lines: string[] | undefined, extra?: Record<string, string>) => say(lines, extra, true);
     const reply = (t: string, action?: NpcAction, relationshipDelta = 0, moodDelta = 0): DialogueReply => ({ text: t, action, relationshipDelta, moodDelta });
 
     // ---- grudges first: people you hit don't want to talk ----
@@ -76,7 +81,7 @@ export class ScriptedProvider implements DialogueProvider {
     }
     if (rel < -60 && intent !== 'apology') {
       if (intent === 'insult' || intent === 'threat') return reply(say(SHARED.callPolice, undefined, false), { type: 'callPolice' }, -5);
-      return reply(say(SHARED.refuseHated), { type: 'refuse' }, -1);
+      return reply(say(SHARED.refuseHated, undefined, false), { type: 'refuse' }, -1);
     }
     if (world.wantedStars >= 2 && npc.personality !== 'laidback' && intent !== 'police')
       return reply(say(SHARED.policeWanted, undefined, false), { type: 'refuse' }, -1);
@@ -87,11 +92,11 @@ export class ScriptedProvider implements DialogueProvider {
       case 'insult':
         return reply(say(P.insult, undefined, false), npc.personality === 'grumpy' && rel < -20 ? { type: 'refuse' } : undefined, TUNING.npc.relationshipOnInsult, -0.2);
       case 'apology':
-        return reply(say(SHARED.apology), undefined, 4);
+        return reply(sayShared(SHARED.apology), undefined, 4);
       case 'compliment':
         return reply(say(P.compliment), undefined, TUNING.npc.relationshipOnCompliment, 0.1);
       case 'thanks':
-        return reply(say(SHARED.thanks), undefined, 1);
+        return reply(sayShared(SHARED.thanks), undefined, 1);
       case 'greet': {
         const known = !firstTime && P.greetKnown;
         let t = say(known ? P.greetKnown : P.greet);
@@ -123,22 +128,22 @@ export class ScriptedProvider implements DialogueProvider {
           world.places.find((p) => p.name.toLowerCase().split(/\W+/).some((wd) => wd.length > 3 && q.includes(wd)));
         if (place) return reply(say(SHARED.whereIs, { place: place.name, street: place.street }), { type: 'giveTip', poiId: place.poiId }, 1);
         if (/taxi|cab|rank/.test(q)) return reply(say(P.askWork, { rank: rank.name, street: rank.street }), { type: 'giveTip', poiId: rank.poiId }, 1);
-        return reply(say(SHARED.whereIsUnknown));
+        return reply(sayShared(SHARED.whereIsUnknown));
       }
       case 'remember': {
         const m = npc.memory[npc.memory.length - 1];
-        return reply(m ? say(SHARED.remember, { mem: m.note }) : say(SHARED.rememberNone));
+        return reply(m ? say(SHARED.remember, { mem: m.note }) : sayShared(SHARED.rememberNone));
       }
       case 'gossip': {
         const g = world.gossip.length ? pick(world.gossip) : null;
-        return reply(g ? say(SHARED.gossip, { gossip: g }) : say(SHARED.gossipNone), undefined, 1);
+        return reply(g ? say(SHARED.gossip, { gossip: g }) : sayShared(SHARED.gossipNone), undefined, 1);
       }
       case 'police':
         return reply(say(world.wantedStars > 0 ? SHARED.policeWanted : SHARED.police));
       case 'weather':
-        return reply(say(world.isNight ? SHARED.weatherNight : SHARED.weather));
+        return reply(sayShared(world.isNight ? SHARED.weatherNight : SHARED.weather));
       case 'time':
-        return reply(say(SHARED.time));
+        return reply(sayShared(SHARED.time));
       case 'trade': {
         const t = TRADE_ITEMS[npc.job];
         if (!t) return reply(say(['I\'m not selling anything, sorry. Try the market by the docks.']));

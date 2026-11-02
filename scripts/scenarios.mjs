@@ -166,3 +166,147 @@ export async function taxi(page, S) {
   await page.waitForTimeout(800);
   return res;
 }
+
+// Talk to two pedestrians through the real chat box (typing into the input), plus a grudge test.
+export async function chat(page, S) {
+  await S.start(page);
+  const say = async (text) => {
+    await page.fill('#chat input', text);
+    await page.press('#chat input', 'Enter');
+    await page.waitForTimeout(250);
+  };
+  const talkTo = async (idx) => {
+    await page.evaluate((i) => {
+      const w = window.__oc; const p = w.peds[i];
+      p.state = 'idle'; p.timer = 30;
+      w.player.body.setTranslation({ x: p.pos.x + 1.2, y: 1.2, z: p.pos.z }, true);
+      window.__ocRun(0.3);
+    }, idx);
+    await page.keyboard.press('KeyE');
+    await page.waitForTimeout(400);
+    return page.evaluate(() => window.__oc.chat.open);
+  };
+  const log = () => page.evaluate(() => [...document.querySelectorAll('#chat .log div')].map((d) => d.textContent));
+  const out = {};
+  out.open1 = await talkTo(3);
+  for (const t of ['hello!', 'how are you?', 'what do you do?', 'any work around here? I need money']) await say(t);
+  await page.screenshot({ path: 'screenshots/07-chat.png' });
+  await say('need a ride somewhere?');
+  out.ped1 = await page.evaluate(() => { const p = window.__oc.peds[3]; return { name: p.npc.name, personality: p.npc.personality, rel: p.npc.relationship, mem: p.npc.memory.map((m) => m.note) }; });
+  out.log1 = await log();
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { const c = window.__oc.chat; if (c.open) c.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); window.__ocRun(1.5); });
+  out.open2 = await talkTo(7);
+  for (const t of ['hey', 'heard any gossip?', 'where is the marina?', 'you are an idiot', 'sorry about that', 'bye']) await say(t);
+  out.log2 = await log();
+  await page.evaluate(() => { const c = window.__oc.chat; if (c.open) c.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+  // grudge: knock ped 12 down with a car, then try to talk
+  out.grudge = await page.evaluate(() => {
+    const w = window.__oc; const p = w.peds[12];
+    p.state = 'idle'; p.timer = 30;
+    const v = w.vehicles[1];
+    w.player.body.setTranslation({ x: v.body.translation().x + 2, y: 1.2, z: v.body.translation().z }, true);
+    window.__ocRun(0.2);
+    if (!w.player.vehicle) { w.input.pressed.add('KeyE'); window.__ocRun(0.1); }
+    // aim the car at the pedestrian at 40 km/h
+    const dx = p.pos.x - 12, dz = p.pos.z;
+    const h = Math.PI / 2;
+    v.body.setTranslation({ x: p.pos.x - 12, y: 1.0, z: p.pos.z }, true);
+    v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+    v.body.setLinvel({ x: 11, y: 0, z: 0 }, true); v.prevVel.set(11, 0, 0);
+    window.__ocRun(1.5);
+    const hit = p.state;
+    const stars = w.police.stars;
+    window.__ocRun(9);
+    return { hit, stars, rel: p.npc.relationship, mem: p.npc.memory.map((m) => m.note) };
+  });
+  await page.evaluate(() => { const w = window.__oc; if (w.player.vehicle) { w.player.vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true); window.__ocRun(0.5); w.input.pressed.add('KeyE'); window.__ocRun(0.2); } });
+  out.open3 = await talkTo(12);
+  for (const t of ['hi there', 'hello?', 'come on, talk to me']) { if (await page.evaluate(() => window.__oc.chat.open)) await say(t); }
+  out.log3 = await log();
+  out.stars = await page.evaluate(() => window.__oc.police.stars);
+  return out;
+}
+
+// Police: commit crimes, get chased, then hide out of sight and lose them.
+export async function police(page, S) {
+  await S.start(page);
+  const out = {};
+  out.crime = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const v = w.vehicles.find((c) => c.type === 'pickup');
+    const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.6, y: 1.2, z: t.z - Math.sin(v.heading) * 2.6 }, true);
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    // run over two pedestrians
+    const hits = [];
+    for (const i of [20, 21]) {
+      const p = w.peds[i]; p.state = 'idle'; p.timer = 30;
+      const h = Math.PI / 2;
+      v.body.setTranslation({ x: p.pos.x - 12, y: 1.0, z: p.pos.z }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+      v.body.setLinvel({ x: 13, y: 0, z: 0 }, true); v.prevVel.set(13, 0, 0);
+      run(1.2);
+      hits.push(p.state);
+    }
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    return { hits, stars: w.police.stars, heat: w.police.heat };
+  });
+  // let police arrive: park the car in the middle of a long road and wait
+  out.chase = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const v = w.player.vehicle;
+    const c = w.city;
+    v.body.setTranslation({ x: c.xs[4] + 30, y: 1, z: c.zs[2] + 3 }, true); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0);
+    const samples = [];
+    for (let k = 0; k < 6; k++) {
+      run(3);
+      const p = v.body.translation();
+      samples.push({ t: Math.round(w.time), stars: w.police.stars, seen: w.police.seen, cars: w.police.cars.length, nearest: Math.round(Math.min(...w.police.cars.map((pc) => { const q = pc.body.translation(); return Math.hypot(q.x - p.x, q.z - p.z); }))) });
+      if (w.police.seen) break;
+    }
+    return samples;
+  });
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: 'screenshots/08-police-chase.png' });
+  // escape: teleport into a different car far away behind buildings (out of sight), then wait
+  out.escape = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const c = w.city;
+    const v2 = w.vehicles.find((x) => x.type === 'hatchback');
+    w.input.pressed.add('KeyE'); run(0.1); // get out
+    const far = { x: c.xs[c.xs.length - 2] - 30, z: c.zs[0] + 3 };
+    v2.body.setTranslation({ x: far.x, y: 1, z: far.z }, true); v2.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v2.prevVel.set(0, 0, 0);
+    w.player.body.setTranslation({ x: far.x + 2.2, y: 1.2, z: far.z }, true);
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const samples = [];
+    for (let k = 0; k < 20; k++) {
+      run(3);
+      samples.push({ t: Math.round(w.time), stars: w.police.stars, seen: w.police.seen, lose: +w.police.loseTimer.toFixed(1), cars: w.police.cars.length });
+      if (w.police.stars === 0 && w.police.cars.length === 0) break;
+    }
+    return { inCar: w.player.vehicle?.type, samples };
+  });
+  return out;
+}
+
+export async function bust(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const c = w.city;
+    w.player.body.setTranslation({ x: c.xs[4] + 30, y: 1.2, z: c.zs[2] + 9 }, true);
+    run(0.2);
+    w.events.push({ type: 'policeCalled', x: 0, z: 0, byPed: 0 }, { type: 'policeCalled', x: 0, z: 0, byPed: 0 });
+    run(0.05);
+    const s = [];
+    const cash0 = w.cash;
+    for (let k = 0; k < 20; k++) {
+      run(2);
+      const pp = w.player.mesh.position;
+      s.push([Math.round(w.time), w.police.stars, w.police.seen ? 'seen' : '-', Math.round(Math.min(999, ...w.police.cars.map((pc) => { const q = pc.body.translation(); return Math.hypot(q.x - pp.x, q.z - pp.z); }))), +w.police.bustTimer.toFixed(1)]);
+      if (w.police.stars === 0) break;
+    }
+    return { s, cashLost: cash0 - w.cash };
+  });
+}

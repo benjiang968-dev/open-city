@@ -238,6 +238,7 @@ const RAW = {
     heatPerPoliceHit: 30, // heat points for ramming a police car
     heatPerStar: 40, // heat points per wanted star (5 stars max)
     maxStars: 5,
+    dispatchTime: 14, // seconds after a crime during which police know exactly where you are
     loseSightTime: [0, 8, 11, 14, 18, 22], // seconds out of sight needed to lose each star level
     vehicleSwapBonus: 0.5, // fraction of the lose timer instantly cleared when you switch cars unseen
     sightRange: 120, // metres police can see you

@@ -21,10 +21,12 @@ export interface PoliceState {
   lastSeenX: number;
   lastSeenZ: number;
   sightCheckT: number;
+  /** Until this time police know where you are (fresh 911 call) and the escape timer is paused. */
+  trackUntil: number;
 }
 
 export function createPolice(): PoliceState {
-  return { heat: 0, stars: 0, seen: false, cars: [], pool: [], loseTimer: 0, bustTimer: 0, lastSeenX: 0, lastSeenZ: 0, sightCheckT: 0 };
+  return { heat: 0, stars: 0, seen: false, cars: [], pool: [], loseTimer: 0, bustTimer: 0, lastSeenX: 0, lastSeenZ: 0, sightCheckT: 0, trackUntil: 0 };
 }
 
 export function spawnPolicePool(w: World): void {
@@ -50,6 +52,7 @@ export function addHeat(w: World, amount: number): void {
   const pol = w.police;
   pol.heat = Math.min(P.maxStars * P.heatPerStar, pol.heat + amount);
   pol.loseTimer = 0;
+  pol.trackUntil = w.time + P.dispatchTime;
   const pp = w.player.mesh.position;
   pol.lastSeenX = pp.x;
   pol.lastSeenZ = pp.z;
@@ -140,14 +143,14 @@ export function updatePolice(w: World, dt: number): void {
   if (pol.sightCheckT <= 0) {
     pol.sightCheckT = 0.2;
     pol.seen = pol.stars > 0 && pol.cars.some((c) => c.stunT <= 0 && hasLineOfSight(w, c));
-    if (pol.seen) {
+    if (pol.seen || w.time < pol.trackUntil) {
       const pp = w.player.mesh.position;
       pol.lastSeenX = pp.x;
       pol.lastSeenZ = pp.z;
     }
   }
   if (pol.stars > 0) {
-    if (pol.seen) pol.loseTimer = Math.max(0, pol.loseTimer - dt * 2);
+    if (pol.seen || w.time < pol.trackUntil) pol.loseTimer = Math.max(0, pol.loseTimer - dt * 2);
     else {
       pol.loseTimer += dt;
       if (pol.loseTimer >= P.loseSightTime[pol.stars]) {

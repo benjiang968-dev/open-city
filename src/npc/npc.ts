@@ -53,6 +53,13 @@ export function generateNpc(id: number, rng: Rng, city: CityData): NpcProfile {
   const leisure = city.pois.filter((p) => ['park', 'cafe', 'bar', 'beach', 'pier', 'diner', 'market'].includes(p.kind));
   const home = (homes.length ? rng.pick(homes) : rng.pick(city.pois)) as Poi;
   const work = rng.pick(works);
+  const jobFor: Record<string, string[]> = {
+    office: ['accountant', 'lawyer', 'software developer'], cafe: ['barista', 'chef'], diner: ['chef', 'barista'],
+    shop: ['shop owner', 'florist', 'security guard'], bar: ['bartender', 'street musician'], hotel: ['hotel receptionist', 'chef'],
+    gym: ['lifeguard', 'security guard'], clinic: ['nurse'], market: ['fisher', 'shop owner'], garage: ['mechanic'],
+    marina: ['dock worker', 'fisher'],
+  };
+  const job = rng.chance(0.15) ? rng.pick(['student', 'retired teacher', 'painter', 'courier']) : rng.pick(jobFor[work.kind] ?? JOBS);
   const fun = rng.pick(leisure);
   const fun2 = rng.pick(leisure);
   const start = rng.int(6, 10);
@@ -60,7 +67,7 @@ export function generateNpc(id: number, rng: Rng, city: CityData): NpcProfile {
   return {
     id,
     name: `${rng.pick(FIRST_NAMES)} ${rng.pick(LAST_NAMES)}`,
-    job: rng.pick(JOBS),
+    job,
     personality: rng.pick(PERSONALITIES),
     homePoi: home.id,
     workPoi: work.id,
