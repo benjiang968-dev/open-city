@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Open City</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1026; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+      #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+      #ui { position: fixed; inset: 0; pointer-events: none; color: #fff; }
+      .shadow { text-shadow: 0 2px 4px rgba(0,0,0,.6); }
+      #title { position: absolute; left: 0; right: 0; bottom: 18%; text-align: center; font-size: 28px; letter-spacing: .3em; font-weight: 600; animation: pulse 1.6s ease-in-out infinite; }
+      @keyframes pulse { 50% { opacity: .45 } }
+      #cash { position: absolute; top: 18px; right: 22px; font-size: 34px; font-weight: 800; color: #9be564; }
+      #stars { position: absolute; top: 60px; right: 22px; font-size: 26px; letter-spacing: 2px; }
+      #stars .on { color: #ffd166; } #stars .off { color: rgba(255,255,255,.18); }
+      #stars.flash .on { animation: flash .5s steps(2) infinite; }
+      @keyframes flash { 50% { color: #ef476f } }
+      #clock { position: absolute; top: 96px; right: 22px; font-size: 16px; opacity: .85; }
+      #prompt { position: absolute; left: 50%; bottom: 120px; transform: translateX(-50%); font-size: 18px; background: rgba(0,0,0,.45); padding: 6px 14px; border-radius: 6px; display: none; }
+      #job { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); font-size: 18px; background: rgba(10,20,40,.6); padding: 8px 16px; border-radius: 8px; display: none; text-align: center; max-width: 60vw; }
+      #toast { position: absolute; top: 34%; left: 50%; transform: translateX(-50%); font-size: 30px; font-weight: 800; opacity: 0; transition: opacity .3s; text-align: center; }
+      #speedo { position: absolute; right: 22px; bottom: 22px; text-align: right; display: none; }
+      #speedo .v { font-size: 44px; font-weight: 800; line-height: 1; } #speedo .u { font-size: 14px; opacity: .8; }
+      #health { width: 160px; height: 8px; background: rgba(255,255,255,.2); border-radius: 4px; margin-top: 8px; overflow: hidden; }
+      #health div { height: 100%; background: #06d6a0; }
+      #minimap { position: absolute; left: 22px; bottom: 22px; border-radius: 50%; border: 3px solid rgba(255,255,255,.7); box-shadow: 0 2px 10px rgba(0,0,0,.5); }
+      #help { position: absolute; left: 22px; top: 18px; font-size: 13px; opacity: .75; line-height: 1.5; }
+      #debug { position: absolute; left: 22px; top: 120px; font: 12px/1.5 ui-monospace, monospace; background: rgba(0,0,0,.6); padding: 8px 10px; border-radius: 6px; display: none; white-space: pre; }
+      #chat { position: absolute; left: 50%; bottom: 60px; transform: translateX(-50%); width: min(560px, 90vw); background: rgba(12,18,32,.92); border-radius: 10px; padding: 12px; display: none; pointer-events: auto; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+      #chat .head { font-weight: 700; margin-bottom: 6px; } #chat .head span { font-weight: 400; opacity: .7; font-size: 13px; }
+      #chat .log { max-height: 220px; overflow-y: auto; font-size: 15px; line-height: 1.45; margin-bottom: 8px; }
+      #chat .log .me { color: #9ecbff; } #chat .log .npc { color: #fff; } #chat .log .act { color: #ffd166; font-style: italic; font-size: 13px; }
+      #chat input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid #456; background: #0b1222; color: #fff; font-size: 15px; outline: none; }
+      #chat .hint { font-size: 12px; opacity: .55; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div id="ui">
+      <div id="title" class="shadow">press any key</div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

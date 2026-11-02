@@ -1,0 +1,17 @@
+import { createRequire } from 'node:module';
+const { chromium } = createRequire(import.meta.url)('playwright');
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { join, resolve, extname } from 'node:path';
+const root = resolve('dist');
+const server = createServer(async (req, res) => { const u = new URL(req.url, 'http://x'); const p = join(root, u.pathname === '/' ? 'index.html' : u.pathname); try { const d = await readFile(p); res.writeHead(200, { 'content-type': extname(p) === '.js' ? 'text/javascript' : extname(p) === '.wasm' ? 'application/wasm' : 'text/html' }); res.end(d); } catch { res.writeHead(404); res.end(); } }).listen(0);
+const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const page = await browser.newPage();
+page.on('console', (m) => console.log('[console]', m.text()));
+page.on('pageerror', (e) => console.log('[pageerror]', e.message));
+await page.goto(`http://localhost:${server.address().port}/`);
+await page.waitForFunction(() => window.__oc && window.__oc.time > 1);
+await page.keyboard.press('Enter'); await page.waitForTimeout(800);
+const code = process.argv[2];
+console.log(JSON.stringify(await page.evaluate(code), null, 1));
+await browser.close(); server.close();
