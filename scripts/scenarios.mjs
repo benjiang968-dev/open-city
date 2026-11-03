@@ -663,3 +663,59 @@ export async function items(page, S) {
   const selAfterWheel = await page.evaluate(() => window.__oc.inventory.selected);
   return { counts, a, b, slots1, held, dropped, slots2, selAfterWheel };
 }
+
+// Combat: throw a bottle at a pedestrian, then bat a parked car.
+export async function combat(page, S) {
+  await S.start(page);
+  const r1 = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const bottle = w.itemsState.items.find((i) => i.type === 'bottle' && i.inWorld);
+    // put the player at the bottle and pick it up
+    w.player.body.setTranslation({ x: bottle.px, y: 1.2, z: bottle.pz - 1.0 }, true); w.player.facing = 0;
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const held = w.inventory.slots[w.inventory.selected]?.type;
+    // a pedestrian stands 5 m ahead
+    const ped = w.peds.find((p) => p.npc.personality === 'grumpy') ?? w.peds[2];
+    const pp = w.player.mesh.position;
+    ped.pos.set(pp.x, 0.02, pp.z + 5); ped.state = 'idle'; ped.timer = 30; ped.route = [];
+    w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
+    w.input.keys.add('KeyF'); run(0.36);
+    const charging = { charging: w.combat.charging, charge: +w.combat.charge.toFixed(2), arc: w.combat.arc.visible };
+    window.__peek = { x: pp.x, z: pp.z };
+    return { held, ped: ped.id, personality: ped.npc.personality, charging };
+  });
+  await page.waitForTimeout(1200);
+  await page.screenshot({ path: 'screenshots/17-throw-arc.png' });
+  const r2 = await page.evaluate((pid) => {
+    const w = window.__oc, run = window.__ocRun;
+    w.input.keys.delete('KeyF'); run(0.05);
+    const ped = w.peds[pid];
+    const states = [];
+    for (let k = 0; k < 8; k++) { run(0.15); states.push(ped.state); }
+    return { slotAfter: w.inventory.slots[w.inventory.selected], states, health: ped.health, rel: ped.npc.relationship, mem: ped.npc.memory.map((m) => m.note), hitCount: ped.hitCount };
+  }, r1.ped);
+  await page.waitForTimeout(800);
+  await page.screenshot({ path: 'screenshots/17-hit-reaction.png' });
+  const r3 = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const bat = w.itemsState.items.find((i) => i.type === 'bat' && i.inWorld);
+    w.player.body.setTranslation({ x: bat.px, y: 1.2, z: bat.pz - 1.0 }, true); w.player.facing = 0;
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const slot = w.inventory.slots.findIndex((s) => s && s.type === 'bat'); w.inventory.selected = slot;
+    // a parked car right in front, side-on
+    const v = w.vehicles.find((c) => c.type === 'hatchback' && !c.driven);
+    const pp = w.player.mesh.position;
+    v.body.setTranslation({ x: pp.x, y: 0.8, z: pp.z + 2.1 }, true); v.body.setRotation({ x: 0, y: Math.sin(Math.PI / 4), z: 0, w: Math.cos(Math.PI / 4) }, true);
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0);
+    run(0.6);
+    const d0 = v.dmg.dentTotal;
+    w.player.facing = 0; w.cam.yaw = Math.PI;
+    for (let k = 0; k < 3; k++) { w.input.keys.add('KeyF'); run(0.1); w.input.keys.delete('KeyF'); run(0.8); }
+    const c = v.body.translation();
+    w.cam.override = { px: c.x + 3.5, py: 2.0, pz: c.z - 3.0, lx: c.x, ly: 0.7, lz: c.z };
+    return { dentBefore: +d0.toFixed(2), dentAfter: +v.dmg.dentTotal.toFixed(2), hp: Math.round(v.health) };
+  });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'screenshots/17-bat-dent.png' });
+  return { r1, r2, r3 };
+}

@@ -6,10 +6,13 @@ import type { World } from '../world';
 import { emit } from '../world';
 import { makePerson, animatePerson, type PersonRig } from '../art/person';
 import { generateNpc, routineTarget, type NpcProfile } from '../npc/npc';
+import { reactAfterFlinch } from './npcReactions';
+import { say } from './bubbles';
+import { LINES, pick } from '../npc/reactionLines';
 
 const PT = TUNING.peds;
 
-export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk';
+export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk' | 'flinch' | 'confront' | 'yell' | 'stumble';
 
 export interface Ped {
   id: number;
@@ -29,6 +32,12 @@ export interface Ped {
   offset: number; // personal lateral offset so crowds don't walk single file
   /** Set while someone is waiting at this ped as a taxi fare (taxi system owns them). */
   reserved: boolean;
+  health: number; // 0..100; at 0 they are knocked out for a while
+  hitCount: number; // hits by the player within the repeat window
+  lastHitByPlayer: number;
+  lastShoved: number;
+  shoveCount: number;
+  shoutT: number; // countdown to the next shout while confronting
 }
 
 const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0522d'];
@@ -48,6 +57,7 @@ export function spawnPeds(w: World): void {
       id: k, npc, rig, pos: new THREE.Vector3(start.x, 0.02, start.z), heading: 0, state: 'idle', route: [], routeIdx: 0,
       targetPoi: -1, timer: rng.range(0, 3), vel: new THREE.Vector3(), fleeDir: new THREE.Vector2(), walkPhase: rng.range(0, 6),
       speedingCd: 0, offset: rng.range(-0.9, 0.9), reserved: false,
+      health: 100, hitCount: 0, lastHitByPlayer: -100, lastShoved: -100, shoveCount: 0, shoutT: 0,
     };
     w.peds.push(ped);
   }
@@ -162,8 +172,56 @@ export function updatePeds(w: World, dt: number): void {
         }
         if (ped.timer <= 0) {
           ped.rig.root.rotation.x = 0;
+          ped.health = Math.max(ped.health, TUNING.reactions.healthAfterGettingUp);
           startFlee(ped, w.player.mesh.position.x, w.player.mesh.position.z);
         }
+        break;
+      }
+      case 'flinch': {
+        ped.timer -= dt;
+        ped.rig.root.rotation.x = -Math.sin((1 - ped.timer / TUNING.reactions.flinchTime) * Math.PI) * 0.35;
+        const pp = w.player.mesh.position;
+        ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
+        if (ped.timer <= 0) {
+          ped.rig.root.rotation.x = 0;
+          reactAfterFlinch(w, ped);
+        }
+        break;
+      }
+      case 'stumble': {
+        ped.timer -= dt;
+        ped.rig.root.rotation.x = Math.sin((1 - ped.timer / TUNING.reactions.stumbleTime) * Math.PI) * 0.3;
+        if (ped.timer <= 0) {
+          ped.rig.root.rotation.x = 0;
+          ped.state = ped.route.length && ped.routeIdx < ped.route.length ? 'walk' : 'idle';
+          ped.timer = 1;
+        }
+        break;
+      }
+      case 'confront': {
+        ped.timer -= dt;
+        ped.shoutT -= dt;
+        const pp = w.player.mesh.position;
+        const dx = pp.x - ped.pos.x, dz = pp.z - ped.pos.z, d = Math.hypot(dx, dz);
+        ped.heading = Math.atan2(dx, dz);
+        if (d > TUNING.reactions.confrontDistance && d < 25) {
+          const sp = TUNING.peds.walkSpeed * 1.3;
+          ped.pos.x += (dx / d) * sp * dt;
+          ped.pos.z += (dz / d) * sp * dt;
+          moveSpeed = sp;
+        }
+        if (ped.shoutT <= 0) {
+          ped.shoutT = 2.6;
+          say(w, ped, pick(LINES.confront), 2.2, `ped${ped.id}`);
+        }
+        if (ped.timer <= 0 || d > 30) planRoute(w, ped, chooseDestination(w, ped));
+        break;
+      }
+      case 'yell': {
+        ped.timer -= dt;
+        const pp = w.player.mesh.position;
+        ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
+        if (ped.timer <= 0) planRoute(w, ped, chooseDestination(w, ped));
         break;
       }
       case 'dodge': {

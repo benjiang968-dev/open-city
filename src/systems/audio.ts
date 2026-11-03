@@ -22,6 +22,7 @@ export interface AudioState {
   chime?: () => void;
   thunder?: () => void;
   pickup?: () => void;
+  whoosh?: () => void;
   setRain?: (amount: number) => void;
 }
 
@@ -204,6 +205,25 @@ export function startAudio(s: AudioState): void {
     g.connect(master);
     o.start(t);
     o.stop(t + 0.16);
+  };
+  s.whoosh = () => {
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.setValueAtTime(600, t);
+    f.frequency.exponentialRampToValueAtTime(2400, t + 0.18);
+    f.Q.value = 1.2;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.2, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    src.connect(f);
+    f.connect(g);
+    g.connect(master);
+    src.start(t);
+    src.stop(t + 0.25);
   };
   s.chime = () => {
     const t = ctx.currentTime;

@@ -40,6 +40,17 @@ export function updateNpcMemory(w: World): void {
       case 'fareComplete':
         mem('fareDone', 'dropped off a taxi passenger', N.relationshipOnFareNearby, 25);
         break;
+      case 'assault':
+      case 'harassment': {
+        const victim = w.peds[e.pedId];
+        const name = victim ? victim.npc.name.split(' ')[0] : 'someone';
+        mem('sawAssault', e.type === 'assault' ? `attacked ${name} with a ${e.weapon.toLowerCase()}` : `threw stuff at ${name}`, e.type === 'assault' ? -15 : -6, 30, e.pedId);
+        if (e.type === 'assault') for (const p of near(18)) if (p.id !== e.pedId && (p.state === 'walk' || p.state === 'idle')) startFlee(p, e.x, e.z, 4);
+        break;
+      }
+      case 'vandalism':
+        mem('vandalism', `smashed up ${e.what.startsWith('a ') ? e.what : 'a ' + e.what.toLowerCase()}`, -6, 25);
+        break;
       case 'busted':
         mem('busted', 'got arrested by the police', -5, 40);
         break;

@@ -15,6 +15,8 @@ export interface InputState {
   /** The mouse lock was lost without the game asking (usually Esc): opens the pause menu. */
   lockLost: boolean;
   wheel: number; // mouse wheel steps this frame (+ = down/next)
+  mouse0: boolean; // left button held (game action)
+  lockUnavailable: boolean; // the page can't lock the mouse (sandboxed frame): clicks act directly
 }
 
 export function createInput(canvas: HTMLCanvasElement): InputState {
@@ -30,7 +32,15 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
     expectUnlock: false,
     lockLost: false,
     wheel: 0,
+    mouse0: false,
+    lockUnavailable: false,
   };
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 0) s.mouse0 = false;
+  });
+  document.addEventListener('pointerlockerror', () => {
+    s.lockUnavailable = true;
+  });
   window.addEventListener('wheel', (e) => {
     if (!s.blocked && e.deltaY !== 0) s.wheel += Math.sign(e.deltaY);
   }, { passive: true });
@@ -44,15 +54,16 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
   window.addEventListener('keyup', (e) => {
     s.keys.delete(e.code);
   });
-  window.addEventListener('blur', () => s.keys.clear());
-  window.addEventListener('mousedown', () => {
+  window.addEventListener('blur', () => { s.keys.clear(); s.mouse0 = false; });
+  window.addEventListener('mousedown', (e) => {
     s.anyKeyPressed = true;
+    if (e.button === 0 && !s.blocked && (s.pointerLocked || s.lockUnavailable) && e.target === canvas) s.mouse0 = true;
   });
   canvas.addEventListener('click', () => {
     if (!s.blocked && document.pointerLockElement !== canvas) {
       // requestPointerLock returns a promise in modern browsers; ignore rejections (e.g. headless)
       const r = canvas.requestPointerLock() as unknown as Promise<void> | undefined;
-      if (r && typeof r.catch === 'function') r.catch(() => {});
+      if (r && typeof r.catch === 'function') r.catch(() => { s.lockUnavailable = true; });
     }
   });
   document.addEventListener('pointerlockchange', () => {

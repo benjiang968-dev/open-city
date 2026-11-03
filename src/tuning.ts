@@ -361,6 +361,41 @@ const RAW = {
     },
   },
 
+  combat: {
+    chargeTime: 0.9, // seconds to charge a throw to full power
+    throwMinSpeed: 7, // m/s of a quick tap throw
+    throwMaxSpeed: 19, // m/s of a fully charged throw
+    throwBaseElevation: 0.32, // radians upward when the camera is level
+    throwPitchFactor: 1.0, // how much looking up/down (camera pitch) changes the throw angle
+    throwMinElevation: -0.15,
+    throwMaxElevation: 0.95,
+    minHitSpeed: 3, // m/s: slower items don't count as hitting someone
+    pedHitRadius: 0.42, // metres: how close a thrown item must pass to a person's centre line
+    thrownDentPerMomentum: 0.004, // dent depth (m) per kg·m/s of a heavy thrown item
+    swingTime: 0.32, // seconds for a full bat/wrench swing
+    swingHitAt: 0.45, // fraction of the swing when it connects
+    swingArcDot: 0.35, // how wide the swing reaches (dot product with facing)
+  },
+
+  reactions: {
+    flinchTime: 0.55, // seconds someone staggers after being hit
+    stumbleTime: 0.6, // after being shoved
+    confrontTime: 9, // seconds a brave person squares up to you
+    confrontDistance: 1.8, // metres they stop from you
+    yellTime: 2.5,
+    knockoutTime: 14, // seconds lying down at 0 health
+    healthAfterGettingUp: 45,
+    fleeBelowHealth: 45, // hurt people always run
+    repeatWindow: 30, // seconds: a second hit within this counts as assault
+    shoveCooldown: 1.2, // seconds between complaints when you bump into someone
+    shovesToHarass: 3, // shoving the same person this many times is harassment
+    relationshipOnAssault: -55,
+    relationshipOnHarass: -20,
+    relationshipOnShove: -3,
+    // what each personality does after being hit: run, square up, or shout and move on
+    styleByPersonality: { friendly: 'flee', grumpy: 'confront', nervous: 'flee', chatty: 'yell', posh: 'flee', laidback: 'yell' },
+  },
+
   quality: {
     default: 'medium', // preset used until the player picks one in the pause menu
     // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player

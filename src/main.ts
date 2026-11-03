@@ -27,6 +27,8 @@ import { createSettings, applyQuality } from './systems/settings';
 import { createPauseMenu, updatePauseKeys } from './systems/pauseMenu';
 import { createItems, scatterItems, updateWorldItems } from './systems/worldItems';
 import { createInventory, inventoryKeys, updateInventory, showHotbar } from './systems/inventory';
+import { createCombat, updateCombat, thrownItemHitCollider } from './systems/combat';
+import { createBubbles, updateBubbles } from './systems/bubbles';
 import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
@@ -80,6 +82,8 @@ async function boot() {
   createHealthUi();
   createPauseMenu(w);
   w.inventory = createInventory(w);
+  w.combat = createCombat(w);
+  createBubbles();
 
   // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
   // triggers a first-time shader compile mid-game
@@ -101,7 +105,13 @@ async function boot() {
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {
-    w.itemsState.eventQueue.drainCollisionEvents(() => {});
+    const S = w.itemsState;
+    S.eventQueue.drainCollisionEvents((h1, h2, started) => {
+      if (!started) return;
+      const a = S.byCollider.get(h1), b = S.byCollider.get(h2);
+      if (a?.thrown) thrownItemHitCollider(w, a, h2);
+      if (b?.thrown) thrownItemHitCollider(w, b, h1);
+    });
   }
 
   /** One fixed physics tick for everything that moves bodies. */
@@ -179,7 +189,7 @@ async function boot() {
     P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 
-    P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); updateInventory(w); P.end('sync');
+    P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); if (w.started) updateCombat(w, dt); updateInventory(w); updateBubbles(w); P.end('sync');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
     P.begin('weather'); updateWeather(w, dt); P.end('weather');
     if (render) { P.begin('city'); updateCity(w.city, w.time); P.end('city'); }

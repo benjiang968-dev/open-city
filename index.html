@@ -58,6 +58,10 @@
       #hotbar .slot .n { position: absolute; top: 2px; left: 5px; font-size: 11px; opacity: .7; }
       #hotbar .slot .q { position: absolute; bottom: 2px; right: 5px; font-size: 11px; font-weight: 700; }
       #hotbar-name { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); font-size: 15px; font-weight: 600; opacity: 0; transition: opacity .25s; }
+      .bubble { position: absolute; left: 0; top: 0; max-width: 220px; padding: 5px 9px; background: rgba(255,255,255,.94); color: #14181f; border-radius: 10px; font: 600 13px system-ui, sans-serif; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.35); will-change: transform; }
+      .bubble::after { content: ''; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); border: 6px solid transparent; border-top-color: rgba(255,255,255,.94); border-bottom: 0; }
+      .bubble.alert { background: #ffd23f; }
+      .bubble .pb { height: 4px; margin-top: 4px; background: rgba(0,0,0,.15); border-radius: 2px; overflow: hidden; } .bubble .pb div { height: 100%; width: 0; background: #d62828; }
       #chat .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       #chat .quick button { font: 600 14px system-ui, sans-serif; color: #fff; background: #23395d; border: 1px solid #3d5a85; border-radius: 18px; padding: 8px 12px; min-height: 36px; cursor: pointer; touch-action: manipulation; }
       #chat .quick button:hover, #chat .quick button:focus-visible { background: #2f4f80; outline: 2px solid #7bdff2; outline-offset: 1px; }

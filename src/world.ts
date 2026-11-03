@@ -21,6 +21,7 @@ import type { Profiler } from './systems/profiler';
 import type { SettingsState } from './systems/settings';
 import type { ItemsState } from './systems/worldItems';
 import type { InventoryState } from './systems/inventory';
+import type { CombatState } from './systems/combat';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -31,6 +32,9 @@ export type GameEvent =
   | { type: 'enterCar'; x: number; z: number; carId: number; seen: boolean }
   | { type: 'speeding'; x: number; z: number; speed: number }
   | { type: 'busted'; x: number; z: number }
+  | { type: 'assault'; pedId: number; x: number; z: number; weapon: string }
+  | { type: 'harassment'; pedId: number; x: number; z: number; weapon: string }
+  | { type: 'vandalism'; x: number; z: number; what: string }
   | { type: 'policeCalled'; x: number; z: number; byPed: number };
 
 export interface World {
@@ -49,6 +53,7 @@ export interface World {
   settings: SettingsState;
   itemsState: ItemsState;
   inventory: InventoryState;
+  combat: CombatState;
   city: CityData;
   player: PlayerState;
   vehicles: Vehicle[];

@@ -46,7 +46,7 @@ export class ScriptedProvider implements DialogueProvider {
     const intent = detectIntent(text);
     const P = TEMPLATES[npc.personality];
     const tics = TICS[npc.personality];
-    const hitMe = npc.memory.some((m) => m.kind === 'hitMe');
+    const hitMe = npc.memory.some((m) => m.kind === 'hitMe' || m.kind === 'assaulted');
     const rel = npc.relationship;
     const firstTime = npc.timesTalked === 0;
 
