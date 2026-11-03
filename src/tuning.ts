@@ -332,6 +332,14 @@ const RAW = {
     hornVolume: 0.25,
   },
 
+  quality: {
+    default: 'medium', // preset used until the player picks one in the pause menu
+    // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player
+    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, pedBudget: 30 },
+    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1024, pedBudget: 45 },
+    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, pedBudget: 60 },
+  },
+
   debug: {
     spikeMs: 33, // a frame longer than this counts as a spike in the F3 overlay
     spikeWindow: 10, // seconds of history for the spike counter and worst frame

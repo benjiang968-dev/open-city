@@ -615,3 +615,20 @@ export async function deathscreen(page, S) {
   await page.waitForTimeout(800);
   return page.evaluate(() => ({ dead: window.__oc.player.dead, opacity: document.getElementById('death').style.opacity }));
 }
+
+export async function pause(page, S) {
+  await S.start(page);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.__oc.paused, null, { timeout: 5000 }).catch(() => {});
+  const a = await page.evaluate(() => ({ paused: window.__oc.paused, t: window.__oc.dayNight.hour, shown: getComputedStyle(document.getElementById('pause')).display }));
+  await page.click('#q-low');
+  await page.waitForTimeout(600);
+  const b = await page.evaluate(() => ({ q: window.__oc.settings.quality, shadows: window.__oc.renderer.shadowMap.enabled, budget: window.__oc.settings.pedBudget, pr: window.__oc.renderer.getPixelRatio(), t: window.__oc.dayNight.hour }));
+  await page.click('#q-medium');
+  await page.waitForTimeout(300);
+  await page.screenshot({ path: 'screenshots/15-pause-menu.png' });
+  await page.click('#pause-resume');
+  await page.waitForTimeout(500);
+  const c = await page.evaluate(() => ({ paused: window.__oc.paused, q: window.__oc.settings.quality, shadows: window.__oc.renderer.shadowMap.enabled, pr: window.__oc.renderer.getPixelRatio() }));
+  return { a, b, frozen: Math.abs(b.t - a.t) < 1e-6, c };
+}

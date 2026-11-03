@@ -77,7 +77,10 @@ export function openChat(w: World, ped: Ped): void {
   s.conversations++;
   w.input.blocked = true;
   w.input.keys.clear();
-  if (document.pointerLockElement) document.exitPointerLock();
+  if (document.pointerLockElement) {
+    w.input.expectUnlock = true;
+    document.exitPointerLock();
+  }
   ped.state = 'talk';
   const rel = ped.npc.relationship;
   const relTxt = rel > 30 ? 'likes you' : rel < -30 ? 'dislikes you' : 'neutral';

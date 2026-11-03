@@ -10,6 +10,10 @@ export interface InputState {
   anyKeyPressed: boolean; // for the title screen
   /** When true (chat open) game actions are ignored. */
   blocked: boolean;
+  /** Set before the game releases the mouse lock itself (chat, pause), so it isn't read as "player pressed Esc". */
+  expectUnlock: boolean;
+  /** The mouse lock was lost without the game asking (usually Esc): opens the pause menu. */
+  lockLost: boolean;
 }
 
 export function createInput(canvas: HTMLCanvasElement): InputState {
@@ -22,6 +26,8 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
     pointerLocked: false,
     anyKeyPressed: false,
     blocked: false,
+    expectUnlock: false,
+    lockLost: false,
   };
   window.addEventListener('keydown', (e) => {
     s.anyKeyPressed = true;
@@ -45,7 +51,12 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
     }
   });
   document.addEventListener('pointerlockchange', () => {
-    s.pointerLocked = document.pointerLockElement === canvas;
+    const locked = document.pointerLockElement === canvas;
+    if (s.pointerLocked && !locked) {
+      if (s.expectUnlock) s.expectUnlock = false;
+      else s.lockLost = true;
+    }
+    s.pointerLocked = locked;
   });
   window.addEventListener('mousemove', (e) => {
     if (!s.pointerLocked || s.blocked) return;

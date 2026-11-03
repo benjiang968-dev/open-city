@@ -23,6 +23,8 @@ import { createMinimap, showMinimap, updateMinimap } from './systems/minimap';
 import { createAudio, startAudio, updateAudio, toggleMute } from './systems/audio';
 import { ScriptedProvider } from './npc/providers/scripted';
 import { Profiler } from './systems/profiler';
+import { createSettings, applyQuality } from './systems/settings';
+import { createPauseMenu, updatePauseKeys } from './systems/pauseMenu';
 import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
@@ -53,9 +55,10 @@ async function boot() {
     seed, rng: new Rng(seed), R: RAPIER, physics, renderer, scene, camera,
     input: createInput(canvas), cam: createCamera(), vehicles: [], traffic: [], peds: [], cash: TUNING.economy.startingCash,
     started: false, paused: false, time: 0, frameDt: 0, fps: 60, debugVisible: false, events: [], colliderOwner: new Map(),
-    prof: new Profiler(), police: createPolice(), jobs: new JobManager(), audio: createAudio(), dialogue: new ScriptedProvider(),
+    prof: new Profiler(), settings: createSettings(), police: createPolice(), jobs: new JobManager(), audio: createAudio(), dialogue: new ScriptedProvider(),
   } as unknown as World;
   w.dayNight = createDayNight(scene);
+  applyQuality(w, w.settings.quality, true);
   w.city = generateCity(scene, RAPIER, physics, seed);
   w.weather = createWeather(w);
   const rank = w.city.taxiRanks[0];
@@ -71,6 +74,7 @@ async function boot() {
   createMinimap(w);
   createDebug(w);
   createHealthUi();
+  createPauseMenu(w);
 
   // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
   // triggers a first-time shader compile mid-game
@@ -130,6 +134,13 @@ async function boot() {
       w.cam.yaw = Math.PI / 2;
     }
     if (act.debug(w.input)) w.debugVisible = !w.debugVisible;
+    updatePauseKeys(w);
+    if (w.paused) {
+      // world frozen behind the menu; keep drawing it
+      if (render) renderer.render(scene, camera);
+      endInputFrame(w.input);
+      return;
+    }
     if (w.input.pressed.has('KeyM')) toggleMute(w.audio);
     if (w.started && !w.input.blocked && w.input.pressed.has('KeyN')) cycleWeather(w);
 

@@ -40,6 +40,17 @@
       #death { position: absolute; inset: 0; background: #000; display: none; opacity: 0; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
       #death .t { font: 900 64px system-ui, sans-serif; letter-spacing: .25em; color: #e9ecef; }
       #death .s { font-size: 18px; color: #adb5bd; }
+      #pause { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; background: rgba(6,10,20,.55); pointer-events: auto; }
+      #pause .panel { width: min(440px, calc(100vw - 32px)); background: #121a2b; border: 1px solid #2c3a57; border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+      #pause h2 { margin: 0; font-size: 26px; letter-spacing: .12em; text-transform: uppercase; }
+      #pause button { font: 600 15px system-ui, sans-serif; color: #fff; background: #23395d; border: 1px solid #3d5a85; border-radius: 8px; padding: 10px 14px; cursor: pointer; }
+      #pause button:hover, #pause button:focus-visible { background: #2f4f80; outline: 2px solid #7bdff2; outline-offset: 1px; }
+      #pause button.primary { background: #2a7a4b; border-color: #3fa66a; font-size: 17px; }
+      #pause .label { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; opacity: .7; margin-bottom: 6px; }
+      #pause .seg { display: flex; gap: 6px; } #pause .seg button { flex: 1; }
+      #pause .seg button.on { background: #f4c430; color: #111; border-color: #f4c430; }
+      #pause .desc { font-size: 13px; opacity: .75; margin-top: 6px; }
+      #pause .controls { font-size: 13px; line-height: 1.6; opacity: .8; }
       #chat .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       #chat .quick button { font: 600 14px system-ui, sans-serif; color: #fff; background: #23395d; border: 1px solid #3d5a85; border-radius: 18px; padding: 8px 12px; min-height: 36px; cursor: pointer; touch-action: manipulation; }
       #chat .quick button:hover, #chat .quick button:focus-visible { background: #2f4f80; outline: 2px solid #7bdff2; outline-offset: 1px; }

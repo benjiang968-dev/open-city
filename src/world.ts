@@ -18,6 +18,7 @@ import type { ChatState } from './systems/chat';
 import type { DialogueProvider } from './npc/providers/provider';
 import type { WeatherState } from './systems/weather';
 import type { Profiler } from './systems/profiler';
+import type { SettingsState } from './systems/settings';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -43,6 +44,7 @@ export interface World {
   dayNight: DayNightState;
   weather: WeatherState;
   prof: Profiler;
+  settings: SettingsState;
   city: CityData;
   player: PlayerState;
   vehicles: Vehicle[];
