@@ -20,7 +20,9 @@ export function updateDebug(w: World): void {
   const v = w.player.vehicle;
   const info = w.renderer.info.render;
   el.textContent = [
-    `fps      ${w.fps.toFixed(0)}`,
+    `fps      ${w.fps.toFixed(0)}   cpu ${w.prof.cpuMs.toFixed(1)} ms`,
+    `spikes   ${w.prof.spikes(w.time)} frames >33ms in 10s · worst ${w.prof.worstMs.toFixed(0)} ms`,
+    `worst@   ${w.prof.worstBreakdown()}`,
     `seed     ${w.seed}`,
     `pos      ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`,
     `vehicle  ${v ? `${v.spec.label}  ${(v.speed * 3.6).toFixed(0)} km/h  hp ${v.health.toFixed(0)}  slip ${v.slip.toFixed(2)}` : 'on foot'}`,

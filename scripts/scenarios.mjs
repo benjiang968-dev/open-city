@@ -406,3 +406,90 @@ export async function weathershot(page, S) {
   await page.waitForTimeout(1500);
   return page.evaluate(() => ({ kind: window.__oc.weather.kind, grip: window.__oc.weather.grip, snow: window.__oc.weather.snowCover }));
 }
+
+// Crash benchmark: 10 crashes into building walls / traffic at different speeds. Per-frame CPU incl. render.
+export async function crashbench(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc;
+    const v = w.vehicles.find((c) => c.type === 'sedan'); const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+    const R = window.__ocFrames;
+    R(30, true); // warm up
+    const base = R(40, true).map((f) => f.cpu);
+    const median = (a) => [...a].sort((x, y) => x - y)[Math.floor(a.length / 2)];
+    const speeds = [20, 35, 50, 60, 70, 80, 90, 100, 110, 120];
+    const crashes = [];
+    // pick tall buildings far from each other
+    const bs = w.city.buildingRects.filter((b) => b.h > 10).slice(0, 40);
+    speeds.forEach((kmh, i) => {
+      const b = bs[(i * 3) % bs.length];
+      const cx = (b.x0 + b.x1) / 2, z = b.z1 + 18; // south of the building, facing north (-z)
+      const h = Math.PI;
+      v.body.setTranslation({ x: cx, y: 0.9, z }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.body.setLinvel({ x: 0, y: 0, z: -kmh / 3.6 }, true);
+      v.prevVel.set(0, 0, -kmh / 3.6);
+      v.health = v.maxHealth; v.wrecked = false;
+      const frames = R(60, true);
+      const worst = frames.reduce((a, f) => (f.cpu > a.cpu ? f : a));
+      crashes.push({ kmh, hp: Math.round(v.health), worst: worst.cpu, top: worst.top, over33: frames.filter((f) => f.cpu > 33).length });
+    });
+    return { baselineMedian: median(base), baselineMax: Math.max(...base), crashes };
+  });
+}
+
+// Crash spike bench (CPU only, no rendering): walls at 10 speeds, 3 traffic cars, then a wreck.
+// Reports frames over 33 ms, the worst frame + breakdown, and JS heap growth.
+export async function crashspikes(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc;
+    const v = w.vehicles.find((c) => c.type === 'sedan'); const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+    const R = (n) => window.__ocFrames(n, false);
+    R(60);
+    const heap0 = performance.memory ? performance.memory.usedJSHeapSize : 0;
+    const all = [];
+    const bs = w.city.buildingRects.filter((b) => b.h > 10 && b.x1 - b.x0 > 12);
+    const launch = (x, z, h, kmh) => {
+      v.body.setTranslation({ x, y: 0.9, z }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      const vx = Math.sin(h) * kmh / 3.6, vz = Math.cos(h) * kmh / 3.6;
+      v.body.setLinvel({ x: vx, y: 0, z: vz }, true); v.prevVel.set(vx, 0, vz);
+    };
+    const hits = [];
+    [20, 35, 50, 60, 70, 80, 90, 100, 110, 120].forEach((kmh, i) => {
+      const b = bs[(i * 5) % bs.length];
+      v.health = v.maxHealth; v.wrecked = false;
+      const hp0 = v.health;
+      launch((b.x0 + b.x1) / 2, b.z1 + 12, Math.PI, kmh);
+      const fr = R(60); all.push(...fr); const wf = fr.reduce((a, f) => (f.cpu > a.cpu ? f : a));
+      hits.push(`${kmh}km/h -${Math.round(hp0 - v.health)}hp worst ${wf.cpu} [${wf.top}]`);
+    });
+    // three traffic cars (raises heat, spawns police)
+    for (let k = 0; k < 3; k++) {
+      const c = w.traffic[k * 5]; const ct = c.body.translation();
+      v.health = v.maxHealth; v.wrecked = false;
+      launch(ct.x - Math.sin(c.heading + 1.2) * 14, ct.z - Math.cos(c.heading + 1.2) * 14, c.heading + 1.2, 70);
+      const fr = R(90); all.push(...fr); const wf = fr.reduce((a, f) => (f.cpu > a.cpu ? f : a));
+      hits.push(`traffic ${k} worst ${wf.cpu} [${wf.top}]`);
+    }
+    // a wreck
+    v.health = 5; v.wrecked = false;
+    const b = bs[3]; launch((b.x0 + b.x1) / 2, b.z1 + 12, Math.PI, 90);
+    { const fr = R(60); all.push(...fr); const wf = fr.reduce((a, f) => (f.cpu > a.cpu ? f : a)); hits.push(`wreck worst ${wf.cpu} [${wf.top}]`); }
+    const heap1 = performance.memory ? performance.memory.usedJSHeapSize : 0;
+    const worst = all.reduce((a, f) => (f.cpu > a.cpu ? f : a));
+    const sorted = all.map((f) => f.cpu).sort((a, b) => a - b);
+    return {
+      frames: all.length, over33: all.filter((f) => f.cpu > 33).length, over16: all.filter((f) => f.cpu > 16.7).length,
+      median: sorted[Math.floor(sorted.length / 2)], p99: sorted[Math.floor(sorted.length * 0.99)], worst: worst.cpu, worstTop: worst.top,
+      heapGrowthMB: +((heap1 - heap0) / 1e6).toFixed(1), damage: hits, stars: w.police.stars, police: w.police.cars.length,
+    };
+  });
+}

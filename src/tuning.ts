@@ -167,6 +167,7 @@ const RAW = {
     },
     gripLatAccel: 12, // m/s² of cornering the steering limiter aims for at speed (~1.2 g)
     steerOverGrip: 1.5, // how far past the grip limit the steering may ask (higher = twitchier, more drift)
+    playerCcd: false, // continuous collision for drivable cars. Off: at ≤50 m/s a 4.5 m car moves 0.83 m per step, so it can't tunnel, and CCD made impacts cost ~10 ms
     downforce: 3.2, // N per (m/s)² per tonne pressing the car into the road
     yawStability: 2.5, // assist torque damping unwanted spin when not using handbrake (0 = off)
     driftYawAssist: 0.25, // weaker damping while handbrake held, so drifts hold but recover
@@ -293,6 +294,11 @@ const RAW = {
     engineMaxHz: 165,
     screechSlipThreshold: 0.25, // lateral slip (m/s ÷ speed) before tyres squeal
     hornVolume: 0.25,
+  },
+
+  debug: {
+    spikeMs: 33, // a frame longer than this counts as a spike in the F3 overlay
+    spikeWindow: 10, // seconds of history for the spike counter and worst frame
   },
 
   hud: {

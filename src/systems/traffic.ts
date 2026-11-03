@@ -35,6 +35,8 @@ export interface AiCar {
   swerveT: number;
   stunT: number;
   stuckT: number;
+  px: number; // cached position, refreshed once per physics step (avoids allocating translation() calls)
+  pz: number;
   /** Optional route chooser at junctions (police use BFS toward the player). */
   chooser?: (car: AiCar) => number;
 }
@@ -109,7 +111,7 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
   const halfH = 0.6;
   const rideY = -spec.wheelY + spec.suspensionRest * 0.75 + spec.wheelRadius + 0.02;
   const body = w.physics.createRigidBody(
-    R.RigidBodyDesc.dynamic().setTranslation(0, halfH + 0.02, 0).enabledRotations(false, true, false).setLinearDamping(0.4).setAngularDamping(2).setCcdEnabled(true),
+    R.RigidBodyDesc.dynamic().setTranslation(0, halfH + 0.02, 0).enabledRotations(false, true, false).setLinearDamping(0.4).setAngularDamping(2).setCcdEnabled(false), // AI cars are slow: no CCD
   );
   const collider = w.physics.createCollider(
     R.ColliderDesc.cuboid(hx, halfH, hz).setMass(spec.mass).setFriction(0).setFrictionCombineRule(R.CoefficientCombineRule.Min).setRestitution(0.1),
@@ -122,7 +124,7 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
   const car: AiCar = {
     id: kind === 'police' ? w.police?.cars?.length ?? 0 : w.traffic.length, kind, type, body, collider, mesh, meshYOffset: rideY - halfH, halfW: hx, halfL: hz,
     from, to, next: -1, phase: 'lane', path: [], cum: [], s: 0, speed: 0, heading: 0, waitT: 0, honkCd: 0, blockedT: 0,
-    swerve: 0, swerveT: 0, stunT: 0, stuckT: 0,
+    swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, pz: 0,
   };
   placeOnEdge(w, car, from, to, s0);
   return car;
@@ -138,9 +140,10 @@ export function placeOnEdge(w: World, car: AiCar, from: number, to: number, s0: 
   const d = car.path[1].clone().sub(car.path[0]).normalize();
   car.heading = Math.atan2(d.x, d.y);
   car.body.setTranslation({ x: p.x, y: 0.62, z: p.y }, true);
-  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), car.heading);
-  car.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+  car.body.setRotation(yawQuat(car.heading), true);
   car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  car.px = p.x;
+  car.pz = p.y;
   car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   car.speed = 0;
   car.stunT = 0;
@@ -161,7 +164,9 @@ export function placeRandom(w: World, car: AiCar, minDist: number, rng: () => nu
     const mx = a.x + ((b.x - a.x) * (s0 + 12)) / (len + 25), mz = a.z + ((b.z - a.z) * (s0 + 12)) / (len + 25);
     if (Math.hypot(mx - pp.x, mz - pp.z) < minDist) continue;
     // not on top of another AI car
-    const clash = [...w.traffic, ...(w.police?.cars ?? [])].some((o) => o !== car && o.body.translation() && Math.hypot(o.body.translation().x - mx, o.body.translation().z - mz) < 12);
+    let clash = false;
+    for (const o of w.traffic) if (o !== car && Math.hypot(o.px - mx, o.pz - mz) < 12) clash = true;
+    for (const o of w.police?.cars ?? []) if (o !== car && Math.hypot(o.px - mx, o.pz - mz) < 12) clash = true;
     if (clash) continue;
     placeOnEdge(w, car, a.id, b.id, s0);
     return;
@@ -187,26 +192,51 @@ const fwd = new THREE.Vector2();
 const tgt = new THREE.Vector2();
 const pos2 = new THREE.Vector2();
 
-/** Returns distance to the nearest obstacle ahead in this car's lane (Infinity if clear) and whether it is the player. */
+// reusable scratch objects so the per-step code allocates nothing
+const ROT = { x: 0, y: 0, z: 0, w: 1 };
+const VEL = { x: 0, y: 0, z: 0 };
+/** Rotation about Y as a Rapier quaternion (shared object: use immediately). */
+export function yawQuat(h: number) {
+  ROT.x = 0; ROT.y = Math.sin(h / 2); ROT.z = 0; ROT.w = Math.cos(h / 2);
+  return ROT;
+}
+export function velXZ(x: number, y: number, z: number) {
+  VEL.x = x; VEL.y = y; VEL.z = z;
+  return VEL;
+}
+/** Yaw angle of a quaternion. */
+export function yawOf(r: { x: number; y: number; z: number; w: number }): number {
+  return Math.atan2(2 * (r.w * r.y + r.x * r.z), 1 - 2 * (r.y * r.y + r.x * r.x));
+}
+
+/** Refresh cached positions of AI cars and drivable vehicles once per physics step. */
+export function cachePositions(w: World): void {
+  for (const c of w.traffic) { const t = c.body.translation(); c.px = t.x; c.pz = t.z; }
+  for (const c of w.police.cars ?? []) { const t = c.body.translation(); c.px = t.x; c.pz = t.z; }
+}
+
+const OB = { dist: Infinity, player: false };
+let obPx = 0, obPz = 0, obFx = 0, obFz = 0, obLook = 0, obHalf = 0;
+function consider(x: number, z: number, halfLen: number, width: number, player: boolean) {
+  const rx = x - obPx, rz = z - obPz;
+  const along = rx * obFx + rz * obFz;
+  if (along <= 0 || along > obLook + halfLen) return;
+  const lat = Math.abs(rx * obFz - rz * obFx);
+  if (lat > width) return;
+  const d = along - halfLen - obHalf;
+  if (d < OB.dist) { OB.dist = d; OB.player = player; }
+}
+/** Distance to the nearest obstacle ahead in this car's lane (Infinity if clear) and whether it is the player.
+ *  Returns a shared object: read it immediately. */
 export function obstacleAhead(w: World, car: AiCar, look: number): { dist: number; player: boolean } {
-  const p = car.body.translation();
-  const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
-  let best = Infinity, isPlayer = false;
-  const consider = (x: number, z: number, halfLen: number, width: number, player: boolean) => {
-    const rx = x - p.x, rz = z - p.z;
-    const along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + halfLen) return;
-    const lat = Math.abs(rx * fz - rz * fx);
-    if (lat > width) return;
-    const d = along - halfLen - car.halfL;
-    if (d < best) { best = d; isPlayer = player; }
-  };
-  for (const o of w.traffic) if (o !== car) { const t = o.body.translation(); consider(t.x, t.z, o.halfL, 2.3, false); }
-  for (const o of w.police.cars ?? []) if (o !== car) { const t = o.body.translation(); consider(t.x, t.z, o.halfL, 2.3, false); }
-  for (const v of w.vehicles) { const t = v.body.translation(); consider(t.x, t.z, v.spec.halfExtents[2], 2.4, v.driven); }
+  obPx = car.px; obPz = car.pz; obFx = Math.sin(car.heading); obFz = Math.cos(car.heading); obLook = look; obHalf = car.halfL;
+  OB.dist = Infinity; OB.player = false;
+  for (const o of w.traffic) if (o !== car) consider(o.px, o.pz, o.halfL, 2.3, false);
+  for (const o of w.police.cars ?? []) if (o !== car) consider(o.px, o.pz, o.halfL, 2.3, false);
+  for (const v of w.vehicles) consider(v.px, v.pz, v.spec.halfExtents[2], 2.4, v.driven);
   for (const ped of w.peds) if (ped.state !== 'down') consider(ped.pos.x, ped.pos.z, 0.3, 1.7, false);
   if (!w.player.vehicle) { const pp = w.player.mesh.position; consider(pp.x, pp.z, 0.3, 1.8, true); }
-  return { dist: best, player: isPlayer };
+  return OB;
 }
 
 /** Steers the body along its path at `want` m/s. Handles lane/junction transitions. */
@@ -235,14 +265,13 @@ export function driveAlongPath(w: World, car: AiCar, want: number, dt: number, r
     }
   }
   // follow a point a little ahead on the path
-  const p = car.body.translation();
-  pos2.set(p.x, p.z);
+  pos2.set(car.px, car.pz);
   pointAt(car, Math.min(car.s + 2.5 + car.speed * 0.25, car.cum[car.cum.length - 1] + 0.01), tgt);
   // swerve offset to the right of the path
   if (car.swerve !== 0) {
-    const d = tgt.clone().sub(pos2).normalize();
-    tgt.x += -d.y * car.swerve;
-    tgt.y += d.x * car.swerve;
+    const dx = tgt.x - pos2.x, dz = tgt.y - pos2.y, dl = Math.hypot(dx, dz) || 1;
+    tgt.x += (-dz / dl) * car.swerve;
+    tgt.y += (dx / dl) * car.swerve;
   }
   fwd.copy(tgt).sub(pos2);
   const dist = fwd.length();
@@ -253,10 +282,9 @@ export function driveAlongPath(w: World, car: AiCar, want: number, dt: number, r
   const turnRate = car.speed > 0.5 ? Math.min(3.0, 1.5 + car.speed * 0.15) : 0;
   car.heading += THREE.MathUtils.clamp(dh * 4 * dt, -turnRate * dt, turnRate * dt);
   const lv = car.body.linvel();
-  car.body.setLinvel({ x: Math.sin(car.heading) * car.speed, y: lv.y, z: Math.cos(car.heading) * car.speed }, true);
-  car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-  const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), car.heading);
-  car.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+  car.body.setLinvel(velXZ(Math.sin(car.heading) * car.speed, lv.y, Math.cos(car.heading) * car.speed), true);
+  car.body.setAngvel(velXZ(0, 0, 0), true);
+  car.body.setRotation(yawQuat(car.heading), true);
 }
 
 /** After a collision the car is "stunned": physics moves it freely for a moment. */
@@ -272,17 +300,17 @@ export function stunCheck(car: AiCar, dt: number): boolean {
   if (car.stunT > 0) {
     car.stunT -= dt;
     const r = car.body.rotation();
-    const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(r.x, r.y, r.z, r.w), 'YXZ');
-    car.heading = e.y;
+    car.heading = yawOf(r);
     car.speed = Math.hypot(lv.x, lv.z) * 0.9;
     // friction substitute: slow down while sliding
-    car.body.setLinvel({ x: lv.x * (1 - 2.5 * dt), y: lv.y, z: lv.z * (1 - 2.5 * dt) }, true);
+    car.body.setLinvel(velXZ(lv.x * (1 - 2.5 * dt), lv.y, lv.z * (1 - 2.5 * dt)), true);
     return true;
   }
   return false;
 }
 
 export function updateTraffic(w: World, dt: number): void {
+  cachePositions(w);
   const rng = Math.random;
   const pv = w.player.vehicle;
   const pp = w.player.mesh.position;
@@ -299,7 +327,9 @@ export function updateTraffic(w: World, dt: number): void {
     if (car.phase === 'wait') {
       want = 0;
       car.waitT -= dt;
-      const nodeBusy = [...w.traffic, ...(w.police.cars ?? [])].some((o) => o !== car && o.phase === 'turn' && o.to === car.to);
+      let nodeBusy = false;
+      for (const o of w.traffic) if (o !== car && o.phase === 'turn' && o.to === car.to) nodeBusy = true;
+      for (const o of w.police.cars ?? []) if (o !== car && o.phase === 'turn' && o.to === car.to) nodeBusy = true;
       if (car.waitT <= 0 && !nodeBusy) {
         car.phase = 'turn';
         turnPath(w, car);
@@ -319,20 +349,18 @@ export function updateTraffic(w: World, dt: number): void {
       car.blockedT += dt;
       if (car.blockedT > 1.2 && car.honkCd <= 0) {
         car.honkCd = TT.honkCooldown;
-        const t = car.body.translation();
-        w.audio.horn?.(t.x, t.z);
+        w.audio.horn?.(car.px, car.pz);
       }
     } else car.blockedT = 0;
     // swerve away from a player car charging at us
     if (pv) {
-      const t = car.body.translation();
-      const dx = t.x - pp.x, dz = t.z - pp.z;
+      const dx = car.px - pp.x, dz = car.pz - pp.z;
       const d = Math.hypot(dx, dz);
       const plv = pv.body.linvel();
       const closing = (plv.x * dx + plv.z * dz) / Math.max(1, d);
       if (d < TT.swerveDistance && closing > TT.swerveSpeed && car.swerveT <= 0) {
         car.swerveT = 1.4;
-        if (car.honkCd <= 0) { car.honkCd = TT.honkCooldown; w.audio.horn?.(t.x, t.z); }
+        if (car.honkCd <= 0) { car.honkCd = TT.honkCooldown; w.audio.horn?.(car.px, car.pz); }
       }
     }
     if (car.swerveT > 0) {

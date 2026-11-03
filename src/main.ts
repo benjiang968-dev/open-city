@@ -9,7 +9,7 @@ import { generateCity, updateCity } from './systems/cityGen';
 import { createDayNight, updateDayNight } from './systems/dayNight';
 import { createCamera, updateCamera } from './systems/camera';
 import { createPlayer, updatePlayer } from './systems/player';
-import { spawnInitialVehicles, updateVehicles, detectCrashes } from './systems/vehicles';
+import { spawnInitialVehicles, updateVehicles, detectCrashes, wreckMaterial } from './systems/vehicles';
 import { createHud, showHud, updateHud } from './systems/hud';
 import { createDebug, updateDebug } from './systems/debug';
 import { spawnTraffic, updateTraffic, syncTraffic } from './systems/traffic';
@@ -22,6 +22,7 @@ import { createChat, updateChat } from './systems/chat';
 import { createMinimap, showMinimap, updateMinimap } from './systems/minimap';
 import { createAudio, startAudio, updateAudio, toggleMute } from './systems/audio';
 import { ScriptedProvider } from './npc/providers/scripted';
+import { Profiler } from './systems/profiler';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 
 async function boot() {
@@ -50,7 +51,7 @@ async function boot() {
     seed, rng: new Rng(seed), R: RAPIER, physics, renderer, scene, camera,
     input: createInput(canvas), cam: createCamera(), vehicles: [], traffic: [], peds: [], cash: TUNING.economy.startingCash,
     started: false, paused: false, time: 0, frameDt: 0, fps: 60, debugVisible: false, events: [], colliderOwner: new Map(),
-    police: createPolice(), jobs: new JobManager(), audio: createAudio(), dialogue: new ScriptedProvider(),
+    prof: new Profiler(), police: createPolice(), jobs: new JobManager(), audio: createAudio(), dialogue: new ScriptedProvider(),
   } as unknown as World;
   w.dayNight = createDayNight(scene);
   w.city = generateCity(scene, RAPIER, physics, seed);
@@ -68,17 +69,30 @@ async function boot() {
   createMinimap(w);
   createDebug(w);
 
+  // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
+  // triggers a first-time shader compile mid-game
+  {
+    const pool = w.police.pool;
+    for (const c of pool) c.mesh.visible = true;
+    const keep = pool[0].mesh.material;
+    pool[0].mesh.material = wreckMaterial;
+    renderer.compile(scene, camera);
+    pool[0].mesh.material = keep;
+    for (const c of pool) c.mesh.visible = false;
+  }
+
   // expose read-only state for automated tests (scripts/*.mjs)
   (window as unknown as { __oc: World }).__oc = w;
 
   /** One fixed physics tick for everything that moves bodies. */
   function simStep(step: number) {
-    updatePlayer(w, step);
-    updateVehicles(w, step);
-    updateTraffic(w, step);
-    drivePolice(w, step);
-    physics.step();
-    detectCrashes(w);
+    const P = w.prof;
+    P.begin('player'); updatePlayer(w, step); P.end('player');
+    P.begin('vehicles'); updateVehicles(w, step); P.end('vehicles');
+    P.begin('traffic'); updateTraffic(w, step); P.end('traffic');
+    P.begin('police-drive'); drivePolice(w, step); P.end('police-drive');
+    P.begin('physics'); physics.step(); P.end('physics');
+    P.begin('crashes'); detectCrashes(w); P.end('crashes');
   }
   // deterministic stepping for automated handling tests (runs n ticks instantly, no rendering)
   (window as unknown as { __ocStep: (n: number) => void }).__ocStep = (n: number) => {
@@ -90,12 +104,15 @@ async function boot() {
   };
 
   let last = performance.now();
+  let last0 = last;
   let acc = 0;
   const STEP = 1 / 60;
   let fpsAcc = 0, fpsFrames = 0;
 
   /** One whole game frame. `render` is false when tests fast-forward the simulation. */
-  function tick(dt: number, render: boolean) {
+  function tick(dt: number, render: boolean, realMs = dt * 1000) {
+    const P = w.prof;
+    P.startFrame();
     w.time += dt;
     w.frameDt = dt;
     if (!w.started && w.input.anyKeyPressed) {
@@ -112,6 +129,7 @@ async function boot() {
 
     acc += dt;
     let steps = 0;
+    P.begin('sim');
     while (acc >= STEP && steps < 4) {
       simStep(STEP);
       acc -= STEP;
@@ -119,36 +137,49 @@ async function boot() {
       if (steps === 1) w.input.pressed.clear(); // one-shot keys fire once per frame
     }
     if (steps === 4) acc = 0;
+    P.end('sim');
 
     if (w.started) {
-      updatePeds(w, dt);
-      updateChat(w);
-      w.jobs.update(w, dt);
+      P.begin('peds'); updatePeds(w, dt); P.end('peds');
+      P.begin('chat'); updateChat(w); P.end('chat');
+      P.begin('jobs'); w.jobs.update(w, dt); P.end('jobs');
     }
     // event consumers run once per frame, then events are cleared
-    updateNpcMemory(w);
-    updatePolice(w, dt);
-    updateAudio(w, dt);
+    P.begin('memory'); updateNpcMemory(w); P.end('memory');
+    P.begin('police'); updatePolice(w, dt); P.end('police');
+    P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 
-    syncTraffic(w);
-    syncPolice(w);
-    updateDayNight(w, dt);
-    updateWeather(w, dt);
-    if (render) updateCity(w.city, w.time);
-    updateCamera(w, dt);
-    updateHud(w, dt);
+    P.begin('sync'); syncTraffic(w); syncPolice(w); P.end('sync');
+    P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
+    P.begin('weather'); updateWeather(w, dt); P.end('weather');
+    if (render) { P.begin('city'); updateCity(w.city, w.time); P.end('city'); }
+    P.begin('camera'); updateCamera(w, dt); P.end('camera');
+    P.begin('hud'); updateHud(w, dt); P.end('hud');
     if (render) {
-      updateMinimap(w);
-      updateDebug(w);
-      renderer.render(scene, camera);
+      P.begin('minimap'); updateMinimap(w); P.end('minimap');
+      P.begin('debug'); updateDebug(w); P.end('debug');
+      P.begin('render'); renderer.render(scene, camera); P.end('render');
     }
+    P.endFrame(realMs, w.time);
     if (steps > 0) endInputFrame(w.input);
     else { w.input.mouseDX = 0; w.input.mouseDY = 0; }
   }
   // tests: fast-forward whole frames without rendering
   (window as unknown as { __ocRun: (seconds: number, fps?: number) => void }).__ocRun = (seconds: number, fps = 30) => {
     for (let k = 0; k < seconds * fps; k++) tick(1 / fps, false);
+  };
+
+  // tests: run n full frames (optionally rendered) and return each frame's CPU ms and its biggest sections
+  (window as unknown as { __ocFrames: (n: number, render: boolean) => { cpu: number; top: string }[] }).__ocFrames = (n, render) => {
+    const out: { cpu: number; top: string }[] = [];
+    for (let k = 0; k < n; k++) {
+      const t0 = performance.now();
+      tick(1 / 60, render);
+      const ms = performance.now() - t0;
+      out.push({ cpu: +ms.toFixed(2), top: w.prof.breakdown() });
+    }
+    return out;
   };
 
   function frame(now: number) {
@@ -158,7 +189,8 @@ async function boot() {
     fpsAcc += dt;
     fpsFrames++;
     if (fpsAcc > 0.5) { w.fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
-    tick(dt, true);
+    tick(dt, true, now - last0);
+    last0 = now;
   }
   requestAnimationFrame(frame);
 }

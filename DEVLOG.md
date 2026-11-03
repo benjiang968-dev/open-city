@@ -71,3 +71,20 @@ Format: date · what changed · what to test · known issues.
   - Storms flash lightning, followed by thunder after a delay. Rain has its own sound. Stars and a moon appear on clear nights.
   - HUD shows a weather icon by the clock. NPCs talk about the actual weather.
   - N cycles the weather; `?weather=rain` forces one. All numbers are in `TUNING.weather`.
+
+## 2026-11-03: Day 2, Milestone 1
+
+- **M1.1 Crash stutter.** Diagnosed with a new per-system profiler. F3 now shows CPU ms per frame, the count of frames over 33 ms in the last 10 s, and the worst frame with its top 3 systems. Benchmark: `THROTTLE=4 node scripts/shot.mjs x crashspikes` runs 10 wall crashes at 20–120 km/h, 3 traffic rams (police spawn) and 1 wreck, with the CPU throttled 4× to stand in for a laptop.
+  - **Causes found:**
+    - The physics step jumped from 0.5 to 5–50 ms on impact. Rapier CCD was running against one fixed body holding about 1,500 static colliders; an isolated Node test showed a 98 ms worst-case step.
+    - Garbage-collection pauses of 5–20 ms landed in random systems. Traffic and pedestrians made about 2,000 allocating `translation()` calls plus Quaternion/Euler/array allocations every frame.
+    - Water normals were recomputed every frame for nothing (it's flat-shaded).
+  - **Fixes:**
+    - Static colliders split into one fixed body per 120 m area.
+    - CCD off for AI cars and player cars. At ≤50 m/s a 4.5 m car moves 0.83 m per step, so it can't tunnel (`vehicles.playerCcd`).
+    - Positions cached once per physics step.
+    - Scratch objects reused in traffic, police and pedestrian code.
+    - Water normals no longer recomputed.
+    - Shaders (including police cars and a shared wreck material) pre-compiled at load, so a crash never compiles one.
+  - **Before → after (4× throttle, 930 frames):** frames over 33 ms 1–2 → 0; worst frame 38–60 ms → 31.6 ms; 99th percentile 18–25 → 17 ms; heap growth 5 MB → about 0 MB.
+  - **Known issue:** GPU-side stalls can't be measured headless; check F3 "spikes" on the laptop.

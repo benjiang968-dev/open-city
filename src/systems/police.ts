@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
-import { createAiCar, driveAlongPath, stunCheck, syncAi, placeOnEdge, type AiCar } from './traffic';
+import { createAiCar, driveAlongPath, stunCheck, syncAi, placeOnEdge, yawQuat, velXZ, type AiCar } from './traffic';
 import { exitVehicle } from './player';
 import { toast } from './hud';
 
@@ -171,8 +171,7 @@ export function updatePolice(w: World, dt: number): void {
     // retire cars that are far away or not in view
     for (let k = pol.cars.length - 1; k >= 0 && pol.cars.length > want; k--) {
       const c = pol.cars[k];
-      const t = c.body.translation();
-      const d = w.player.mesh.position.distanceTo(new THREE.Vector3(t.x, t.y, t.z));
+      const d = Math.hypot(c.px - w.player.mesh.position.x, c.pz - w.player.mesh.position.z);
       if (d > 70 || pol.stars === 0) {
         pol.cars.splice(k, 1);
         park(c);
@@ -205,10 +204,9 @@ export function drivePolice(w: World, dt: number): void {
       const want = dist < 9 ? Math.max(2, dist * 0.6) : speedCap;
       car.speed += THREE.MathUtils.clamp(want - car.speed, -TUNING.traffic.brake * dt, P.accel * dt);
       const lv = car.body.linvel();
-      car.body.setLinvel({ x: Math.sin(car.heading) * car.speed, y: lv.y, z: Math.cos(car.heading) * car.speed }, true);
-      car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), car.heading);
-      car.body.setRotation({ x: q.x, y: q.y, z: q.z, w: q.w }, true);
+      car.body.setLinvel(velXZ(Math.sin(car.heading) * car.speed, lv.y, Math.cos(car.heading) * car.speed), true);
+      car.body.setAngvel(velXZ(0, 0, 0), true);
+      car.body.setRotation(yawQuat(car.heading), true);
       car.phase = 'lane';
       car.stuckT = 0;
     } else {
@@ -237,10 +235,8 @@ function bustCheck(w: World, dt: number): void {
   const pp = w.player.mesh.position;
   const pv = w.player.vehicle;
   const playerSpeed = pv ? Math.abs(pv.speed) : 0;
-  const close = pol.cars.some((c) => {
-    const t = c.body.translation();
-    return Math.hypot(t.x - pp.x, t.z - pp.z) < P.bustRange;
-  });
+  let close = false;
+  for (const c of pol.cars) if (Math.hypot(c.px - pp.x, c.pz - pp.z) < P.bustRange) close = true;
   if (pol.stars > 0 && pol.seen && close && playerSpeed < 1.5) {
     pol.bustTimer += dt;
     if (pol.bustTimer > P.bustTime) bust(w);

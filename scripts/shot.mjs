@@ -24,11 +24,15 @@ const server = createServer(async (req, res) => {
 }).listen(0);
 const port = server.address().port;
 
-const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
+const browser = await chromium.launch({ args: ['--enable-precise-memory-info', '--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errors.push(`[${m.type()}] ${m.text()}`); });
 page.on('pageerror', (e) => errors.push(`[pageerror] ${e.message}`));
+if (process.env.THROTTLE) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
+}
 await page.goto(`http://localhost:${port}/${seed ? `?seed=${seed}` : ''}`);
 await page.waitForFunction(() => window.__oc && window.__oc.time > 1, null, { timeout: 60000 });
 
@@ -44,9 +48,9 @@ const run = mod[scenario] ?? S[scenario];
 if (!run) throw new Error(`unknown scenario ${scenario}`);
 const result = await run(page, S);
 mkdirSync('screenshots', { recursive: true });
-await page.screenshot({ path: `screenshots/${name}.png` });
 const fps = await page.evaluate(() => window.__oc.fps);
 console.log(JSON.stringify({ name, scenario, fps: Math.round(fps), result }, null, 0));
+try { await page.screenshot({ path: `screenshots/${name}.png`, timeout: 90000 }); } catch (e) { console.log('screenshot failed: ' + e.message.split('\n')[0]); }
 const real = errors.filter((e) => !/GPU stall|ReadPixels|WebGL-|swiftshader|Automatic fallback/i.test(e));
 if (real.length) { console.log('CONSOLE ERRORS:\n' + real.join('\n')); process.exitCode = 1; }
 else console.log('console clean');

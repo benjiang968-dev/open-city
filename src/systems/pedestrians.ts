@@ -89,6 +89,8 @@ function chooseDestination(w: World, ped: Ped): number {
 }
 
 const tmp = new THREE.Vector3();
+const CAR_POS = new THREE.Vector3();
+const CAR_VEL = new THREE.Vector3();
 const fwd = new THREE.Vector3();
 const right = new THREE.Vector3();
 
@@ -100,8 +102,8 @@ export function updatePeds(w: World, dt: number): void {
   if (pv) {
     const t = pv.body.translation();
     const lv = pv.body.linvel();
-    carPos = new THREE.Vector3(t.x, t.y, t.z);
-    carVel = new THREE.Vector3(lv.x, 0, lv.z);
+    carPos = CAR_POS.set(t.x, t.y, t.z);
+    carVel = CAR_VEL.set(lv.x, 0, lv.z);
     carSpeed = carVel.length();
     fwd.set(Math.sin(pv.heading), 0, Math.cos(pv.heading));
     right.set(-fwd.z, 0, fwd.x);
@@ -236,8 +238,7 @@ function crossingBlocked(w: World, ped: Ped, dx: number, dz: number): boolean {
   const px = ped.pos.x + dx * 2, pz = ped.pos.z + dz * 2;
   for (const car of w.traffic) {
     if (car.speed < 2) continue;
-    const t = car.body.translation();
-    const rx = px - t.x, rz = pz - t.z;
+    const rx = px - car.px, rz = pz - car.pz;
     const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
     const along = rx * fx + rz * fz;
     if (along > 0 && along < 14 && Math.abs(rx * fz - rz * fx) < 2.5) {

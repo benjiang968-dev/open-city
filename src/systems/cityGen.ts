@@ -190,11 +190,19 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   const winDark = new GeoBuilder();
   const props = new GeoBuilder();
   const signs = new GeoBuilder();
-  const staticBody = physics.createRigidBody(R.RigidBodyDesc.fixed());
+  // static colliders are grouped into one fixed body per 120 m area: a single body with ~1500 colliders
+  // made continuous collision detection (CCD) on the player's car expensive at impact time
+  const staticBodies = new Map<string, RAPIER.RigidBody>();
+  const staticAt = (x: number, z: number) => {
+    const key = `${Math.floor(x / 120)},${Math.floor(z / 120)}`;
+    let b = staticBodies.get(key);
+    if (!b) staticBodies.set(key, (b = physics.createRigidBody(R.RigidBodyDesc.fixed())));
+    return b;
+  };
   const addBoxCollider = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => {
     physics.createCollider(
       R.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2).setFriction(0.6),
-      staticBody,
+      staticAt((x0 + x1) / 2, (z0 + z1) / 2),
     );
   };
 
@@ -597,7 +605,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       poles.setMatrixAt(k, m);
       arms.setMatrixAt(k, m);
       heads.setMatrixAt(k, m);
-      physics.createCollider(R.ColliderDesc.cylinder(3, 0.14).setTranslation(l.x, 3, l.z), staticBody);
+      physics.createCollider(R.ColliderDesc.cylinder(3, 0.14).setTranslation(l.x, 3, l.z), staticAt(l.x, l.z));
     });
     poles.castShadow = true;
     // pools of light on the ground under each lamp (additive, faded in at night)
@@ -639,7 +647,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       trunks.setMatrixAt(k, m);
       crowns.setMatrixAt(k, m);
       crowns.setColorAt(k, C(rng.pick(greens)));
-      physics.createCollider(R.ColliderDesc.cylinder(1.2, 0.22 * t.s).setTranslation(t.x, 1.2, t.z), staticBody);
+      physics.createCollider(R.ColliderDesc.cylinder(1.2, 0.22 * t.s).setTranslation(t.x, 1.2, t.z), staticAt(t.x, t.z));
     });
     trunks.castShadow = crowns.castShadow = true;
     for (const im of [trunks, crowns]) {
@@ -794,8 +802,7 @@ export function updateCity(city: CityData, t: number): void {
     const x = b[k], z = b[k + 2];
     a[k + 1] = b[k + 1] + Math.sin(x * 0.07 + t * 1.1) * 0.18 + Math.cos(z * 0.09 + t * 0.8) * 0.14;
   }
-  pos.needsUpdate = true;
-  city.water.geometry.computeVertexNormals();
+  pos.needsUpdate = true; // water is flat-shaded: no normals to recompute
   for (const boat of city.boats) {
     boat.mesh.position.y = boat.baseY + Math.sin(t * 1.3 + boat.phase) * 0.12;
     boat.mesh.rotation.z = Math.sin(t * 0.9 + boat.phase) * 0.04;

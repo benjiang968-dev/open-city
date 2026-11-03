@@ -38,6 +38,8 @@ export interface Vehicle {
   driven: boolean;
   wrecked: boolean;
   lastHitTime: number;
+  px: number; // cached position (refreshed every physics step)
+  pz: number;
 }
 
 export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, heading: number, paint?: THREE.Color): Vehicle {
@@ -54,7 +56,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
     .setAdditionalMassProperties(m, { x: 0, y: spec.comHeight, z: 0 }, inertia, { x: 0, y: 0, z: 0, w: 1 })
     .setLinearDamping(V.linearDamping)
     .setAngularDamping(V.angularDamping)
-    .setCcdEnabled(true);
+    .setCcdEnabled(V.playerCcd);
   const body = w.physics.createRigidBody(bodyDesc);
   const collider = w.physics.createCollider(
     R.ColliderDesc.cuboid(hx, hy, hz).setDensity(0).setFriction(0.3).setRestitution(0.1).setActiveEvents(R.ActiveEvents.CONTACT_FORCE_EVENTS),
@@ -98,7 +100,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
     id: w.vehicles.length, type, spec, body, collider, ctrl, mesh: group, bodyMesh, wheels,
     health: spec.health, maxHealth: spec.health, steer: 0, speed: 0, heading, slip: 0, throttle: 0,
     rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, inWaterTimer: 0,
-    driven: false, wrecked: false, lastHitTime: -10,
+    driven: false, wrecked: false, lastHitTime: -10, px: x, pz: z,
   };
   w.vehicles.push(v);
   w.colliderOwner.set(collider.handle, { kind: 'vehicle', id: v.id });
@@ -148,6 +150,9 @@ export function updateVehicles(w: World, dt: number): void {
     up.set(0, 1, 0).applyQuaternion(q);
     right.set(-1, 0, 0).applyQuaternion(q);
     v.heading = Math.atan2(fwd.x, fwd.z);
+    const tp = v.body.translation();
+    v.px = tp.x;
+    v.pz = tp.z;
     const lv = v.body.linvel();
     vel.set(lv.x, lv.y, lv.z);
     const speedAbs = vel.length();
@@ -265,10 +270,16 @@ export function detectCrashes(w: World): void {
   }
 }
 
+/** Shared burnt-out look (one material, pre-compiled at load so wrecking never compiles a shader). */
+export const wreckMaterial = (() => {
+  const m = carMaterial.clone();
+  m.color.setRGB(0.35, 0.33, 0.32);
+  return m;
+})();
+
 function wreck(v: Vehicle) {
   v.wrecked = true;
-  v.bodyMesh.material = carMaterial.clone();
-  (v.bodyMesh.material as THREE.MeshStandardMaterial).color.setRGB(0.35, 0.33, 0.32);
+  v.bodyMesh.material = wreckMaterial;
 }
 
 export function resetUpright(v: Vehicle): void {
