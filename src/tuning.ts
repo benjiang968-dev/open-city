@@ -267,6 +267,26 @@ const RAW = {
     callPoliceBelow: -70, // relationship at which an angry NPC calls the police
   },
 
+  health: {
+    max: 100,
+    beltedSafeImpact: 13, // m/s of crash impact a belted driver takes without injury (~47 km/h)
+    crashHurtPerMs: 3.2, // health lost per m/s of impact above that
+    footHitMinSpeed: 3, // m/s: a car slower than this just nudges you on foot
+    footHitPerMs: 5, // health lost per m/s of car speed when hit on foot
+    footKnockback: 0.7, // fraction of the car's speed you are thrown at
+    regenDelay: 8, // seconds without damage before healing starts
+    regenPerSec: 0.6, // health per second while healing on your own
+    injuredBelow: 40, // under this: slower run, camera sway, red vignette
+    injuredSpeedFactor: 0.6, // run speed multiplier while injured
+    swayAmount: 0.025, // camera sway (radians) while injured
+    clinicRange: 4.5, // metres from the clinic door to get treated
+    clinicFeePerHp: 0.6, // $ per missing health point at the clinic (capped by your cash)
+    deathFade: 2.5, // seconds the screen fades to black
+    deathScreen: 4.5, // seconds before you wake up
+    deathTimeSkip: 30, // game-world seconds that pass while you're out
+    deathFeeCap: 120, // most the hospital bill can ever be (never more than your cash)
+  },
+
   damage: {
     subdivisions: 2, // body triangles are split 4^n times so dents bend panels smoothly
     dentThreshold: 4.5, // m/s of impact before the body dents

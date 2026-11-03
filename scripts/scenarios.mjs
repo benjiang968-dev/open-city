@@ -537,3 +537,81 @@ export async function dent(page, S) {
   await page.waitForTimeout(1500);
   return r;
 }
+
+// Milestone 1 gate: 10 crashes, die from crashes, wake at the clinic; hit by traffic on foot; treated at clinic.
+export async function gate1(page, S) {
+  await S.start(page);
+  const out = await page.evaluate(() => {
+    const w = window.__oc, R0 = w.R;
+    const free = (x, z) => !w.physics.castRay(new R0.Ray({ x, y: 30, z }, { x: 0, y: -1, z: 0 }), 29.5, true, R0.QueryFilterFlags.ONLY_FIXED);
+    const walls = w.city.buildingRects.filter((q) => q.h > 10 && q.x1 - q.x0 > 12).filter((q) => [4, 8, 12, 16].every((d) => free((q.x0 + q.x1) / 2 - 1, q.z1 + d) && free((q.x0 + q.x1) / 2 + 1, q.z1 + d)));
+    const v = w.vehicles.find((c) => c.type === 'pickup'); const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.6, y: 1.2, z: t.z - Math.sin(v.heading) * 2.6 }, true);
+    window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+    w.cash = 500;
+    const frames = [];
+    const log = [];
+    const launch = (b, kmh) => {
+      const h = Math.PI;
+      v.body.setTranslation({ x: (b.x0 + b.x1) / 2, y: 1.0, z: b.z1 + 9 }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.body.setLinvel({ x: 0, y: 0, z: -kmh / 3.6 }, true); v.prevVel.set(0, 0, -kmh / 3.6);
+      v.health = v.maxHealth; v.wrecked = false;
+      const f = window.__ocFrames(45, false); frames.push(...f);
+    };
+    [25, 40, 55, 30, 70, 45, 60, 35, 50, 65].forEach((kmh, i) => {
+      w.player.health = 100; launch(walls[i % walls.length], kmh);
+      log.push(`${kmh} km/h → player hp ${Math.round(w.player.health)}`);
+    });
+    const dents = +v.dmg.dentTotal.toFixed(2);
+    // die: very hard crashes
+    w.player.health = 100;
+    const cash0 = w.cash, hour0 = w.dayNight.hour;
+    let k = 0;
+    while (!w.player.dead && k < 6) { launch(walls[k % walls.length], 140); k++; }
+    const died = w.player.dead;
+    const deadPos = { ...w.player.mesh.position };
+    window.__ocFrames(60, false); // fade
+    const midFade = document.getElementById('death').style.opacity;
+    window.__ocFrames(240, false); // wake
+    const clinic = w.city.pois.find((q) => q.kind === 'clinic');
+    const pp = w.player.mesh.position;
+    const wake = { dead: w.player.dead, hp: w.player.health, inCar: !!w.player.vehicle, distToClinic: Math.round(Math.hypot(pp.x - clinic.x, pp.z - clinic.z)), fee: cash0 - w.cash, hoursPassed: +(((w.dayNight.hour - hour0) + 24) % 24).toFixed(3), stars: w.police.stars, taxi: w.jobs.get('taxi').phase };
+    // on foot: step in front of a traffic car
+    const car = w.traffic.find((c) => c.phase === 'lane' && c.speed > 5) ?? w.traffic[0];
+    car.speed = 11;
+    w.player.body.setTranslation({ x: car.px + Math.sin(car.heading) * 6, y: 1.2, z: car.pz + Math.cos(car.heading) * 6 }, true);
+    window.__ocRun(1.5);
+    const footHp = Math.round(w.player.health);
+    // clinic
+    w.player.body.setTranslation({ x: clinic.x, y: 1.2, z: clinic.z }, true);
+    window.__ocRun(0.3);
+    const prompt = w.player.prompt;
+    const c0 = w.cash;
+    w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+    const treated = { prompt, hp: w.player.health, paid: c0 - w.cash };
+    return { log, dents, died, crashesToDie: k, midFade, wake, footHp, treated, over33: frames.filter((f) => f.cpu > 33).length, worst: Math.max(...frames.map((f) => f.cpu)) };
+  });
+  return out;
+}
+
+export async function injured(page, S) {
+  await S.start(page);
+  await page.evaluate(() => { const w = window.__oc; w.player.health = 22; w.player.lastHurt = w.time; });
+  await page.waitForTimeout(1500);
+  return page.evaluate(() => ({ hp: window.__oc.player.health, vignette: document.getElementById('vignette').style.opacity }));
+}
+export async function deathscreen(page, S) {
+  await S.start(page);
+  await page.evaluate(() => { const w = window.__oc; w.player.health = 5; window.__ocRun(0.1); });
+  await page.evaluate(() => { const w = window.__oc; w.player.lastHurt = -10; });
+  await page.evaluate(() => { const w = window.__oc; const v = w.player; v.health = 1; });
+  await page.evaluate(() => { window.__oc.player.health = 0.5; });
+  // hurt through the real path
+  await page.evaluate(() => { const w = window.__oc; w.player.dead = false; w.events.push({ type: 'crash', x: 0, z: 0, damage: 50, dv: 99 }); });
+  await page.evaluate(() => { const w = window.__oc; const v = w.vehicles[0]; w.player.vehicle = v; v.driven = true; window.__ocRun(0.05); w.player.vehicle = null; v.driven = false; });
+  await page.evaluate(() => window.__ocRun(2.5));
+  await page.waitForTimeout(800);
+  return page.evaluate(() => ({ dead: window.__oc.player.dead, opacity: document.getElementById('death').style.opacity }));
+}

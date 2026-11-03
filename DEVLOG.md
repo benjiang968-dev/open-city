@@ -94,3 +94,15 @@ Format: date · what changed · what to test · known issues.
   - Headlights break per side at 6 m/s (the night beam dims accordingly). The windscreen cracks at 9 m/s.
   - No allocations at impact; thresholds are in `TUNING.damage`.
   - Test: `node scripts/shot.mjs x dent` crashes at 55 and 75 km/h with 0 frames over 33 ms (worst 7.8 ms).
+- **M1.3 Player health.** Health runs 0–100, shown as a heart bar under the stars when below 100.
+  - **Crashes:** you're always belted, so impacts under 13 m/s don't hurt. Above that you lose 3.2 hp per m/s; a 70 km/h wall hit costs about 22 hp.
+  - **On foot:** a car hitting you costs 5 hp per m/s of its speed and throws you clear (an 11 m/s car takes 40 hp).
+  - **Recovery:** after 8 s without damage you heal 0.6 hp/s. A clinic door gives a full heal for $0.6 per missing hp, capped at your cash.
+  - **Below 40 hp:** run speed ×0.6, the camera sways and a red vignette appears; hits also flash the vignette.
+  - All numbers are in `TUNING.health`.
+- **M1.4 Knocked out.** At 0 hp you drop, the screen fades to black with "LIGHTS OUT", and you wake at the clinic. When you wake:
+  - Full health; 30 minutes of game time have passed.
+  - Bill = min(cash, $120), so you can never be trapped by money.
+  - Taxi fare cancelled, police heat cleared.
+  - Inventory kept (no inventory yet; the hook is in `wakeUp`).
+  - Gate test (`node scripts/shot.mjs x gate1`): 10 crashes at 25–70 km/h, 0 frames over 33 ms (worst 9.4 ms), dents visible. Died after two 140 km/h crashes and woke at the clinic with full health and a $120 bill. Hit by traffic on foot: 100 → 60. Clinic heal cost $24.

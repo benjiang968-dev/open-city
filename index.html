@@ -33,6 +33,13 @@
       #chat .log .me { color: #9ecbff; } #chat .log .npc { color: #fff; } #chat .log .act { color: #ffd166; font-style: italic; font-size: 13px; }
       #chat input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid #456; background: #0b1222; color: #fff; font-size: 15px; outline: none; }
       #chat .hint { font-size: 12px; opacity: .55; margin-top: 4px; }
+      #vignette { position: absolute; inset: 0; opacity: 0; background: radial-gradient(ellipse at center, rgba(0,0,0,0) 45%, rgba(170,0,0,.55) 100%); transition: opacity .2s; --flash: 0; }
+      #hp { position: absolute; top: 122px; right: 22px; display: none; align-items: center; gap: 8px; font-size: 18px; color: #ef476f; }
+      #hp .bar { width: 120px; height: 8px; background: rgba(255,255,255,.2); border-radius: 4px; overflow: hidden; }
+      #hp .bar div { height: 100%; width: 100%; }
+      #death { position: absolute; inset: 0; background: #000; display: none; opacity: 0; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+      #death .t { font: 900 64px system-ui, sans-serif; letter-spacing: .25em; color: #e9ecef; }
+      #death .s { font-size: 18px; color: #adb5bd; }
       #chat .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
       #chat .quick button { font: 600 14px system-ui, sans-serif; color: #fff; background: #23395d; border: 1px solid #3d5a85; border-radius: 18px; padding: 8px 12px; min-height: 36px; cursor: pointer; touch-action: manipulation; }
       #chat .quick button:hover, #chat .quick button:focus-visible { background: #2f4f80; outline: 2px solid #7bdff2; outline-offset: 1px; }

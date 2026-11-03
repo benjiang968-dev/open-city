@@ -111,6 +111,18 @@ export class TaxiJob implements JobSystem {
     this.ped = null;
   }
 
+  /** Drop the current fare (player knocked out, etc.). */
+  cancel(w: World): void {
+    if (this.ped && this.phase === 'riding') {
+      const p = w.player.mesh.position;
+      this.ped.pos.set(p.x + 2, 0.02, p.z);
+    }
+    this.release();
+    this.dest = null;
+    this.phase = 'cooldown';
+    this.timer = TX.nextFareDelay * 3;
+  }
+
   /** Where fares can be found right now (for NPC tips). */
   waitingAt(w: World): Poi | null {
     if (this.phase !== 'waiting') return null;

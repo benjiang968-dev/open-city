@@ -539,6 +539,12 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     const p = addPoi('police', b, 'e');
     p.name = 'Precinct 4';
   }
+  // every city gets at least one clinic (you wake up here after being knocked out)
+  if (!pois.some((p) => p.kind === 'clinic')) {
+    const b = blocks.find((q) => q.bi === T.blocksX - 3 && q.bj === 2 && q.kind !== 'park') ?? blocks[blocks.length - 1];
+    const p = addPoi('clinic', b, 's');
+    p.name = 'Bayside Clinic';
+  }
 
   // ---------- parking spots along kerbs ----------
   const parkingSpots: ParkingSpot[] = [];

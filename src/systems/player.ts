@@ -10,6 +10,7 @@ import type { Vehicle } from './vehicles';
 import { nearestPed } from './pedestrians';
 import { openChat } from './chat';
 import { toast } from './hud';
+import { clinicNearby, clinicFee, treatAtClinic } from './health';
 
 const P = TUNING.player;
 
@@ -27,6 +28,13 @@ export interface PlayerState {
   /** Interaction hint shown in the HUD ("E: drive Sedan"). */
   prompt: string;
   lastVehicleId: number;
+  health: number; // 0..100
+  lastHurt: number; // w.time of the last damage
+  knockT: number; // seconds of knock-back left (hit by a car on foot)
+  knockX: number; // knock-back velocity
+  knockZ: number;
+  dead: boolean;
+  deadT: number; // seconds since death (drives the fade)
 }
 
 export function createPlayer(w: World, x: number, z: number): PlayerState {
@@ -43,6 +51,7 @@ export function createPlayer(w: World, x: number, z: number): PlayerState {
   cc.setApplyImpulsesToDynamicBodies(true);
   return {
     mesh: rig.root, rig, body, collider, cc, vy: 0, grounded: true, facing: 0, walkPhase: 0, vehicle: null, prompt: '', lastVehicleId: -1,
+    health: 100, lastHurt: -100, knockT: 0, knockX: 0, knockZ: 0, dead: false, deadT: 0,
   };
 }
 
@@ -52,7 +61,7 @@ export function updatePlayer(w: World, dt: number): void {
   const p = w.player;
   const inp = w.input;
   p.prompt = '';
-  if (!w.started) {
+  if (!w.started || p.dead) {
     syncMesh(p);
     return;
   }
@@ -88,6 +97,16 @@ export function updatePlayer(w: World, dt: number): void {
     const d = Math.hypot(t.x - pos.x, t.z - pos.z) - v.spec.halfExtents[0];
     if (d < bd) { bd = d; best = v; }
   }
+  // at a clinic door: get patched up (takes priority over talking and cars)
+  const clinic = clinicNearby(w);
+  if (clinic && !w.chat.open) {
+    p.prompt = `E  see a doctor at ${clinic.name} ($${clinicFee(w)})`;
+    if (act.interact(inp)) {
+      treatAtClinic(w);
+      return;
+    }
+  }
+
   // nearest person to talk to (preferred over a car when closer)
   const ped = w.chat.open ? null : nearestPed(w, pos.x, pos.z, P.talkRange);
   const pedD = ped ? Math.hypot(ped.pos.x - pos.x, ped.pos.z - pos.z) : Infinity;
@@ -110,7 +129,8 @@ export function updatePlayer(w: World, dt: number): void {
   p.facing += turn * P.turnSpeed * dt;
   const fwdIn = (act.forward(inp) ? 1 : 0) - (act.back(inp) ? 1 : 0);
   const running = act.run(inp) && fwdIn > 0;
-  const speed = fwdIn > 0 ? (running ? P.runSpeed : P.walkSpeed) : P.walkSpeed * P.backSpeedFactor;
+  const injured = p.health < TUNING.health.injuredBelow ? TUNING.health.injuredSpeedFactor : 1;
+  const speed = (fwdIn > 0 ? (running ? P.runSpeed : P.walkSpeed) : P.walkSpeed * P.backSpeedFactor) * (running ? injured : 1);
   const ix = Math.sin(p.facing) * fwdIn, iz = Math.cos(p.facing) * fwdIn;
   const len = Math.abs(fwdIn) + Math.abs(turn) * 0.3; // a little leg movement when turning on the spot
   if (p.grounded) {
@@ -118,6 +138,13 @@ export function updatePlayer(w: World, dt: number): void {
     if (act.jump(inp)) p.vy = P.jumpVelocity;
   } else p.vy -= P.gravity * dt;
   move.set(ix * speed * dt, p.vy * dt, iz * speed * dt);
+  if (p.knockT > 0) {
+    // thrown by a car: slide away, no control
+    p.knockT -= dt;
+    move.set(p.knockX * dt, p.vy * dt, p.knockZ * dt);
+    p.knockX *= 1 - Math.min(1, dt * 3);
+    p.knockZ *= 1 - Math.min(1, dt * 3);
+  }
   p.cc.computeColliderMovement(p.collider, { x: move.x, y: move.y, z: move.z });
   const c = p.cc.computedMovement();
   p.grounded = p.cc.computedGrounded();

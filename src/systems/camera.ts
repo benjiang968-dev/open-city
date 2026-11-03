@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
+import { injurySway } from './health';
 
 const T = TUNING.camera;
 
@@ -86,6 +87,8 @@ export function updateCamera(w: World, dt: number): void {
   cam.position.copy(c.focus).addScaledVector(tmp, dist);
   if (cam.position.y < 0.4) cam.position.y = 0.4;
   cam.lookAt(c.focus);
+  const sway = injurySway(w);
+  if (sway) cam.rotateZ(sway);
 
   const spec = veh ? veh.spec.maxSpeed : 1;
   const fov = T.fov + T.fovSpeedBoost * Math.min(1, speed / spec);

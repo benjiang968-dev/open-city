@@ -24,6 +24,7 @@ import { createAudio, startAudio, updateAudio, toggleMute } from './systems/audi
 import { ScriptedProvider } from './npc/providers/scripted';
 import { Profiler } from './systems/profiler';
 import { updateCarDamage } from './systems/carDamage';
+import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 
 async function boot() {
@@ -69,6 +70,7 @@ async function boot() {
   w.jobs.register(new TaxiJob(w));
   createMinimap(w);
   createDebug(w);
+  createHealthUi();
 
   // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
   // triggers a first-time shader compile mid-game
@@ -150,7 +152,7 @@ async function boot() {
     }
     // event consumers run once per frame, then events are cleared
     P.begin('memory'); updateNpcMemory(w); P.end('memory');
-    P.begin('police'); updatePolice(w, dt); P.end('police');
+    P.begin('police'); updatePolice(w, dt); updateHealth(w, dt); P.end('police');
     P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 
