@@ -16,6 +16,7 @@ import type { AudioState } from './systems/audio';
 import type { HudState } from './systems/hud';
 import type { ChatState } from './systems/chat';
 import type { DialogueProvider } from './npc/providers/provider';
+import type { WeatherState } from './systems/weather';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -39,6 +40,7 @@ export interface World {
   input: InputState;
   cam: CameraState;
   dayNight: DayNightState;
+  weather: WeatherState;
   city: CityData;
   player: PlayerState;
   vehicles: Vehicle[];

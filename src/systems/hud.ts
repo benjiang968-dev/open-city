@@ -2,6 +2,7 @@
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { formatClock } from './dayNight';
+import { WEATHER_ICON } from './weather';
 
 export interface HudState {
   root: HTMLElement;
@@ -39,7 +40,7 @@ export function createHud(): HudState {
   const job = el('job');
   const toast = el('toast');
   const speedo = el('speedo', 'shadow', '<div class="v">0</div><div class="u">km/h</div><div id="health"><div></div></div>');
-  const help = el('help', 'shadow', 'W/S or ↑/↓ walk · A/D or ←/→ turn · Shift run · Space jump / handbrake · E enter car / talk<br>Mouse look (click to lock) · R flip car · H horn · F3 or ` stats · M mute');
+  const help = el('help', 'shadow', 'W/S or ↑/↓ walk · A/D or ←/→ turn · Shift run · Space jump / handbrake · E enter car / talk<br>Mouse look (click to lock) · R flip car · H horn · F3 or ` stats · N weather · M mute');
   for (const d of [cash, stars, clock, help]) d.style.visibility = 'hidden';
   return {
     root, title: document.getElementById('title')!, cash, stars, clock, prompt, job, toast, speedo,
@@ -84,7 +85,7 @@ export function updateHud(w: World, dt: number): void {
   for (let i = 1; i <= TUNING.police.maxStars; i++) st += `<span class="${i <= s ? 'on' : 'off'}">★</span>`;
   set(h, 'stars', h.stars, st);
   h.stars.classList.toggle('flash', s > 0 && w.police.seen);
-  set(h, 'clock', h.clock, formatClock(w.dayNight.hour));
+  set(h, 'clock', h.clock, `${WEATHER_ICON[w.weather.kind]} ${formatClock(w.dayNight.hour)}`);
 
   const prompt = w.chat.open ? '' : w.player.prompt;
   show(h.prompt, !!prompt);

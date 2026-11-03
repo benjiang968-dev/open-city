@@ -22,6 +22,7 @@ import { createChat, updateChat } from './systems/chat';
 import { createMinimap, showMinimap, updateMinimap } from './systems/minimap';
 import { createAudio, startAudio, updateAudio, toggleMute } from './systems/audio';
 import { ScriptedProvider } from './npc/providers/scripted';
+import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 
 async function boot() {
   await RAPIER.init();
@@ -53,6 +54,7 @@ async function boot() {
   } as unknown as World;
   w.dayNight = createDayNight(scene);
   w.city = generateCity(scene, RAPIER, physics, seed);
+  w.weather = createWeather(w);
   const rank = w.city.taxiRanks[0];
   w.player = createPlayer(w, rank.x, rank.z);
   spawnInitialVehicles(w);
@@ -106,6 +108,7 @@ async function boot() {
     }
     if (act.debug(w.input)) w.debugVisible = !w.debugVisible;
     if (w.input.pressed.has('KeyM')) toggleMute(w.audio);
+    if (w.started && !w.input.blocked && w.input.pressed.has('KeyN')) cycleWeather(w);
 
     acc += dt;
     let steps = 0;
@@ -131,6 +134,7 @@ async function boot() {
     syncTraffic(w);
     syncPolice(w);
     updateDayNight(w, dt);
+    updateWeather(w, dt);
     if (render) updateCity(w.city, w.time);
     updateCamera(w, dt);
     updateHud(w, dt);

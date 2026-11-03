@@ -137,7 +137,7 @@ export function buildRequest(w: World, ped: Ped, text: string): DialogueRequest 
       hour: w.dayNight.hour,
       clock: formatClock(w.dayNight.hour),
       isNight: w.dayNight.night > 0.5,
-      weather: 'clear',
+      weather: w.weather.kind,
       playerInCar: !!v,
       playerCarLabel: v ? v.spec.label : null,
       wantedStars: w.police.stars,

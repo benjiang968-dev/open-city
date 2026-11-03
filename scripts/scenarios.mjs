@@ -391,3 +391,18 @@ export async function chatbuttons(page, S) {
   await page.click('#chat .close');
   return page.evaluate(() => ({ open: window.__oc.chat.open, lines: window.__oc.peds[5].npc.history.length }));
 }
+
+// usage: node scripts/shot.mjs name weathershot  (with ?weather= via the seed arg hack: pass "1337&weather=rain")
+export async function weathershot(page, S) {
+  await S.start(page);
+  await page.evaluate(() => {
+    const w = window.__oc;
+    const v = w.vehicles.find((c) => c.type === 'sedan'); const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+    if (window.__hour) w.dayNight.hour = window.__hour;
+    window.__ocRun(30);
+  });
+  await page.waitForTimeout(1500);
+  return page.evaluate(() => ({ kind: window.__oc.weather.kind, grip: window.__oc.weather.grip, snow: window.__oc.weather.snowCover }));
+}

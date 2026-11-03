@@ -17,7 +17,7 @@ const INTENTS: [Intent, RegExp][] = [
   ['gossip', /\b(gossip|news|rumou?r|what'?s (going on|happening|new)|heard anything|anything interesting)\b/i],
   ['police', /\b(cops?|police|sheriff|precinct|wanted)\b/i],
   ['trade', /\b(buy|sell|selling|trade|got anything|for sale|deal)\b/i],
-  ['weather', /\b(weather|rain|sunny|sun|cold|hot|warm)\b/i],
+  ['weather', /\b(weather|rain|raining|sunny|sun|cold|hot|warm|snow|fog|foggy|storm|thunder)\b/i],
   ['time', /\b(time is it|what time|the time|clock)\b/i],
   ['howAreYou', /\b(how are (you|u)|how'?s it going|how you doing|how'?s life|you ok|you alright|what'?s up|sup)\b/i],
   ['compliment', /\b(nice|love|great|cool|beautiful|awesome|amazing|pretty|handsome|kind|lovely|like your)\b/i],
@@ -141,7 +141,10 @@ export class ScriptedProvider implements DialogueProvider {
       case 'police':
         return reply(say(world.wantedStars > 0 ? SHARED.policeWanted : SHARED.police));
       case 'weather':
-        return reply(sayShared(world.isNight ? SHARED.weatherNight : SHARED.weather));
+        {
+          const byKind: Record<string, string[] | undefined> = { rain: SHARED.weatherRain, storm: SHARED.weatherStorm, fog: SHARED.weatherFog, snow: SHARED.weatherSnow, cloudy: SHARED.weatherCloudy };
+          return reply(sayShared(byKind[world.weather] ?? (world.isNight ? SHARED.weatherNight : SHARED.weather)));
+        }
       case 'time':
         return reply(sayShared(SHARED.time));
       case 'trade': {

@@ -196,7 +196,10 @@ export function updateVehicles(w: World, dt: number): void {
       v.ctrl.setWheelBrake(i, b * dt);
     }
     // handbrake drops rear grip; grip blends back so drifts exit smoothly
-    const wantRear = hand ? v.spec.handbrakeRearSlip : v.spec.frictionSlipRear;
+    const grip = w.weather?.grip ?? 1; // rain, storm and snow cut grip
+    v.ctrl.setWheelFrictionSlip(0, v.spec.frictionSlipFront * grip);
+    v.ctrl.setWheelFrictionSlip(1, v.spec.frictionSlipFront * grip);
+    const wantRear = (hand ? v.spec.handbrakeRearSlip : v.spec.frictionSlipRear) * grip;
     v.rearGrip += (wantRear - v.rearGrip) * Math.min(1, dt * (hand ? 12 : 2.5));
     v.ctrl.setWheelFrictionSlip(2, v.rearGrip);
     v.ctrl.setWheelFrictionSlip(3, v.rearGrip);

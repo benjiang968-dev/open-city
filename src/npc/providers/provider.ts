@@ -15,7 +15,7 @@ export interface DialogueWorldInfo {
   hour: number;
   clock: string;
   isNight: boolean;
-  weather: 'clear' | 'rain';
+  weather: 'clear' | 'cloudy' | 'fog' | 'rain' | 'storm' | 'snow';
   playerInCar: boolean;
   playerCarLabel: string | null;
   wantedStars: number;

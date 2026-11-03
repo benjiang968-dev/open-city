@@ -69,6 +69,8 @@ export interface CityData {
   litWindowMat: THREE.MeshBasicMaterial;
   lampMat: THREE.MeshBasicMaterial;
   lampPoolMat: THREE.MeshBasicMaterial;
+  /** Ground + road materials (weather makes them wet or snowy). */
+  groundMats: THREE.MeshStandardMaterial[];
   water: THREE.Mesh;
   waterBase: Float32Array;
   boats: Boat[];
@@ -727,10 +729,12 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
 
   // ---------- assemble meshes ----------
   const vc = { vertexColors: true } as const;
-  const groundMesh = new THREE.Mesh(ground.build(), new THREE.MeshStandardMaterial({ ...vc, roughness: 0.95 }));
+  const groundMat = new THREE.MeshStandardMaterial({ ...vc, roughness: 0.95 });
+  const groundMesh = new THREE.Mesh(ground.build(), groundMat);
   groundMesh.receiveShadow = true;
   scene.add(groundMesh);
-  const marksMesh = new THREE.Mesh(marks.build(), new THREE.MeshStandardMaterial({ ...vc, roughness: 0.8 }));
+  const marksMat = new THREE.MeshStandardMaterial({ ...vc, roughness: 0.8 });
+  const marksMesh = new THREE.Mesh(marks.build(), marksMat);
   marksMesh.receiveShadow = true;
   scene.add(marksMesh);
   const seaMesh = new THREE.Mesh(seaFloor.build(), new THREE.MeshStandardMaterial({ ...vc, roughness: 1 }));
@@ -764,7 +768,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
 
   return {
     xs, zs, roadHalfX, roadHalfZ, streetNamesX, streetNamesZ, nodes, sideNodes, pois, taxiRanks, parkingSpots,
-    coastZ, bounds, buildingRects, parkRects, pierRect, marinaRects, center, litWindowMat, lampMat, lampPoolMat, water, waterBase, boats,
+    coastZ, bounds, buildingRects, parkRects, pierRect, marinaRects, center, litWindowMat, lampMat, lampPoolMat, groundMats: [groundMat, marksMat], water, waterBase, boats,
     nodeAt,
   };
 

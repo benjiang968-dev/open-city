@@ -20,6 +20,8 @@ export interface AudioState {
   horn?: (x: number, z: number) => void;
   thud?: (x: number, z: number, strength: number) => void;
   chime?: () => void;
+  thunder?: () => void;
+  setRain?: (amount: number) => void;
 }
 
 export function createAudio(): AudioState {
@@ -155,6 +157,38 @@ export function startAudio(s: AudioState): void {
     g.connect(master);
     src.start(t);
     src.stop(t + 0.4);
+  };
+  // rain: high-passed noise loop, volume follows the weather
+  const rn = ctx.createBufferSource();
+  rn.buffer = buf;
+  rn.loop = true;
+  const rf = ctx.createBiquadFilter();
+  rf.type = 'highpass';
+  rf.frequency.value = 1200;
+  const rg = ctx.createGain();
+  rg.gain.value = 0;
+  rn.connect(rf);
+  rf.connect(rg);
+  rg.connect(master);
+  rn.start();
+  s.setRain = (amount) => rg.gain.setTargetAtTime(amount * 0.12, ctx.currentTime, 0.5);
+  s.thunder = () => {
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = 0.5;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 160;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.9, t + 0.08);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 2.8);
+    src.connect(f);
+    f.connect(g);
+    g.connect(master);
+    src.start(t);
+    src.stop(t + 2.9);
   };
   s.chime = () => {
     const t = ctx.currentTime;

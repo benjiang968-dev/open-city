@@ -64,3 +64,10 @@ Format: date · what changed · what to test · known issues.
 
 - **Tank-style movement on foot.** W/↑ walks forward the way the character faces, S/↓ backs up (55% speed), A/D/←/→ turn the character (3 rad/s). The camera swings behind the character unless you're moving the mouse. Tuning: `player.turnSpeed`, `player.backSpeedFactor`, `camera.footRecenterSpeed`. Test: A then W should walk left.
 - **Chat tap buttons.** Quick replies (Hi, How are you?, Any work?, Need a ride?, Got any cash?, Trade?, Gossip?, Sorry, Bye) and a ✕ close button, sized for touch. On touch devices the text box isn't auto-focused, so the keyboard doesn't cover the buttons.
+- **Weather.** Clear, cloudy, fog, rain, storm and snow change every 2.5–7 real minutes, using tuned transition odds, and blend in over 25 s.
+  - Clouds dim the sun and grey the sky. Fog cuts visibility to 90 m.
+  - Rain and snow particles follow the camera. Roads get darker and shinier when wet, and snow builds up on the ground.
+  - Tyre grip ×0.82 in rain, ×0.75 in a storm, ×0.62 on snow.
+  - Storms flash lightning, followed by thunder after a delay. Rain has its own sound. Stars and a moon appear on clear nights.
+  - HUD shows a weather icon by the clock. NPCs talk about the actual weather.
+  - N cycles the weather; `?weather=rain` forces one. All numbers are in `TUNING.weather`.

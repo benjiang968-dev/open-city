@@ -266,6 +266,27 @@ const RAW = {
     callPoliceBelow: -70, // relationship at which an angry NPC calls the police
   },
 
+  weather: {
+    minDuration: 150, // real seconds a weather type lasts at least (150 s = 2.5 game hours)
+    maxDuration: 420, // ...and at most
+    blendSeconds: 25, // how long a change of weather takes to roll in
+    fogVisibility: 90, // metres you can see in fog
+    rainGrip: 0.82, // tyre grip multiplier on wet roads
+    stormGrip: 0.75, // tyre grip in a storm (standing water)
+    snowGrip: 0.62, // tyre grip on snow
+    lightningMin: 4, // seconds between lightning strikes (min)
+    lightningMax: 14, // ...and max
+    // chance weights for what comes next
+    transitions: {
+      clear: [['clear', 3], ['cloudy', 4], ['fog', 1]],
+      cloudy: [['clear', 3], ['rain', 3], ['fog', 1], ['snow', 0.6], ['cloudy', 1]],
+      fog: [['clear', 2], ['cloudy', 2]],
+      rain: [['cloudy', 3], ['storm', 1.5], ['rain', 1]],
+      storm: [['rain', 3], ['cloudy', 1]],
+      snow: [['cloudy', 3], ['snow', 1]],
+    },
+  },
+
   audio: {
     masterVolume: 0.55,
     engineIdleHz: 38,

@@ -26,7 +26,7 @@ export function updateDebug(w: World): void {
     `vehicle  ${v ? `${v.spec.label}  ${(v.speed * 3.6).toFixed(0)} km/h  hp ${v.health.toFixed(0)}  slip ${v.slip.toFixed(2)}` : 'on foot'}`,
     `job      ${w.jobs.debugText ? w.jobs.debugText() : '-'}`,
     `heat     ${w.police.stars ?? 0}★ (${(w.police.heat ?? 0).toFixed(0)} pts) ${w.police.seen ? 'SEEN' : ''}`,
-    `time     ${formatClock(w.dayNight.hour)}`,
+    `time     ${formatClock(w.dayNight.hour)} · ${w.weather.kind} (grip ×${w.weather.grip.toFixed(2)})`,
     `world    ${w.traffic.length} cars · ${w.peds.length} peds · ${w.vehicles.length} drivable`,
     `render   ${info.calls} calls · ${(info.triangles / 1000).toFixed(0)}k tris`,
   ].join('\n');
