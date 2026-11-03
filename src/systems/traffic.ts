@@ -6,6 +6,7 @@ import { TUNING, type CarTypeName } from '../tuning';
 import type { World } from '../world';
 import type { RoadNode } from './cityGen';
 import { makeAiCarGeometry, carMaterial } from '../art/car';
+import { GROUPS } from '../physicsGroups';
 
 const TT = TUNING.traffic;
 
@@ -114,7 +115,7 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
     R.RigidBodyDesc.dynamic().setTranslation(0, halfH + 0.02, 0).enabledRotations(false, true, false).setLinearDamping(0.4).setAngularDamping(2).setCcdEnabled(false), // AI cars are slow: no CCD
   );
   const collider = w.physics.createCollider(
-    R.ColliderDesc.cuboid(hx, halfH, hz).setMass(spec.mass).setFriction(0).setFrictionCombineRule(R.CoefficientCombineRule.Min).setRestitution(0.1),
+    R.ColliderDesc.cuboid(hx, halfH, hz).setMass(spec.mass).setFriction(0).setFrictionCombineRule(R.CoefficientCombineRule.Min).setRestitution(0.1).setCollisionGroups(GROUPS.ai),
     body,
   );
   const geo = makeAiCarGeometry(type, paint, { r: spec.wheelRadius, x: spec.wheelX, zf: spec.wheelZFront, zr: spec.wheelZRear, y: spec.wheelY - spec.suspensionRest * 0.75 }, kind === 'police' ? { police: true } : undefined);

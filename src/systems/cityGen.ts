@@ -7,6 +7,7 @@ import { TUNING } from '../tuning';
 import { Rng } from '../rng';
 import { POI_TEMPLATES, STREET_WORDS } from '../names';
 import { GeoBuilder } from '../art/geo';
+import { GROUPS } from '../physicsGroups';
 
 const T = TUNING.world;
 
@@ -201,7 +202,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   };
   const addBoxCollider = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => {
     physics.createCollider(
-      R.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2).setFriction(0.6),
+      R.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2).setFriction(0.6).setCollisionGroups(GROUPS.static),
       staticAt((x0 + x1) / 2, (z0 + z1) / 2),
     );
   };
@@ -611,7 +612,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       poles.setMatrixAt(k, m);
       arms.setMatrixAt(k, m);
       heads.setMatrixAt(k, m);
-      physics.createCollider(R.ColliderDesc.cylinder(3, 0.14).setTranslation(l.x, 3, l.z), staticAt(l.x, l.z));
+      physics.createCollider(R.ColliderDesc.cylinder(3, 0.14).setTranslation(l.x, 3, l.z).setCollisionGroups(GROUPS.static), staticAt(l.x, l.z));
     });
     poles.castShadow = true;
     // pools of light on the ground under each lamp (additive, faded in at night)
@@ -653,7 +654,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       trunks.setMatrixAt(k, m);
       crowns.setMatrixAt(k, m);
       crowns.setColorAt(k, C(rng.pick(greens)));
-      physics.createCollider(R.ColliderDesc.cylinder(1.2, 0.22 * t.s).setTranslation(t.x, 1.2, t.z), staticAt(t.x, t.z));
+      physics.createCollider(R.ColliderDesc.cylinder(1.2, 0.22 * t.s).setTranslation(t.x, 1.2, t.z).setCollisionGroups(GROUPS.static), staticAt(t.x, t.z));
     });
     trunks.castShadow = crowns.castShadow = true;
     for (const im of [trunks, crowns]) {

@@ -632,3 +632,34 @@ export async function pause(page, S) {
   const c = await page.evaluate(() => ({ paused: window.__oc.paused, q: window.__oc.settings.quality, shadows: window.__oc.renderer.shadowMap.enabled, pr: window.__oc.renderer.getPixelRatio() }));
   return { a, b, frozen: Math.abs(b.t - a.t) < 1e-6, c };
 }
+
+// Items: walk up to a bottle, E to pick up, pick up a bat too, Q drop, wheel select; held item visible.
+export async function items(page, S) {
+  await S.start(page);
+  const step = (sec = 0.15) => page.evaluate((s) => window.__ocRun(s), sec);
+  const near = (type) => page.evaluate((t) => {
+    const w = window.__oc; const it = w.itemsState.items.find((i) => i.type === t && i.inWorld);
+    w.player.body.setTranslation({ x: it.px, y: 1.2, z: it.pz - 1.1 }, true); w.player.facing = 0; w.cam.yaw = Math.PI;
+    window.__ocRun(0.4);
+    return { target: w.itemsState.target?.type ?? null, prompt: w.player.prompt };
+  }, type);
+  const counts = await page.evaluate(() => { const c = {}; for (const i of window.__oc.itemsState.items) c[i.type] = (c[i.type] || 0) + 1; return c; });
+  const a = await near('bottle');
+  await page.keyboard.press('KeyE'); await step();
+  const b = await near('bat');
+  await page.keyboard.press('KeyE'); await step();
+  const slots1 = await page.evaluate(() => window.__oc.inventory.slots.map((s) => (s ? s.type : null)));
+  await page.keyboard.press('Digit2'); await step();
+  const held = await page.evaluate(() => Object.entries(window.__oc.inventory.held).filter(([, m]) => m.visible).map(([k]) => k));
+  await page.evaluate(() => { const w = window.__oc; const p = w.player.mesh.position; w.cam.override = { px: p.x + 2.6, py: 1.9, pz: p.z + 2.2, lx: p.x, ly: 1.0, lz: p.z }; });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'screenshots/16-holding-bat.png' });
+  await page.evaluate(() => { window.__oc.cam.override = null; });
+  await page.keyboard.press('Digit1'); await step();
+  await page.keyboard.press('KeyQ'); await step();
+  const dropped = await page.evaluate(() => { const w = window.__oc; window.__ocRun(2); const it = w.itemsState.items.find((i) => i.type === 'bottle' && Math.hypot(i.px - w.player.mesh.position.x, i.pz - w.player.mesh.position.z) < 3 && i.inWorld); return it ? { y: +it.py.toFixed(2), sleeping: it.body.isSleeping() } : null; });
+  const slots2 = await page.evaluate(() => window.__oc.inventory.slots.map((s) => (s ? s.type : null)));
+  await page.mouse.wheel(0, 120); await step();
+  const selAfterWheel = await page.evaluate(() => window.__oc.inventory.selected);
+  return { counts, a, b, slots1, held, dropped, slots2, selAfterWheel };
+}

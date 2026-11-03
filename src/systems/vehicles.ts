@@ -7,6 +7,7 @@ import type { World } from '../world';
 import { emit } from '../world';
 import { buildCarParts, carMaterial, makeWheel } from '../art/car';
 import { buildDamageableCar, applyImpact, type CarDamage } from './carDamage';
+import { GROUPS } from '../physicsGroups';
 import { act } from './input';
 
 const V = TUNING.vehicles;
@@ -61,7 +62,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
     .setCcdEnabled(V.playerCcd);
   const body = w.physics.createRigidBody(bodyDesc);
   const collider = w.physics.createCollider(
-    R.ColliderDesc.cuboid(hx, hy, hz).setDensity(0).setFriction(0.3).setRestitution(0.1).setActiveEvents(R.ActiveEvents.CONTACT_FORCE_EVENTS),
+    R.ColliderDesc.cuboid(hx, hy, hz).setDensity(0).setFriction(0.3).setRestitution(0.1).setCollisionGroups(GROUPS.vehicle),
     body,
   );
   const ctrl = w.physics.createVehicleController(body);
@@ -209,7 +210,7 @@ export function updateVehicles(w: World, dt: number): void {
     v.ctrl.setWheelFrictionSlip(2, v.rearGrip);
     v.ctrl.setWheelFrictionSlip(3, v.rearGrip);
 
-    v.ctrl.updateVehicle(dt);
+    v.ctrl.updateVehicle(dt, undefined, GROUPS.wheelRays); // wheels roll over litter and never touch people
     v.speed = v.ctrl.currentVehicleSpeed();
 
     // grounded wheels count for assists

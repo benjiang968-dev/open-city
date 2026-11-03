@@ -332,6 +332,35 @@ const RAW = {
     hornVolume: 0.25,
   },
 
+  items: {
+    hotbarSlots: 9, // one-hand items you can carry
+    pickupRange: 1.8, // metres: how close an item must be to pick it up
+    pickupCone: 0.4, // how directly you must face it (dot product; 0.4 ≈ within 66°)
+    dropSpeed: 1.4, // m/s an item is tossed forward when dropped with Q
+    litterCount: 70, // bottles, cans and bags scattered along pavements
+    bagClusterChance: 0.45, // chance a shop/diner/bar has rubbish bags outside
+    boxChance: 0.5, // chance it has cardboard boxes
+    coneClusters: 5, // roadworks: lines of traffic cones on a kerb
+    conesPerCluster: 4,
+    brickPiles: 3,
+    bricksPerPile: 5,
+    batsPerGym: 2, // baseball bats lying by a gym
+    gymsWithBats: 2, // how many gyms have bats outside
+    wrenchesPerGarage: 3, // wrenches by each garage
+    // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
+    // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
+    defs: {
+      bottle: { name: 'Glass bottle', mass: 0.4, throwable: true, heavy: false, hitDamage: 8 },
+      can: { name: 'Drink can', mass: 0.3, throwable: true, heavy: false, hitDamage: 4 },
+      bag: { name: 'Rubbish bag', mass: 1.5, throwable: true, heavy: false, hitDamage: 2 },
+      box: { name: 'Cardboard box', mass: 0.8, throwable: true, heavy: false, hitDamage: 3 },
+      cone: { name: 'Traffic cone', mass: 1.2, throwable: true, heavy: false, hitDamage: 5 },
+      brick: { name: 'Brick', mass: 2.5, throwable: true, heavy: true, hitDamage: 34 },
+      wrench: { name: 'Wrench', mass: 1.0, throwable: false, heavy: true, hitDamage: 20, melee: { damage: 24, reach: 1.5, cooldown: 0.55, dent: 0.1 } },
+      bat: { name: 'Baseball bat', mass: 0.9, throwable: false, heavy: true, hitDamage: 18, melee: { damage: 32, reach: 1.9, cooldown: 0.7, dent: 0.16 } },
+    },
+  },
+
   quality: {
     default: 'medium', // preset used until the player picks one in the pause menu
     // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player

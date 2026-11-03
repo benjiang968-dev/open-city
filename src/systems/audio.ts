@@ -21,6 +21,7 @@ export interface AudioState {
   thud?: (x: number, z: number, strength: number) => void;
   chime?: () => void;
   thunder?: () => void;
+  pickup?: () => void;
   setRain?: (amount: number) => void;
 }
 
@@ -189,6 +190,20 @@ export function startAudio(s: AudioState): void {
     g.connect(master);
     src.start(t);
     src.stop(t + 2.9);
+  };
+  s.pickup = () => {
+    const t = ctx.currentTime;
+    const o = ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(520, t);
+    o.frequency.exponentialRampToValueAtTime(880, t + 0.08);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.12, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+    o.connect(g);
+    g.connect(master);
+    o.start(t);
+    o.stop(t + 0.16);
   };
   s.chime = () => {
     const t = ctx.currentTime;

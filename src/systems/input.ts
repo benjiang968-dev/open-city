@@ -14,6 +14,7 @@ export interface InputState {
   expectUnlock: boolean;
   /** The mouse lock was lost without the game asking (usually Esc): opens the pause menu. */
   lockLost: boolean;
+  wheel: number; // mouse wheel steps this frame (+ = down/next)
 }
 
 export function createInput(canvas: HTMLCanvasElement): InputState {
@@ -28,7 +29,11 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
     blocked: false,
     expectUnlock: false,
     lockLost: false,
+    wheel: 0,
   };
+  window.addEventListener('wheel', (e) => {
+    if (!s.blocked && e.deltaY !== 0) s.wheel += Math.sign(e.deltaY);
+  }, { passive: true });
   window.addEventListener('keydown', (e) => {
     s.anyKeyPressed = true;
     if (s.blocked) return;
@@ -71,6 +76,7 @@ export function endInputFrame(s: InputState): void {
   s.pressed.clear();
   s.mouseDX = 0;
   s.mouseDY = 0;
+  s.wheel = 0;
   s.anyKeyPressed = false;
 }
 

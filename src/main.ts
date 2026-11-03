@@ -25,6 +25,8 @@ import { ScriptedProvider } from './npc/providers/scripted';
 import { Profiler } from './systems/profiler';
 import { createSettings, applyQuality } from './systems/settings';
 import { createPauseMenu, updatePauseKeys } from './systems/pauseMenu';
+import { createItems, scatterItems, updateWorldItems } from './systems/worldItems';
+import { createInventory, inventoryKeys, updateInventory, showHotbar } from './systems/inventory';
 import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
@@ -64,6 +66,8 @@ async function boot() {
   const rank = w.city.taxiRanks[0];
   w.player = createPlayer(w, rank.x, rank.z);
   spawnInitialVehicles(w);
+  w.itemsState = createItems(w);
+  scatterItems(w);
   spawnTraffic(w);
   spawnPolicePool(w);
   spawnPeds(w);
@@ -75,6 +79,7 @@ async function boot() {
   createDebug(w);
   createHealthUi();
   createPauseMenu(w);
+  w.inventory = createInventory(w);
 
   // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
   // triggers a first-time shader compile mid-game
@@ -94,6 +99,11 @@ async function boot() {
   // expose read-only state for automated tests (scripts/*.mjs)
   (window as unknown as { __oc: World }).__oc = w;
 
+  /** Collision events (thrown items hitting people and cars are handled in M2.7). */
+  function drainPhysicsEvents(w: World) {
+    w.itemsState.eventQueue.drainCollisionEvents(() => {});
+  }
+
   /** One fixed physics tick for everything that moves bodies. */
   function simStep(step: number) {
     const P = w.prof;
@@ -101,7 +111,7 @@ async function boot() {
     P.begin('vehicles'); updateVehicles(w, step); P.end('vehicles');
     P.begin('traffic'); updateTraffic(w, step); P.end('traffic');
     P.begin('police-drive'); drivePolice(w, step); P.end('police-drive');
-    P.begin('physics'); physics.step(); P.end('physics');
+    P.begin('physics'); physics.step(w.itemsState.eventQueue); drainPhysicsEvents(w); P.end('physics');
     P.begin('crashes'); detectCrashes(w); P.end('crashes');
   }
   // deterministic stepping for automated handling tests (runs n ticks instantly, no rendering)
@@ -130,11 +140,13 @@ async function boot() {
       w.input.pressed.clear();
       showHud(w.hud, w.cash);
       showMinimap();
+      showHotbar();
       startAudio(w.audio);
       w.cam.yaw = Math.PI / 2;
     }
     if (act.debug(w.input)) w.debugVisible = !w.debugVisible;
     updatePauseKeys(w);
+    if (!w.paused) inventoryKeys(w);
     if (w.paused) {
       // world frozen behind the menu; keep drawing it
       if (render) renderer.render(scene, camera);
@@ -167,7 +179,7 @@ async function boot() {
     P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 
-    P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); P.end('sync');
+    P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); updateInventory(w); P.end('sync');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
     P.begin('weather'); updateWeather(w, dt); P.end('weather');
     if (render) { P.begin('city'); updateCity(w.city, w.time); P.end('city'); }

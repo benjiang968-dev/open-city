@@ -11,6 +11,8 @@ import { nearestPed } from './pedestrians';
 import { openChat } from './chat';
 import { toast } from './hud';
 import { clinicNearby, clinicFee, treatAtClinic } from './health';
+import { GROUPS } from '../physicsGroups';
+import { pickUp, freeSlot } from './inventory';
 
 const P = TUNING.player;
 
@@ -42,7 +44,7 @@ export function createPlayer(w: World, x: number, z: number): PlayerState {
   const rig = makePerson(new THREE.Color('#ff7a59'), new THREE.Color('#2d3047'), new THREE.Color('#e0ac69'), new THREE.Color('#3b2416'));
   w.scene.add(rig.root);
   const body = w.physics.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, P.capsuleHalfHeight + P.capsuleRadius + 0.05, z));
-  const collider = w.physics.createCollider(R.ColliderDesc.capsule(P.capsuleHalfHeight, P.capsuleRadius), body);
+  const collider = w.physics.createCollider(R.ColliderDesc.capsule(P.capsuleHalfHeight, P.capsuleRadius).setCollisionGroups(GROUPS.player), body);
   const cc = w.physics.createCharacterController(0.04);
   cc.setUp({ x: 0, y: 1, z: 0 });
   cc.enableAutostep(0.45, 0.25, true);
@@ -110,7 +112,16 @@ export function updatePlayer(w: World, dt: number): void {
   // nearest person to talk to (preferred over a car when closer)
   const ped = w.chat.open ? null : nearestPed(w, pos.x, pos.z, P.talkRange);
   const pedD = ped ? Math.hypot(ped.pos.x - pos.x, ped.pos.z - pos.z) : Infinity;
-  if (ped && (!best || pedD < bd + 0.5)) {
+  const item = w.chat.open ? null : w.itemsState.target;
+  const itemD = item ? Math.hypot(item.px - pos.x, item.pz - pos.z) : Infinity;
+  if (item && itemD <= pedD && itemD <= bd + 0.3) {
+    const room = freeSlot(w) >= 0;
+    p.prompt = room ? `E  pick up ${TUNING.items.defs[item.type].name}` : 'Hotbar full · Q drops the selected item';
+    if (room && act.interact(inp)) {
+      pickUp(w, item);
+      return;
+    }
+  } else if (ped && (!best || pedD < bd + 0.5)) {
     p.prompt = `E  talk to ${ped.npc.name}`;
     if (act.interact(inp)) {
       openChat(w, ped);
