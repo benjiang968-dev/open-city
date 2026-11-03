@@ -5,7 +5,8 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING, type CarSpec, type CarTypeName } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
-import { buildCarBody, carMaterial, makeWheel } from '../art/car';
+import { buildCarParts, carMaterial, makeWheel } from '../art/car';
+import { buildDamageableCar, applyImpact, type CarDamage } from './carDamage';
 import { act } from './input';
 
 const V = TUNING.vehicles;
@@ -38,6 +39,7 @@ export interface Vehicle {
   driven: boolean;
   wrecked: boolean;
   lastHitTime: number;
+  dmg: CarDamage; // dents, bumpers, lights, windscreen
   px: number; // cached position (refreshed every physics step)
   pz: number;
 }
@@ -85,9 +87,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   }
 
   const group = new THREE.Group();
-  const bodyMesh = new THREE.Mesh(buildCarBody(type, paint ?? new THREE.Color(spec.color)).build(), carMaterial);
-  bodyMesh.castShadow = true;
-  group.add(bodyMesh);
+  const { bodyMesh, dmg } = buildDamageableCar({ mesh: group }, buildCarParts(type, paint ?? new THREE.Color(spec.color)));
   const wheels: THREE.Group[] = [];
   for (const p of wheelPos) {
     const wg = makeWheel(spec.wheelRadius);
@@ -100,7 +100,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
     id: w.vehicles.length, type, spec, body, collider, ctrl, mesh: group, bodyMesh, wheels,
     health: spec.health, maxHealth: spec.health, steer: 0, speed: 0, heading, slip: 0, throttle: 0,
     rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, inWaterTimer: 0,
-    driven: false, wrecked: false, lastHitTime: -10, px: x, pz: z,
+    driven: false, wrecked: false, lastHitTime: -10, px: x, pz: z, dmg,
   };
   w.vehicles.push(v);
   w.colliderOwner.set(collider.handle, { kind: 'vehicle', id: v.id });
@@ -250,21 +250,23 @@ export function detectCrashes(w: World): void {
     vel.set(lv.x, lv.y, lv.z);
     const dv = vel.distanceTo(v.prevVel);
     const prevSpeed = v.prevVel.length();
+    const dvx = vel.x - v.prevVel.x, dvy = vel.y - v.prevVel.y, dvz = vel.z - v.prevVel.z;
     v.prevVel.copy(vel);
-    if (!v.driven) continue;
+    if (!v.driven && dv < V.crashDamageThreshold * 2) continue; // parked cars only dent when hit hard
     if (dv > V.crashDamageThreshold && w.time - v.lastHitTime > 0.4) {
       v.lastHitTime = w.time;
       const dmg = (dv - V.crashDamageThreshold) * V.crashDamagePerMs;
       v.health = Math.max(0, v.health - dmg);
       const p = v.body.translation();
-      emit(w, { type: 'crash', x: p.x, z: p.z, damage: dmg });
+      if (v.driven) emit(w, { type: 'crash', x: p.x, z: p.z, damage: dmg, dv });
       // what did we hit?
-      w.physics.contactPairsWith(v.collider, (other) => {
+      if (v.driven) w.physics.contactPairsWith(v.collider, (other) => {
         const owner = w.colliderOwner.get(other.handle);
         if (owner && (owner.kind === 'traffic' || owner.kind === 'police' || owner.kind === 'vehicle')) {
           emit(w, { type: 'carHit', targetKind: owner.kind === 'vehicle' ? 'parked' : owner.kind, x: p.x, z: p.z, speed: prevSpeed });
         }
       });
+      applyImpact(w, v, dvx, dvy, dvz, dv);
       if (v.health <= 0 && !v.wrecked) wreck(v);
     }
   }

@@ -267,6 +267,22 @@ const RAW = {
     callPoliceBelow: -70, // relationship at which an angry NPC calls the police
   },
 
+  damage: {
+    subdivisions: 2, // body triangles are split 4^n times so dents bend panels smoothly
+    dentThreshold: 4.5, // m/s of impact before the body dents
+    dentPerMs: 0.035, // dent depth (m) per m/s of impact above the threshold
+    maxDentPerHit: 0.22, // deepest dent one hit can make (m)
+    maxDent: 0.4, // no vertex is ever pushed further than this from its original place (m)
+    dentRadius: 0.65, // base dent radius (m)
+    dentRadiusPerMs: 0.02, // dent radius grows with impact speed (m per m/s)
+    bumperHangSpeed: 7, // m/s impact on the front/rear that knocks a bumper loose
+    bumperFallSpeed: 12, // m/s impact that rips it off in one go (or any hit over hang speed once loose)
+    headlightBreakSpeed: 6, // m/s front impact that smashes the headlight on that side
+    crackSpeed: 9, // m/s front impact that cracks the windscreen (any direction: 1.4x this)
+    debrisPool: 24, // fallen-off parts kept in the world at once
+    debrisLifetime: 45, // seconds a fallen part lies in the road
+  },
+
   weather: {
     minDuration: 150, // real seconds a weather type lasts at least (150 s = 2.5 game hours)
     maxDuration: 420, // ...and at most

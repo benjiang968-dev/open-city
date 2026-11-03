@@ -493,3 +493,47 @@ export async function crashspikes(page, S) {
     };
   });
 }
+
+// Crash the sedan nose-first into a wall twice, then turn it round and look at the front.
+export async function dentclean(page, S) {
+  await page.evaluate(() => { window.__noCrash = true; });
+  return dent(page, S);
+}
+export async function dent(page, S) {
+  await S.start(page);
+  const r = await page.evaluate(() => {
+    const w = window.__oc;
+    const v = w.vehicles.find((c) => c.type === 'sedan'); const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+    // a building with open ground (road) for 20 m south of it
+    const R0 = w.R;
+    const free = (x, z) => !w.physics.castRay(new R0.Ray({ x, y: 30, z }, { x: 0, y: -1, z: 0 }), 29.5, true, R0.QueryFilterFlags.ONLY_FIXED);
+    const b = w.city.buildingRects.filter((q) => q.h > 10 && q.x1 - q.x0 > 12).find((q) => [4, 8, 12, 16, 20].every((d) => free((q.x0 + q.x1) / 2 - 1, q.z1 + d) && free((q.x0 + q.x1) / 2 + 1, q.z1 + d)));
+    const launch = (kmh, xoff) => {
+      const h = Math.PI;
+      v.body.setTranslation({ x: (b.x0 + b.x1) / 2 + xoff, y: 0.9, z: b.z1 + 10 }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.body.setLinvel({ x: 0, y: 0, z: -kmh / 3.6 }, true); v.prevVel.set(0, 0, -kmh / 3.6);
+      return window.__ocFrames(50, false);
+    };
+    const f1 = window.__noCrash ? [] : launch(55, 0.6); const f2 = window.__noCrash ? launch(3, 0) : launch(75, -0.5);
+    const frames = [...f1, ...f2];
+    // turn round so the camera (south of the car) sees the crumpled nose
+    const tt = v.body.translation();
+    v.body.setTranslation({ x: tt.x, y: 0.9, z: tt.z + 6 }, true);
+    v.body.setRotation({ x: 0, y: 0, z: 0, w: 1 }, true);
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0);
+    window.__ocRun(1.5);
+    const c = v.body.translation();
+    w.cam.override = { px: c.x + 3.2, py: 2.2, pz: c.z + 5.5, lx: c.x, ly: 0.6, lz: c.z + 1.5 };
+    const rr = v.body.rotation(); const tp = v.body.translation();
+    let minY = 1e9, maxDisp = 0; const P = v.dmg.pos, B = v.dmg.base;
+    for (let i = 0; i < P.length; i += 3) { minY = Math.min(minY, P[i + 1]); maxDisp = Math.max(maxDisp, Math.hypot(P[i] - B[i], P[i + 1] - B[i + 1], P[i + 2] - B[i + 2])); }
+    const R = w.R; const gh = w.physics.castRay(new R.Ray({ x: tp.x, y: 5, z: tp.z }, { x: 0, y: -1, z: 0 }), 20, true, R.QueryFilterFlags.ONLY_FIXED);
+    return { ground: gh ? +(5 - gh.timeOfImpact).toFixed(2) : null, susp: [0, 1, 2, 3].map((i) => +(v.ctrl.wheelSuspensionLength(i) || 0).toFixed(2)), y: +tp.y.toFixed(2), rot: [rr.x, rr.y, rr.z, rr.w].map((q) => +q.toFixed(2)), contacts: [0, 1, 2, 3].map((i) => v.ctrl.wheelIsInContact(i)), minY: +minY.toFixed(2), maxDisp: +maxDisp.toFixed(2), hp: Math.round(v.health), dent: +v.dmg.dentTotal.toFixed(2), bumpers: v.dmg.bumpers.map((q) => q.state), lights: v.dmg.lights.map((l) => l.visible), crack: v.dmg.crack.visible, over33: frames.filter((f) => f.cpu > 33).length, worst: Math.max(...frames.map((f) => f.cpu)) };
+  });
+  await page.waitForTimeout(1500);
+  return r;
+}

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
+import { workingHeadlights } from './carDamage';
 
 export interface DayNightState {
   hour: number; // 0..24 game time
@@ -109,7 +110,7 @@ export function updateDayNight(w: World, dt: number): void {
   const v = w.player.vehicle;
   if (v && s.headlight.parent !== v.mesh) v.mesh.add(s.headlight);
   if (!v && s.headlight.parent !== w.scene) w.scene.add(s.headlight);
-  s.headlight.intensity = v && !v.wrecked ? THREE.MathUtils.clamp((s.night - 0.2) * 2, 0, 1) * 60 : 0;
+  s.headlight.intensity = v && !v.wrecked ? THREE.MathUtils.clamp((s.night - 0.2) * 2, 0, 1) * 30 * workingHeadlights(v) : 0;
 
   // street lights and windows glow at night
   const lampOn = THREE.MathUtils.clamp((s.night - 0.3) * 3, 0, 1);

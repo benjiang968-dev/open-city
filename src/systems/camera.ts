@@ -12,10 +12,12 @@ export interface CameraState {
   dist: number;
   focus: THREE.Vector3; // smoothed look-at point
   titleAngle: number;
+  /** Tests/screenshots only: fixed camera position and look-at point. */
+  override: { px: number; py: number; pz: number; lx: number; ly: number; lz: number } | null;
 }
 
 export function createCamera(): CameraState {
-  return { yaw: Math.PI, pitch: 0.32, dist: T.distanceOnFoot, focus: new THREE.Vector3(), titleAngle: 0 };
+  return { yaw: Math.PI, pitch: 0.32, dist: T.distanceOnFoot, focus: new THREE.Vector3(), titleAngle: 0, override: null };
 }
 
 const tmp = new THREE.Vector3();
@@ -24,6 +26,12 @@ const desired = new THREE.Vector3();
 export function updateCamera(w: World, dt: number): void {
   const c = w.cam;
   const cam = w.camera;
+  if (c.override) {
+    const o = c.override;
+    cam.position.set(o.px, o.py, o.pz);
+    cam.lookAt(o.lx, o.ly, o.lz);
+    return;
+  }
   if (!w.started) {
     // slow orbit over the live city behind the title text
     c.titleAngle += dt * 0.05;

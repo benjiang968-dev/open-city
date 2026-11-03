@@ -23,7 +23,7 @@ import type { Profiler } from './systems/profiler';
 export type GameEvent =
   | { type: 'pedHit'; pedId: number; x: number; z: number; speed: number }
   | { type: 'carHit'; targetKind: 'traffic' | 'police' | 'parked'; x: number; z: number; speed: number }
-  | { type: 'crash'; x: number; z: number; damage: number }
+  | { type: 'crash'; x: number; z: number; damage: number; dv: number }
   | { type: 'fareComplete'; x: number; z: number; pay: number }
   | { type: 'enterCar'; x: number; z: number; carId: number; seen: boolean }
   | { type: 'speeding'; x: number; z: number; speed: number }

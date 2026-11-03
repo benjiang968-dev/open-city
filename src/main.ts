@@ -23,6 +23,7 @@ import { createMinimap, showMinimap, updateMinimap } from './systems/minimap';
 import { createAudio, startAudio, updateAudio, toggleMute } from './systems/audio';
 import { ScriptedProvider } from './npc/providers/scripted';
 import { Profiler } from './systems/profiler';
+import { updateCarDamage } from './systems/carDamage';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 
 async function boot() {
@@ -76,7 +77,10 @@ async function boot() {
     for (const c of pool) c.mesh.visible = true;
     const keep = pool[0].mesh.material;
     pool[0].mesh.material = wreckMaterial;
+    const crack = w.vehicles[0].dmg.crack;
+    crack.visible = true;
     renderer.compile(scene, camera);
+    crack.visible = false;
     pool[0].mesh.material = keep;
     for (const c of pool) c.mesh.visible = false;
   }
@@ -150,7 +154,7 @@ async function boot() {
     P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 
-    P.begin('sync'); syncTraffic(w); syncPolice(w); P.end('sync');
+    P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); P.end('sync');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
     P.begin('weather'); updateWeather(w, dt); P.end('weather');
     if (render) { P.begin('city'); updateCity(w.city, w.time); P.end('city'); }
