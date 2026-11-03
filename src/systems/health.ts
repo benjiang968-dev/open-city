@@ -65,13 +65,25 @@ function wakeUp(w: World) {
   p.facing = Math.atan2(clinic.curbX - clinic.x, clinic.curbZ - clinic.z);
   // the world moved on while you were out
   w.dayNight.hour = (w.dayNight.hour + (H.deathTimeSkip * 24) / TUNING.time.realSecondsPerGameDay) % 24;
-  // current job cancelled, police lose interest; inventory is kept (stolen/illegal items will be removed here in M2)
+  // inventory is kept, except anything stolen or illegal (the police took it)
+  const inv = w.inventory;
+  let confiscated = 0;
+  for (let i = 0; i < inv.slots.length; i++) {
+    const it = inv.slots[i];
+    if (it && (it.stolen || it.illegal)) {
+      inv.slots[i] = null;
+      confiscated++;
+    }
+  }
+  // current job cancelled, police lose interest
   w.jobs.get<TaxiJob>('taxi')?.cancel(w);
   w.police.heat = 0;
   w.police.stars = 0;
   w.police.loseTimer = 0;
   w.police.trackUntil = 0;
-  toast(w, `Patched up at ${clinic.name}<br><span style="font-size:16px">Hospital bill: $${fee}</span>`, 4);
+  w.police.searchUntil = 0;
+  const lost = confiscated ? ` · ${confiscated} stolen item${confiscated > 1 ? 's' : ''} confiscated` : '';
+  toast(w, `Patched up at ${clinic.name}<br><span style="font-size:16px">Hospital bill: $${fee}${lost}</span>`, 4);
 }
 
 /** Clinic door within reach (on foot, hurt), or null. */

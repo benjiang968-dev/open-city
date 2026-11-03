@@ -853,3 +853,72 @@ export async function witness(page, S) {
   });
   return { setup, after, escape, interrupt };
 }
+
+// Milestone 2 gate, with real key presses where possible.
+export async function gate2(page, S) {
+  await S.start(page);
+  const step = (sec) => page.evaluate((s) => window.__ocRun(s), sec);
+  // 1) pick up a bottle with E
+  await page.evaluate(() => {
+    const w = window.__oc;
+    const bottle = w.itemsState.items.find((i) => i.type === 'bottle' && i.inWorld);
+    w.player.body.setTranslation({ x: bottle.px, y: 1.2, z: bottle.pz - 1.0 }, true); w.player.facing = 0;
+  });
+  await step(0.3);
+  await page.keyboard.press('KeyE'); await step(0.1);
+  const picked = await page.evaluate(() => window.__oc.inventory.slots.map((s) => s?.type ?? null).filter(Boolean));
+  // 2) an NPC stands in front; hold F to charge, release to throw
+  const victim = await page.evaluate(() => {
+    const w = window.__oc; const pp = w.player.mesh.position;
+    const v = w.peds.find((p) => p.active && p.archetype === 'adult' && p.npc.personality === 'friendly') ?? w.peds.find((p) => p.active && p.archetype === 'adult');
+    v.pos.set(pp.x, 0.02, pp.z + 5); v.state = 'idle'; v.timer = 30; v.route = [];
+    w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
+    return { id: v.id, personality: v.npc.personality };
+  });
+  await page.keyboard.down('KeyF'); await step(0.36); await page.keyboard.up('KeyF'); await step(0.1);
+  const res = await page.evaluate((id) => {
+    const w = window.__oc, run = window.__ocRun; const v = w.peds[id];
+    const seq = [];
+    for (let k = 0; k < 40 && w.police.stars === 0; k++) { run(0.15); if (seq[seq.length - 1] !== v.state) seq.push(v.state); }
+    return { seq, stars: w.police.stars, health: Math.round(v.health), calls: { ...window.__ocWitness } };
+  }, victim.id);
+  // 3) escape
+  const escape = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun; const c = w.city;
+    w.player.body.setTranslation({ x: c.xs[c.xs.length - 2] - 30, y: 1.2, z: c.zs[0] + 3 }, true);
+    const t0 = w.time;
+    while (w.police.stars > 0 && w.time - t0 < 60) run(1);
+    return { seconds: Math.round(w.time - t0), stars: w.police.stars };
+  });
+  // 4) bat a car
+  const dent = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const bat = w.itemsState.items.find((i) => i.type === 'bat' && i.inWorld);
+    w.player.body.setTranslation({ x: bat.px, y: 1.2, z: bat.pz - 1.0 }, true); w.player.facing = 0;
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    w.inventory.selected = w.inventory.slots.findIndex((s) => s && s.type === 'bat');
+    const v = w.vehicles.find((c) => !c.driven && c.type === 'sedan');
+    const pp = w.player.mesh.position;
+    v.body.setTranslation({ x: pp.x, y: 0.8, z: pp.z + 2.2 }, true); v.body.setRotation({ x: 0, y: Math.sin(Math.PI / 4), z: 0, w: Math.cos(Math.PI / 4) }, true);
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0); run(0.5);
+    const d0 = v.dmg.dentTotal;
+    w.player.facing = 0; w.cam.yaw = Math.PI;
+    w.input.keys.add('KeyF'); run(0.1); w.input.keys.delete('KeyF'); run(0.8);
+    return { dentBefore: +d0.toFixed(2), dentAfter: +v.dmg.dentTotal.toFixed(2) };
+  });
+  // 5) 60 people (High): CPU cost vs 30 people (Low), frames over 33 ms
+  const perf = await page.evaluate(() => {
+    const w = window.__oc;
+    const measure = (q) => {
+      document.getElementById(`q-${q}`).click();
+      window.__ocRun(3);
+      const f = window.__ocFrames(300, false).map((x) => x.cpu).sort((a, b) => a - b);
+      return { active: w.peds.filter((p) => p.active).length, median: f[150], p99: f[297], max: f[299], over33: f.filter((x) => x > 33).length };
+    };
+    const low = measure('low');
+    const high = measure('high');
+    document.getElementById('q-medium').click();
+    return { low, high };
+  });
+  return { picked, victim, res, escape, dent, perf };
+}

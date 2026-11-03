@@ -25,6 +25,7 @@ export interface WorldItem {
   thrownAt: number;
   speed: number; // speed at the last update (for hit strength)
   stolen: boolean; // taken from a shop without paying (M3)
+  illegal: boolean; // illegal to carry (M3 weapons)
 }
 
 export interface ItemsState {
@@ -85,7 +86,7 @@ export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: num
   const collider = w.physics.createCollider(cd.setMass(def.mass).setFriction(0.75).setRestitution(0.2).setCollisionGroups(GROUPS.item), body);
   const item: WorldItem = {
     id: S.items.length, type, body, collider, inWorld: true, inst: im.count, px: x, py: (y ?? 0.02) + a.restY, pz: z,
-    thrown: false, thrownAt: -10, speed: 0, stolen: false,
+    thrown: false, thrownAt: -10, speed: 0, stolen: false, illegal: false,
   };
   im.count++;
   S.items.push(item);
