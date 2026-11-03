@@ -23,10 +23,12 @@ export interface PoliceState {
   sightCheckT: number;
   /** Until this time police know where you are (fresh 911 call) and the escape timer is paused. */
   trackUntil: number;
+  /** Police are heading to a reported location (escape timer paused, but they don't know where you are). */
+  searchUntil: number;
 }
 
 export function createPolice(): PoliceState {
-  return { heat: 0, stars: 0, seen: false, cars: [], pool: [], loseTimer: 0, bustTimer: 0, lastSeenX: 0, lastSeenZ: 0, sightCheckT: 0, trackUntil: 0 };
+  return { heat: 0, stars: 0, seen: false, cars: [], pool: [], loseTimer: 0, bustTimer: 0, lastSeenX: 0, lastSeenZ: 0, sightCheckT: 0, trackUntil: 0, searchUntil: 0 };
 }
 
 export function spawnPolicePool(w: World): void {
@@ -46,6 +48,29 @@ function park(car: AiCar) {
   car.body.setGravityScale(0, false);
   car.body.sleep();
   car.mesh.visible = false;
+}
+
+/** A 999 call: heat rises and police are sent to where the crime happened (not to wherever you are now). */
+export function dispatchTo(w: World, x: number, z: number, amount: number): void {
+  const pol = w.police;
+  pol.heat = Math.min(P.maxStars * P.heatPerStar, pol.heat + amount);
+  pol.loseTimer = 0;
+  pol.lastSeenX = x;
+  pol.lastSeenZ = z;
+  pol.searchUntil = w.time + TUNING.witness.searchTime;
+}
+
+/** Can any active police car see this spot right now? */
+export function policeCanSee(w: World, x: number, z: number): boolean {
+  const R = w.R;
+  for (const c of w.police.cars) {
+    const dx = x - c.px, dz = z - c.pz, d = Math.hypot(dx, dz);
+    if (d > P.sightRange) continue;
+    if (d < 2) return true;
+    const ray = new R.Ray({ x: c.px, y: 1.4, z: c.pz }, { x: dx / d, y: -0.4 / d, z: dz / d });
+    if (!w.physics.castRay(ray, d - 1, true, R.QueryFilterFlags.ONLY_FIXED)) return true;
+  }
+  return false;
 }
 
 export function addHeat(w: World, amount: number): void {
@@ -128,10 +153,8 @@ export function updatePolice(w: World, dt: number): void {
   const pol = w.police;
   // ---- crimes raise heat ----
   for (const e of w.events) {
-    if (e.type === 'pedHit') addHeat(w, P.heatPerPedHit);
-    else if (e.type === 'carHit' && e.speed > 6) addHeat(w, e.targetKind === 'police' ? P.heatPerPoliceHit : e.targetKind === 'traffic' ? P.heatPerCarHit : 0);
-    else if (e.type === 'policeCalled') addHeat(w, P.callPoliceHeat);
-    else if (e.type === 'enterCar' && !e.seen && pol.stars > 0) {
+    // crimes reach the police through witnesses (999 calls) or police seeing them: see witness.ts
+    if (e.type === 'enterCar' && !e.seen && pol.stars > 0) {
       pol.loseTimer += P.loseSightTime[pol.stars] * P.vehicleSwapBonus;
       toast(w, 'Switched cars unseen', 1.5);
     }
@@ -150,7 +173,7 @@ export function updatePolice(w: World, dt: number): void {
     }
   }
   if (pol.stars > 0) {
-    if (pol.seen || w.time < pol.trackUntil) pol.loseTimer = Math.max(0, pol.loseTimer - dt * 2);
+    if (pol.seen || w.time < pol.trackUntil || w.time < pol.searchUntil) pol.loseTimer = Math.max(0, pol.loseTimer - dt * 2);
     else {
       pol.loseTimer += dt;
       if (pol.loseTimer >= P.loseSightTime[pol.stars]) {

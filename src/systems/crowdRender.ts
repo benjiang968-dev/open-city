@@ -131,7 +131,7 @@ function drawPed(C: CrowdRender, ped: Ped) {
   // right arm pose: phone at the ear, camera held up, waving, carrying, cane, or swinging
   let rx = swing * 0.8, rz = 0;
   switch (ped.armPose) {
-    case 'phone': rx = -2.5; rz = 0.35; break;
+    case 'phone': rx = -2.0; rz = -0.45; break; // phone held up in front of the face
     case 'film': rx = -1.45; break;
     case 'wave': rx = 0; rz = 2.6 + Math.sin(ped.walkPhase * 3 + ped.id) * 0.3; break;
     case 'carry': rx = -1.2; break;

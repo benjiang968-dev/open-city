@@ -414,6 +414,41 @@ const RAW = {
     styleByPersonality: { friendly: 'flee', grumpy: 'confront', nervous: 'flee', chatty: 'yell', posh: 'flee', laidback: 'yell' },
   },
 
+  witness: {
+    // heat a completed 999 call adds for each kind of crime (40 heat = 1 star)
+    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34 },
+    // metres within which people can witness each crime (they also need line of sight)
+    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40 },
+    maxWitnesses: 8, // nearest people considered per crime
+    callTimeMin: 2.0, // seconds the phone is visibly at their ear before the call goes through
+    callTimeMax: 3.0,
+    filmTime: 6, // seconds someone films before moving on
+    extraCallerHeat: 5, // a second caller about the same crime adds a little more
+    searchTime: 20, // seconds police head for the reported spot with the escape timer paused
+    menaceCooldown: 8, // seconds between "waving a weapon" reports
+    // chance the victim calls 999 themselves (after flinching), by personality
+    victimCall: { friendly: 0.95, posh: 1, nervous: 0.9, chatty: 0.8, laidback: 0.5, grumpy: 0.35 },
+    // bystander reactions by archetype (relative weights)
+    byArchetype: {
+      adult: { call: 4, film: 1, flee: 4, confront: 1 },
+      jogger: { call: 1, film: 0.2, flee: 6, confront: 0.5 },
+      delivery: { call: 2, film: 1, flee: 2, confront: 3 },
+      tourist: { call: 1, film: 6, flee: 2, confront: 0.2 },
+      elderly: { call: 7, film: 0, flee: 2, confront: 0.5 },
+      parent: { call: 5, film: 0, flee: 5, confront: 1 },
+      dogwalker: { call: 3, film: 1, flee: 3, confront: 2 },
+    },
+    // personality multipliers on those weights
+    personality: {
+      friendly: { call: 1.3, film: 1, flee: 1, confront: 0.5 },
+      grumpy: { call: 0.8, film: 0.5, flee: 0.5, confront: 3 },
+      nervous: { call: 1, film: 0.3, flee: 2, confront: 0 },
+      chatty: { call: 1, film: 2, flee: 1, confront: 0.7 },
+      posh: { call: 2, film: 0.5, flee: 1, confront: 0.3 },
+      laidback: { call: 0.5, film: 1.5, flee: 1, confront: 0.7 },
+    },
+  },
+
   quality: {
     default: 'medium', // preset used until the player picks one in the pause menu
     // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player

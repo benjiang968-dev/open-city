@@ -30,6 +30,7 @@ import { createInventory, inventoryKeys, updateInventory, showHotbar } from './s
 import { createCombat, updateCombat, thrownItemHitCollider } from './systems/combat';
 import { createBubbles, updateBubbles } from './systems/bubbles';
 import { createCrowd, renderCrowd } from './systems/crowdRender';
+import { updateWitnesses, witnessStats } from './systems/witness';
 import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
@@ -104,6 +105,7 @@ async function boot() {
 
   // expose read-only state for automated tests (scripts/*.mjs)
   (window as unknown as { __oc: World }).__oc = w;
+  (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {
@@ -187,7 +189,7 @@ async function boot() {
     }
     // event consumers run once per frame, then events are cleared
     P.begin('memory'); updateNpcMemory(w); P.end('memory');
-    P.begin('police'); updatePolice(w, dt); updateHealth(w, dt); P.end('police');
+    P.begin('police'); updateWitnesses(w, dt); updatePolice(w, dt); updateHealth(w, dt); P.end('police');
     P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 

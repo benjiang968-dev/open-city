@@ -797,3 +797,59 @@ export async function lineup(page, S) {
   await page.waitForTimeout(1500);
   return r;
 }
+
+// Witness: throw a bottle at someone who calls 999; watch the visible call window; get a star; police dispatched.
+export async function witness(page, S) {
+  await S.start(page);
+  const setup = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const bottle = w.itemsState.items.find((i) => i.type === 'bottle' && i.inWorld);
+    w.player.body.setTranslation({ x: bottle.px, y: 1.2, z: bottle.pz - 1.0 }, true); w.player.facing = 0;
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const pp = w.player.mesh.position;
+    const victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly'));
+    victim.pos.set(pp.x, 0.02, pp.z + 5); victim.state = 'idle'; victim.timer = 30; victim.route = [];
+    w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
+    w.input.keys.add('KeyF'); run(0.36); w.input.keys.delete('KeyF');
+    const states = [];
+    for (let k = 0; k < 6; k++) { run(0.15); states.push(victim.state); }
+    window.__victim = victim.id;
+    return { victim: victim.id, personality: victim.npc.personality, states, phoneMode: victim.phoneMode, stars: w.police.stars };
+  });
+  await page.evaluate(() => { const w = window.__oc; const v = w.peds[window.__victim]; w.cam.override = { px: v.pos.x + 2.2, py: 2.2, pz: v.pos.z - 2.6, lx: v.pos.x, ly: 1.3, lz: v.pos.z }; });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'screenshots/19-calling-999.png' });
+  const after = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    w.cam.override = null;
+    const v = w.peds[window.__victim];
+    const t0 = w.time;
+    while (v.phoneMode === 'call' && w.time - t0 < 6) run(0.1);
+    run(0.2);
+    return { callSeconds: +(w.time - t0).toFixed(1), stars: w.police.stars, heat: w.police.heat, searchFor: +(w.police.searchUntil - w.time).toFixed(1), stats: { ...window.__ocWitness } };
+  });
+  // escape: run far away and hide
+  const escape = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const c = w.city;
+    w.player.body.setTranslation({ x: c.xs[c.xs.length - 2] - 30, y: 1.2, z: c.zs[0] + 3 }, true);
+    const s = [];
+    for (let k = 0; k < 15; k++) { run(3); s.push([Math.round(w.time), w.police.stars, w.police.cars.length, w.police.seen ? 'seen' : '-']); if (w.police.stars === 0) break; }
+    return s;
+  });
+  // interrupting a caller: knock them over mid-call
+  const interrupt = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const p = w.peds.find((q) => q.active && q.archetype === 'elderly');
+    const before = { ...window.__ocWitness };
+    // pretend they saw something and are calling
+    p.state = 'idle';
+    w.events.push({ type: 'vandalism', x: p.pos.x + 3, z: p.pos.z, what: 'a car' });
+    run(0.1);
+    const calling = p.phoneMode;
+    p.state = 'down'; p.timer = 3; // knocked over before the call connects
+    run(3.5);
+    return { calling, interrupted: window.__ocWitness.callsInterrupted - before.callsInterrupted, completed: window.__ocWitness.callsCompleted - before.callsCompleted };
+  });
+  return { setup, after, escape, interrupt };
+}

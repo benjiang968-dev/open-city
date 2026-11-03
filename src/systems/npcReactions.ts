@@ -9,6 +9,7 @@ import { adjustRelationship, remember } from '../npc/npc';
 import { LINES, pick } from '../npc/reactionLines';
 import { say } from './bubbles';
 import { closeChat } from './chat';
+import { victimMaybeCalls } from './witness';
 
 const RX = TUNING.reactions;
 
@@ -47,6 +48,7 @@ export function hitPed(w: World, ped: Ped, cause: HitCause, damage: number, heav
 
 /** After the flinch: what this person does next, by personality (and archetype later). */
 export function reactAfterFlinch(w: World, ped: Ped): void {
+  if (victimMaybeCalls(w, ped)) return;
   const pp = w.player.mesh.position;
   const style = ped.hitCount >= 2 || ped.health < RX.fleeBelowHealth ? 'flee' : RX.styleByPersonality[ped.npc.personality];
   if (style === 'confront') {

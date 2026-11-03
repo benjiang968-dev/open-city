@@ -22,6 +22,7 @@ export interface CombatState {
   cooldown: number;
   throwAnimT: number;
   heldBefore: boolean; // attack button state last frame
+  lastMenace: number;
   arc: THREE.Line;
   arcPts: Float32Array;
   ring: THREE.Mesh;
@@ -43,7 +44,7 @@ export function createCombat(w: World): CombatState {
   ring.visible = false;
   ring.renderOrder = 5;
   w.scene.add(arc, ring);
-  return { charging: false, charge: 0, swingT: 0, swingHitDone: false, cooldown: 0, throwAnimT: 0, heldBefore: false, arc, arcPts, ring, flying: [] };
+  return { charging: false, charge: 0, swingT: 0, swingHitDone: false, cooldown: 0, throwAnimT: 0, heldBefore: false, lastMenace: -100, arc, arcPts, ring, flying: [] };
 }
 
 /** Where a throw starts and its velocity, from the camera's aim and the current charge. */
@@ -99,6 +100,11 @@ export function updateCombat(w: World, dt: number): void {
       c.cooldown = def.melee.cooldown;
       p.facing = Math.atan2(-Math.sin(w.cam.yaw), -Math.cos(w.cam.yaw)); // swing where you look
       w.audio.whoosh?.();
+      // waving a weapon around near people is a crime in itself (rate-limited)
+      if (w.time - c.lastMenace > TUNING.witness.menaceCooldown) {
+        c.lastMenace = w.time;
+        emit(w, { type: 'menace', x: p.mesh.position.x, z: p.mesh.position.z });
+      }
     }
     if (c.swingT > 0) {
       c.swingT -= dt;

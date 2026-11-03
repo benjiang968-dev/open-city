@@ -36,6 +36,7 @@ export type GameEvent =
   | { type: 'assault'; pedId: number; x: number; z: number; weapon: string }
   | { type: 'harassment'; pedId: number; x: number; z: number; weapon: string }
   | { type: 'vandalism'; x: number; z: number; what: string }
+  | { type: 'menace'; x: number; z: number }
   | { type: 'policeCalled'; x: number; z: number; byPed: number };
 
 export interface World {
