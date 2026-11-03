@@ -58,3 +58,4 @@ Format: date · what changed · what to test · known issues.
 - No rain yet (the weather field is fixed to `clear`). Shops don't open or close yet.
 - Pedestrians don't collide with the player on foot (you walk through them).
 - The three starter cars are parked nose-to-tail, so it's easy to bump the one in front when pulling out.
+- **2026-11-03: Stats key.** Backtick (`) now toggles the debug/stats overlay as well as F3, because F3 is often taken by the browser or is a laptop media key. Test: press ` in game.

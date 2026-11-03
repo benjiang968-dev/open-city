@@ -23,7 +23,7 @@ npm run dev        # opens http://localhost:5173
 | Mouse (click to lock) | look around |
 | R | flip the car upright |
 | H | horn |
-| F3 | debug overlay |
+| F3 or ` (backtick) | debug overlay |
 | M | mute |
 
 ## Build and deploy

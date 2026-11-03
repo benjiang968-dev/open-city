@@ -359,3 +359,10 @@ export async function perf(page, S) {
     return { simMsPerFrame: +simMs.toFixed(2), swiftshaderRenderMs: +renderMs.toFixed(1), calls: w.renderer.info.render.calls, tris: w.renderer.info.render.triangles };
   });
 }
+
+export async function backtick(page, S) {
+  await S.start(page);
+  await page.keyboard.press('Backquote');
+  await page.waitForTimeout(1200);
+  return page.evaluate(() => getComputedStyle(document.getElementById('debug')).display);
+}

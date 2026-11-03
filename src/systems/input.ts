@@ -75,5 +75,5 @@ export const act = {
   interact: (s: InputState) => !s.blocked && s.pressed.has('KeyE'),
   horn: (s: InputState) => !s.blocked && s.keys.has('KeyH'),
   reset: (s: InputState) => !s.blocked && s.pressed.has('KeyR'),
-  debug: (s: InputState) => s.pressed.has('F3'),
+  debug: (s: InputState) => s.pressed.has('F3') || s.pressed.has('Backquote'), // backtick too: F3 is often a browser or laptop media key
 };

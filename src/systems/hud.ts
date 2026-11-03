@@ -39,7 +39,7 @@ export function createHud(): HudState {
   const job = el('job');
   const toast = el('toast');
   const speedo = el('speedo', 'shadow', '<div class="v">0</div><div class="u">km/h</div><div id="health"><div></div></div>');
-  const help = el('help', 'shadow', 'WASD move · Shift run · Space jump / handbrake · E enter car / talk<br>Mouse look (click to lock) · R flip car · H horn · F3 debug · M mute');
+  const help = el('help', 'shadow', 'WASD move · Shift run · Space jump / handbrake · E enter car / talk<br>Mouse look (click to lock) · R flip car · H horn · F3 or ` stats · M mute');
   for (const d of [cash, stars, clock, help]) d.style.visibility = 'hidden';
   return {
     root, title: document.getElementById('title')!, cash, stars, clock, prompt, job, toast, speedo,
