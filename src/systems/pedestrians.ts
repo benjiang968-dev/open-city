@@ -459,14 +459,15 @@ export function updatePeds(w: World, dt: number): void {
     ped.moveAmount = ped.state === 'down' ? 0 : Math.min(1.4, moveSpeed / PT.walkSpeed);
     if (ped.dog) updateDog(w, ped, dt, moveSpeed);
 
-    // capsule follows the body, but only near the player: nothing else touches it, and every Rapier
-    // body update allocates, so far-away capsules are switched off (also off while lying down)
-    const solid = ped.state !== 'down' && Math.abs(ped.pos.x - pp.x) < PT.capsuleRange && Math.abs(ped.pos.z - pp.z) < PT.capsuleRange;
+    // capsule (off while lying down). Its position is only pushed to Rapier near the player: nothing else
+    // touches it, and every Rapier body write allocates. Far capsules keep their last spot until you come
+    // close (toggling them on/off instead made whole groups re-enter the broad phase at once).
+    const solid = ped.state !== 'down';
     if (ped.solid !== solid) {
       ped.solid = solid;
       ped.body.setEnabled(solid);
     }
-    if (solid) {
+    if (solid && Math.abs(ped.pos.x - pp.x) < PT.capsuleRange && Math.abs(ped.pos.z - pp.z) < PT.capsuleRange) {
       KIN.x = ped.pos.x; KIN.y = ped.pos.y + 0.95 * ped.scale; KIN.z = ped.pos.z;
       ped.body.setNextKinematicTranslation(KIN);
     }
