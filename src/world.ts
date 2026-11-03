@@ -22,6 +22,7 @@ import type { SettingsState } from './systems/settings';
 import type { ItemsState } from './systems/worldItems';
 import type { InventoryState } from './systems/inventory';
 import type { CombatState } from './systems/combat';
+import type { CrowdRender } from './systems/crowdRender';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -54,6 +55,7 @@ export interface World {
   itemsState: ItemsState;
   inventory: InventoryState;
   combat: CombatState;
+  crowd: CrowdRender;
   city: CityData;
   player: PlayerState;
   vehicles: Vehicle[];
@@ -75,7 +77,7 @@ export interface World {
   /** Events raised this frame; cleared after all systems update. */
   events: GameEvent[];
   /** Collider handle -> what it belongs to, for collision attribution. */
-  colliderOwner: Map<number, { kind: 'vehicle' | 'traffic' | 'police' | 'static'; id: number }>;
+  colliderOwner: Map<number, { kind: 'vehicle' | 'traffic' | 'police' | 'static' | 'ped'; id: number }>;
 }
 
 export function emit(w: World, e: GameEvent): void {

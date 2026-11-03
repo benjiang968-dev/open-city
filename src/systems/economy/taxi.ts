@@ -61,7 +61,7 @@ export class TaxiJob implements JobSystem {
       rank = this.completed === 0 ? sorted[0] : sorted[1 + Math.floor(Math.random() * (sorted.length - 1))];
     }
     const cam = w.camera.position;
-    const candidates = w.peds.filter((p) => !p.reserved && p.state !== 'down' && p.state !== 'talk' && p.pos.distanceTo(cam) > 60);
+    const candidates = w.peds.filter((p) => p.active && !p.hidden && p.followId < 0 && !p.dog && p.archetype !== 'parent' && p.phoneMode === null && !p.reserved && p.state !== 'down' && p.state !== 'talk' && p.pos.distanceTo(cam) > 60);
     const ped = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : w.peds.find((p) => !p.reserved && p.state !== 'talk');
     if (!ped) return;
     ped.pos.set(rank.x + (Math.random() - 0.5) * 2, 0.02, rank.z + (Math.random() - 0.5) * 2);
@@ -104,9 +104,9 @@ export class TaxiJob implements JobSystem {
   private release() {
     if (this.ped) {
       this.ped.reserved = false;
-      this.ped.rig.root.visible = true;
+      this.ped.hidden = false;
+      this.ped.body.setEnabled(true);
       if (this.ped.state === 'idle') this.ped.timer = 1;
-      this.ped.rig.armR.rotation.z = 0;
     }
     this.ped = null;
   }
@@ -156,7 +156,6 @@ export class TaxiJob implements JobSystem {
           break;
         }
         // wave at passing cars
-        ped.rig.armR.rotation.z = 2.6 + Math.sin(t * 6) * 0.3;
         ped.heading = Math.atan2(this.pickup.x - ped.pos.x, this.pickup.y - ped.pos.z);
         this.showBeacon(this.pickup.x, this.pickup.y, 0xffd23f, t);
         if (pv && !pv.wrecked) {
@@ -179,8 +178,8 @@ export class TaxiJob implements JobSystem {
         ped.heading = Math.atan2(p.x - ped.pos.x, p.z - ped.pos.z);
         if (w.player.vehicle !== v) { this.phase = 'waiting'; break; }
         if (this.timer <= 0) {
-          ped.rig.root.visible = false;
-          ped.rig.armR.rotation.z = 0;
+          ped.hidden = true;
+          ped.body.setEnabled(false);
           this.chooseDestination(w, p.x, p.z);
           this.phase = 'riding';
           this.tripTime = 0;
@@ -199,7 +198,8 @@ export class TaxiJob implements JobSystem {
         if (w.player.vehicle !== v || v.wrecked) {
           // passenger bails out
           ped.pos.set(p.x + 2, 0.02, p.z);
-          ped.rig.root.visible = true;
+          ped.hidden = false;
+          ped.body.setEnabled(true);
           adjustRelationship(ped.npc, -15);
           remember(ped.npc, 'crashed', v.wrecked ? 'wrecked the cab I was riding in' : 'kicked me out halfway', w.dayNight.hour, w.dayNight.day);
           toast(w, '<span style="color:#ef476f">Fare abandoned</span>', 2);
@@ -251,7 +251,8 @@ export class TaxiJob implements JobSystem {
     toast(w, `<span style="color:#9be564">+$${total}</span><br><span style="font-size:16px">${parts.join(' · ')}</span>`, 3.5);
     // passenger steps out and goes about their day
     ped.pos.set(this.dest!.x, 0.02, this.dest!.z);
-    ped.rig.root.visible = true;
+    ped.hidden = false;
+    ped.body.setEnabled(true);
     adjustRelationship(ped.npc, crashed ? -5 : 12);
     remember(ped.npc, 'fareDone', crashed ? 'drove me like a maniac, but got me there' : 'gave me a smooth taxi ride', w.dayNight.hour, w.dayNight.day);
     this.release();

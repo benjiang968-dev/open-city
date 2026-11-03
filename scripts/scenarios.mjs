@@ -719,3 +719,81 @@ export async function combat(page, S) {
   await page.screenshot({ path: 'screenshots/17-bat-dent.png' });
   return { r1, r2, r3 };
 }
+
+// Crowd: archetypes, budget per quality, shove, CPU cost with 60 people; screenshot of a busy pavement.
+export async function crowd(page, S) {
+  await S.start(page);
+  const r = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const arch = {}; for (const p of w.peds) arch[p.archetype] = (arch[p.archetype] || 0) + 1;
+    const active = () => w.peds.filter((p) => p.active).length;
+    const a0 = active();
+    run(25); // let the recycler pull people in around the player
+    const pp = w.player.mesh.position;
+    const near = w.peds.filter((p) => p.active && Math.hypot(p.pos.x - pp.x, p.pos.z - pp.z) < 120).length;
+    // shove: put an adult right in front and walk into them
+    const ped = w.peds.find((p) => p.archetype === 'adult' && p.active);
+    ped.pos.set(pp.x, 0.02, pp.z + 0.9); ped.state = 'idle'; ped.timer = 20; run(0.1);
+    w.player.facing = 0; w.input.keys.add('KeyW'); run(0.8); w.input.keys.delete('KeyW');
+    const shove = { state: ped.state, shoved: ped.shoveCount, moved: +(ped.pos.z - pp.z).toFixed(2) };
+    // CPU with 60 people
+    w.settings.pedBudget = 60;
+    const budget = window.__applyBudget ? 0 : 0;
+    return { arch, a0, near, shove };
+  });
+  // switch to High through the menu to activate 60
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.__oc.paused, null, { timeout: 8000 }).catch(() => {});
+  await page.click('#q-high');
+  const hi = await page.evaluate(() => window.__oc.peds.filter((p) => p.active).length);
+  await page.click('#q-medium');
+  await page.click('#pause-resume');
+  const perf = await page.evaluate(() => {
+    const w = window.__oc;
+    document.getElementById('q-high')?.click();
+    const f = window.__ocFrames(120, false).map((x) => x.cpu).sort((a, b) => a - b);
+    const ped = f[Math.floor(f.length / 2)];
+    const fr = window.__ocFrames(10, true);
+    return { median: ped, p95: f[Math.floor(f.length * 0.95)], max: f[f.length - 1], calls: w.renderer.info.render.calls, renderTop: fr[fr.length - 1].top };
+  });
+  // a pavement full of people: look at the nearest group from above-behind
+  await page.evaluate(() => {
+    const w = window.__oc;
+    let best = null, bc = 0;
+    for (const p of w.peds) { if (!p.active) continue; const c = w.peds.filter((q) => q.active && Math.hypot(q.pos.x - p.pos.x, q.pos.z - p.pos.z) < 14).length; if (c > bc) { bc = c; best = p; } }
+    w.player.body.setTranslation({ x: best.pos.x - 4, y: 1.2, z: best.pos.z - 9 }, true); window.__ocRun(0.2);
+    w.cam.override = { px: best.pos.x - 6, py: 5.5, pz: best.pos.z - 13, lx: best.pos.x, ly: 0.8, lz: best.pos.z };
+  });
+  await page.waitForTimeout(1500);
+  await page.screenshot({ path: 'screenshots/18-crowd.png' });
+  return { ...r, high: hi, perf };
+}
+
+export async function lineup(page, S) {
+  await S.start(page);
+  const r = await page.evaluate(() => {
+    const w = window.__oc;
+    const c = w.city;
+    w.player.body.setTranslation({ x: c.xs[3] + 20, y: 1.2, z: c.zs[c.zs.length - 1] + 12 }, true);
+    window.__ocRun(0.2);
+    const pp = w.player.mesh.position;
+    const want = ['adult', 'jogger', 'delivery', 'tourist', 'elderly', 'parent', 'dogwalker'];
+    const picked = [];
+    want.forEach((a, i) => {
+      const p = w.peds.find((q) => q.archetype === a && q.active && !picked.includes(q));
+      if (!p) return;
+      picked.push(p);
+      p.pos.set(pp.x - 6 + i * 2, 0.02, pp.z + 6); p.heading = Math.PI; p.route = [];
+      if (a === 'elderly') p.prop = 'cane';
+      p.state = a === 'delivery' ? 'walk' : 'idle'; p.timer = a === 'tourist' ? 3 : 30;
+      if (a === 'delivery') { p.route = [{ x: p.pos.x, y: p.pos.z - 30 }]; p.routeIdx = 0; }
+      if (p.dog) p.dog.pos.set(p.pos.x + 0.9, 0.02, p.pos.z - 0.6);
+      for (const kid of w.peds) if (kid.followId === p.id) { kid.pos.set(p.pos.x + 0.9, 0.02, p.pos.z); kid.state = 'follow'; }
+    });
+    window.__ocRun(0.3);
+    w.cam.override = { px: pp.x, py: 2.6, pz: pp.z - 1, lx: pp.x, ly: 1.0, lz: pp.z + 6 };
+    return picked.map((p) => `${p.archetype}:${p.armPose}`);
+  });
+  await page.waitForTimeout(1500);
+  return r;
+}

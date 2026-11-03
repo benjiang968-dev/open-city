@@ -13,6 +13,7 @@ import { toast } from './hud';
 import { clinicNearby, clinicFee, treatAtClinic } from './health';
 import { GROUPS } from '../physicsGroups';
 import { pickUp, freeSlot } from './inventory';
+import { shovePed } from './npcReactions';
 
 const P = TUNING.player;
 
@@ -158,6 +159,15 @@ export function updatePlayer(w: World, dt: number): void {
   }
   p.cc.computeColliderMovement(p.collider, { x: move.x, y: move.y, z: move.z });
   const c = p.cc.computedMovement();
+  // bumped into a person: shove them a little (they stumble and complain)
+  for (let i = 0, n = p.cc.numComputedCollisions(); i < n; i++) {
+    const hit = p.cc.computedCollision(i);
+    const owner = hit?.collider ? w.colliderOwner.get(hit.collider.handle) : undefined;
+    if (owner?.kind !== 'ped') continue;
+    const ped = w.peds[owner.id];
+    const dx = ped.pos.x - pos.x, dz = ped.pos.z - pos.z, l = Math.hypot(dx, dz) || 1;
+    shovePed(w, ped, (dx / l) * TUNING.reactions.shovePush, (dz / l) * TUNING.reactions.shovePush);
+  }
   p.grounded = p.cc.computedGrounded();
   if (p.grounded && p.vy > 0 && move.y > 0 && c.y < move.y * 0.5) p.vy = 0; // bumped head
   p.body.setNextKinematicTranslation({ x: pos.x + c.x, y: pos.y + c.y, z: pos.z + c.z });

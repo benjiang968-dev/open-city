@@ -3,6 +3,7 @@ import type { World } from '../world';
 import { applyQuality, QUALITIES, type Quality } from './settings';
 import { toggleMute } from './audio';
 import { TUNING } from '../tuning';
+import { applyPedBudget } from './pedestrians';
 
 let root: HTMLElement;
 let qualityBtns: Record<Quality, HTMLButtonElement>;
@@ -41,7 +42,7 @@ export function createPauseMenu(w: World): void {
     descEl.textContent = desc(w.settings.quality);
     muteBtn.textContent = `Sound: ${w.audio.muted ? 'off' : 'on'}`;
   };
-  for (const k of QUALITIES) qualityBtns[k].addEventListener('click', () => { applyQuality(w, k); refresh(); });
+  for (const k of QUALITIES) qualityBtns[k].addEventListener('click', () => { applyQuality(w, k); applyPedBudget(w); refresh(); });
   muteBtn = root.querySelector('#pause-mute') as HTMLButtonElement;
   muteBtn.addEventListener('click', () => { toggleMute(w.audio); refresh(); });
   root.querySelector('#pause-resume')!.addEventListener('click', () => {

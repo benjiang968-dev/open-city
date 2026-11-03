@@ -235,7 +235,7 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
   for (const o of w.traffic) if (o !== car) consider(o.px, o.pz, o.halfL, 2.3, false);
   for (const o of w.police.cars ?? []) if (o !== car) consider(o.px, o.pz, o.halfL, 2.3, false);
   for (const v of w.vehicles) consider(v.px, v.pz, v.spec.halfExtents[2], 2.4, v.driven);
-  for (const ped of w.peds) if (ped.state !== 'down') consider(ped.pos.x, ped.pos.z, 0.3, 1.7, false);
+  for (const ped of w.peds) if (ped.active && !ped.hidden && ped.state !== 'down') consider(ped.pos.x, ped.pos.z, 0.3, 1.7, false);
   if (!w.player.vehicle) { const pp = w.player.mesh.position; consider(pp.x, pp.z, 0.3, 1.8, true); }
   return OB;
 }

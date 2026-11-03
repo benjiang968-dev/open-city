@@ -48,6 +48,7 @@ export interface NpcProfile {
   /** Things the player and NPC said, newest last (kept short). */
   history: { who: 'player' | 'npc'; text: string }[];
   timesTalked: number;
+  archetype: string; // adult, jogger, delivery, tourist, elderly, parent, kid, dogwalker
 }
 
 export function generateNpc(id: number, rng: Rng, city: CityData): NpcProfile {
@@ -86,6 +87,7 @@ export function generateNpc(id: number, rng: Rng, city: CityData): NpcProfile {
     memory: [],
     history: [],
     timesTalked: 0,
+    archetype: 'adult',
   };
 }
 

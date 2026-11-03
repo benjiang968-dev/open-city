@@ -9,7 +9,7 @@ const N = TUNING.npc;
 export function updateNpcMemory(w: World): void {
   const hour = w.dayNight.hour, day = w.dayNight.day;
   for (const e of w.events) {
-    const near = (r: number) => w.peds.filter((p) => Math.hypot(p.pos.x - ('x' in e ? e.x : 0), p.pos.z - ('z' in e ? e.z : 0)) < r);
+    const near = (r: number) => w.peds.filter((p) => p.active && !p.hidden && Math.hypot(p.pos.x - ('x' in e ? e.x : 0), p.pos.z - ('z' in e ? e.z : 0)) < r);
     const mem = (kind: MemoryKind, note: string, rel: number, radius = TUNING.peds.memoryRadius, skip = -1) => {
       for (const p of near(radius)) {
         if (p.id === skip) continue;

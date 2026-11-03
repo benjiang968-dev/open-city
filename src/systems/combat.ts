@@ -139,7 +139,7 @@ export function updateCombat(w: World, dt: number): void {
     if (!item.thrown || !item.inWorld) { c.flying.splice(i, 1); continue; }
     if (item.speed < CB.minHitSpeed) continue;
     for (const ped of w.peds) {
-      if (f.hit.has(ped.id) || ped.state === 'down') continue;
+      if (f.hit.has(ped.id) || ped.state === 'down' || !ped.active || ped.hidden || ped.protectedTarget) continue;
       const dx = item.px - ped.pos.x, dz = item.pz - ped.pos.z;
       if (Math.abs(dx) > 0.7 || Math.abs(dz) > 0.7) continue;
       const y = item.py - ped.pos.y;
@@ -213,7 +213,7 @@ function meleeHit(w: World, item: WorldItem, m: { damage: number; reach: number;
   let hitSomething = false;
   // people in the swing arc
   for (const ped of w.peds) {
-    if (ped.state === 'down' || ped.pos.y < -10) continue;
+    if (ped.state === 'down' || ped.pos.y < -10 || !ped.active || ped.hidden || ped.protectedTarget) continue;
     const dx = ped.pos.x - pos.x, dz = ped.pos.z - pos.z;
     const d = Math.hypot(dx, dz);
     if (d > m.reach + 0.35 || d < 0.01) continue;

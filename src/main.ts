@@ -29,6 +29,7 @@ import { createItems, scatterItems, updateWorldItems } from './systems/worldItem
 import { createInventory, inventoryKeys, updateInventory, showHotbar } from './systems/inventory';
 import { createCombat, updateCombat, thrownItemHitCollider } from './systems/combat';
 import { createBubbles, updateBubbles } from './systems/bubbles';
+import { createCrowd, renderCrowd } from './systems/crowdRender';
 import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
@@ -73,6 +74,7 @@ async function boot() {
   spawnTraffic(w);
   spawnPolicePool(w);
   spawnPeds(w);
+  w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
   w.hud = createHud();
   w.chat = createChat(w);
   w.jobs.bind(w);
@@ -198,7 +200,7 @@ async function boot() {
     if (render) {
       P.begin('minimap'); updateMinimap(w); P.end('minimap');
       P.begin('debug'); updateDebug(w); P.end('debug');
-      P.begin('render'); renderer.render(scene, camera); P.end('render');
+      P.begin('render'); renderCrowd(w); renderer.render(scene, camera); P.end('render');
     }
     P.endFrame(realMs, w.time);
     if (steps > 0) endInputFrame(w.input);

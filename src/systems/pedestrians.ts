@@ -1,23 +1,43 @@
-// Pedestrians: walk daily routines between points of interest on the pavement graph,
-// dodge and flee from reckless drivers, get knocked down, and stop to talk.
+// Pedestrians: walk routines between points of interest on the pavement graph, by archetype (adults,
+// joggers, delivery workers, tourists, elderly people, parents with kids, dog walkers). They dodge and flee
+// reckless drivers, get knocked down, react to being hit or shoved, and stop to talk. A quality-dependent
+// budget of them is kept active near the player; far ones are quietly moved closer, out of view.
+// Each has a kinematic capsule so the player bumps into (and shoves) them and thrown items bounce off.
 import * as THREE from 'three';
+import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
-import { makePerson, animatePerson, type PersonRig } from '../art/person';
-import { generateNpc, routineTarget, type NpcProfile } from '../npc/npc';
+import { generateNpc, routineTarget, type NpcProfile, type Personality } from '../npc/npc';
 import { reactAfterFlinch } from './npcReactions';
 import { say } from './bubbles';
 import { LINES, pick } from '../npc/reactionLines';
+import { GROUPS } from '../physicsGroups';
+import { Rng } from '../rng';
 
 const PT = TUNING.peds;
+const AR = PT.archetypes;
 
-export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk' | 'flinch' | 'confront' | 'yell' | 'stumble';
+export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk' | 'flinch' | 'confront' | 'yell' | 'stumble' | 'follow' | 'phone';
+export type Archetype = 'adult' | 'jogger' | 'delivery' | 'tourist' | 'elderly' | 'parent' | 'kid' | 'dogwalker';
+export type ArmPose = 'none' | 'phone' | 'film' | 'wave' | 'carry' | 'cane';
+
+export interface DogState {
+  pos: THREE.Vector3;
+  heading: number;
+  phase: number;
+  scale: number;
+  color: THREE.Color;
+  barkCd: number;
+  orbit: number;
+}
 
 export interface Ped {
   id: number;
   npc: NpcProfile;
-  rig: PersonRig;
+  archetype: Archetype;
+  active: boolean; // inside the quality budget
+  hidden: boolean; // riding in the taxi etc.
   pos: THREE.Vector3;
   heading: number;
   state: PedState;
@@ -28,6 +48,7 @@ export interface Ped {
   vel: THREE.Vector3; // used while flying/sliding after a hit and while dodging
   fleeDir: THREE.Vector2;
   walkPhase: number;
+  moveAmount: number; // 0..1.4 limb swing amount (speed relative to a walk)
   speedingCd: number;
   offset: number; // personal lateral offset so crowds don't walk single file
   /** Set while someone is waiting at this ped as a taxi fare (taxi system owns them). */
@@ -38,28 +59,119 @@ export interface Ped {
   lastShoved: number;
   shoveCount: number;
   shoutT: number; // countdown to the next shout while confronting
+  // looks
+  scale: number;
+  tilt: number; // lean (stagger, lying down)
+  armPose: ArmPose;
+  prop: 'none' | 'camera' | 'parcel' | 'cane';
+  shirt: THREE.Color;
+  pants: THREE.Color;
+  skin: THREE.Color;
+  hair: THREE.Color;
+  speedMul: number;
+  followId: number; // kid -> parent
+  dog: DogState | null;
+  body: RAPIER.RigidBody;
+  collider: RAPIER.Collider;
+  // witnesses (M2.8)
+  phoneT: number; // seconds left on a 999 call / filming
+  phoneMode: 'call' | 'film' | null;
+  report: { x: number; z: number; heat: number; kind: string } | null;
+  /** Kids and dogs are never targets: things pass them by and they always dodge cars. */
+  protectedTarget: boolean;
 }
 
 const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0522d'];
 const SHIRT = ['#e63946', '#457b9d', '#2a9d8f', '#f4a261', '#e9c46a', '#6a4c93', '#ffffff', '#1d3557', '#ff8fab', '#8ac926', '#ff595e', '#3a86ff'];
 const PANTS = ['#2b2d42', '#3d405b', '#5c4033', '#264653', '#6c757d', '#1b263b', '#a68a64'];
 const HAIR = ['#2b1d0e', '#4a2c17', '#b5651d', '#e6c27a', '#111111', '#7f7f7f', '#a83232'];
+const SPORT = ['#39ff14', '#ff3fa4', '#00e5ff', '#ffea00', '#ff6d00'];
+const TOURIST = ['#ff9f1c', '#2ec4b6', '#e71d36', '#f4d35e', '#9b5de5'];
+const MUTED = ['#8d99ae', '#a68a64', '#6b705c', '#b7b7a4', '#7f5539'];
+const GREY_HAIR = ['#d9d9d9', '#bfbfbf', '#eeeeee'];
+
+function pickArchetype(rng: Rng): Exclude<Archetype, 'kid' | 'parent'> | 'family' {
+  const entries = Object.entries(AR) as [string, { weight: number }][];
+  let r = rng.next() * entries.reduce((a, [, v]) => a + v.weight, 0);
+  for (const [k, v] of entries) {
+    r -= v.weight;
+    if (r <= 0) return k as Exclude<Archetype, 'kid' | 'parent'> | 'family';
+  }
+  return 'adult';
+}
+
+function makePed(w: World, id: number, rng: Rng, archetype: Archetype, startX: number, startZ: number): Ped {
+  const npc = generateNpc(id, rng, w.city);
+  npc.archetype = archetype;
+  const C = (a: readonly string[]) => new THREE.Color(rng.pick(a as string[]));
+  const spec = AR[archetype === 'kid' || archetype === 'parent' ? 'family' : archetype];
+  let scale = rng.range(spec.scale[0], spec.scale[1]);
+  let shirt = C(SHIRT), pants = C(PANTS), hair = C(HAIR);
+  let prop: Ped['prop'] = 'none';
+  const pers = (opts: Personality[]) => (npc.personality = rng.pick(opts));
+  switch (archetype) {
+    case 'jogger': shirt = C(SPORT); pants = new THREE.Color('#1b1b1f'); break;
+    case 'delivery': shirt = new THREE.Color('#2f7d32'); pants = new THREE.Color('#3e2c1c'); prop = 'parcel'; npc.job = 'courier'; break;
+    case 'tourist': shirt = C(TOURIST); prop = 'camera'; npc.job = 'tourist'; pers(['chatty', 'posh', 'friendly', 'laidback']); break;
+    case 'elderly': shirt = C(MUTED); hair = C(GREY_HAIR); prop = rng.chance(0.6) ? 'cane' : 'none'; npc.job = rng.pick(['retired teacher', 'retired fisher', 'retired nurse']); break;
+    case 'kid': scale = PT.kidScale; shirt = C(SPORT); npc.job = 'school kid'; pers(['chatty', 'nervous', 'friendly']); break;
+    default: break;
+  }
+  const R = w.R;
+  const body = w.physics.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(startX, 0.95 * scale, startZ));
+  const collider = w.physics.createCollider(R.ColliderDesc.capsule(0.55 * scale, 0.3 * scale).setCollisionGroups(GROUPS.ped), body);
+  w.colliderOwner.set(collider.handle, { kind: 'ped', id });
+  return {
+    id, npc, archetype, active: true, hidden: false, pos: new THREE.Vector3(startX, 0.02, startZ), heading: rng.range(0, 6.28),
+    state: 'idle', route: [], routeIdx: 0, targetPoi: -1, timer: rng.range(0, 3), vel: new THREE.Vector3(), fleeDir: new THREE.Vector2(),
+    walkPhase: rng.range(0, 6), moveAmount: 0, speedingCd: 0, offset: rng.range(-0.9, 0.9), reserved: false,
+    health: 100, hitCount: 0, lastHitByPlayer: -100, lastShoved: -100, shoveCount: 0, shoutT: 0,
+    scale, tilt: 0, armPose: 'none', prop, shirt, pants, skin: C(SKIN), hair, speedMul: spec.speed, followId: -1, dog: null,
+    body, collider, phoneT: 0, phoneMode: null, report: null, protectedTarget: archetype === 'kid',
+  };
+}
 
 export function spawnPeds(w: World): void {
-  const rng = w.rng.fork(77);
-  for (let k = 0; k < PT.count; k++) {
-    const npc = generateNpc(k, rng, w.city);
-    const C = (a: string[]) => new THREE.Color(rng.pick(a));
-    const rig = makePerson(C(SHIRT), C(PANTS), C(SKIN), C(HAIR), rng.range(0.92, 1.08));
-    w.scene.add(rig.root);
-    const start = rng.pick(w.city.sideNodes);
-    const ped: Ped = {
-      id: k, npc, rig, pos: new THREE.Vector3(start.x, 0.02, start.z), heading: 0, state: 'idle', route: [], routeIdx: 0,
-      targetPoi: -1, timer: rng.range(0, 3), vel: new THREE.Vector3(), fleeDir: new THREE.Vector2(), walkPhase: rng.range(0, 6),
-      speedingCd: 0, offset: rng.range(-0.9, 0.9), reserved: false,
-      health: 100, hitCount: 0, lastHitByPlayer: -100, lastShoved: -100, shoveCount: 0, shoutT: 0,
-    };
-    w.peds.push(ped);
+  const rng = new Rng(w.seed ^ 0x9ed);
+  const nodes = w.city.sideNodes;
+  // every archetype appears near the start of the list, so even the Low budget has one of each
+  const guaranteed: ReturnType<typeof pickArchetype>[] = ['dogwalker', 'family', 'tourist', 'jogger', 'delivery', 'elderly', 'dogwalker', 'tourist'];
+  while (w.peds.length < PT.maxPopulation) {
+    const a = guaranteed.length ? guaranteed.shift()! : pickArchetype(rng);
+    const start = rng.pick(nodes);
+    if (a === 'family') {
+      if (w.peds.length + 2 > PT.maxPopulation) continue;
+      const parent = makePed(w, w.peds.length, rng, 'parent', start.x, start.z);
+      w.peds.push(parent);
+      const kid = makePed(w, w.peds.length, rng, 'kid', start.x + 0.8, start.z);
+      kid.followId = parent.id;
+      kid.state = 'follow';
+      kid.npc.homePoi = parent.npc.homePoi;
+      w.peds.push(kid);
+    } else {
+      const p = makePed(w, w.peds.length, rng, a, start.x, start.z);
+      if (a === 'dogwalker') {
+        p.dog = {
+          pos: new THREE.Vector3(start.x + 1.5, 0.02, start.z), heading: 0, phase: 0, scale: rng.range(0.8, 1.2),
+          color: new THREE.Color(rng.pick(['#8d5524', '#e0c9a6', '#2b2b2b', '#c68642', '#f5f5f5'])), barkCd: 0, orbit: rng.range(0, 6),
+        };
+      }
+      w.peds.push(p);
+    }
+  }
+  applyPedBudget(w);
+}
+
+/** Activate the first `budget` people (families stay together); the rest wait off-stage. */
+export function applyPedBudget(w: World): void {
+  const budget = w.settings.pedBudget;
+  for (const p of w.peds) {
+    const want = p.id < budget || (p.archetype === 'kid' && p.followId < budget);
+    if (want === p.active) continue;
+    if (!want && (p.state === 'talk' || p.reserved)) continue; // never vanish mid-conversation or as a fare
+    p.active = want;
+    p.body.setEnabled(want && !p.hidden);
+    if (want) relocateNearPlayer(w, p);
   }
 }
 
@@ -88,14 +200,41 @@ export function planRoute(w: World, ped: Ped, poiId: number): void {
   ped.routeIdx = 0;
   ped.targetPoi = poiId;
   ped.state = 'walk';
+  ped.tilt = 0;
 }
 
+const KIND_SETS: Partial<Record<Archetype, string[]>> = {
+  jogger: ['park', 'beach', 'pier', 'marina'],
+  delivery: ['shop', 'market', 'diner', 'cafe', 'garage', 'office', 'hotel'],
+  tourist: ['pier', 'marina', 'beach', 'park', 'hotel', 'market', 'cafe'],
+  dogwalker: ['park', 'beach', 'pier'],
+};
+
 function chooseDestination(w: World, ped: Ped): number {
+  const pois = w.city.pois;
+  const set = KIND_SETS[ped.archetype];
+  if (set) {
+    const options = pois.filter((p) => set.includes(p.kind) && Math.hypot(p.x - ped.pos.x, p.z - ped.pos.z) < 420 && p.id !== ped.targetPoi);
+    if (options.length) return options[Math.floor(Math.random() * options.length)].id;
+  }
+  if (ped.archetype === 'elderly') {
+    const home = pois[ped.npc.homePoi];
+    const options = pois.filter((p) => ['park', 'cafe', 'shop', 'clinic', 'diner'].includes(p.kind) && Math.hypot(p.x - home.x, p.z - home.z) < 260);
+    if (options.length && Math.random() < 0.7) return options[Math.floor(Math.random() * options.length)].id;
+  }
   const want = routineTarget(ped.npc, w.dayNight.hour);
   if (want !== ped.targetPoi) return want;
   // already at the routine stop: wander to something nearby to keep the streets alive
-  const near = w.city.pois.filter((p) => p.kind !== 'taxiRank' && Math.hypot(p.x - ped.pos.x, p.z - ped.pos.z) < 260);
+  const near = pois.filter((p) => p.kind !== 'taxiRank' && Math.hypot(p.x - ped.pos.x, p.z - ped.pos.z) < 260);
   return near.length ? near[Math.floor(Math.random() * near.length)].id : want;
+}
+
+function idleTime(ped: Ped): number {
+  const base = PT.idleTimeMin + Math.random() * (PT.idleTimeMax - PT.idleTimeMin);
+  if (ped.archetype === 'jogger') return 1 + Math.random() * 3;
+  if (ped.archetype === 'delivery') return 3 + Math.random() * 3;
+  if (ped.archetype === 'elderly') return base * 1.8;
+  return base;
 }
 
 const tmp = new THREE.Vector3();
@@ -103,6 +242,8 @@ const CAR_POS = new THREE.Vector3();
 const CAR_VEL = new THREE.Vector3();
 const fwd = new THREE.Vector3();
 const right = new THREE.Vector3();
+const KIN = { x: 0, y: 0, z: 0 };
+let recycleCursor = 0;
 
 export function updatePeds(w: World, dt: number): void {
   const pv = w.player.vehicle;
@@ -118,17 +259,15 @@ export function updatePeds(w: World, dt: number): void {
     fwd.set(Math.sin(pv.heading), 0, Math.cos(pv.heading));
     right.set(-fwd.z, 0, fwd.x);
   }
-  const cam = w.camera.position;
+  const pp = w.player.mesh.position;
 
   for (const ped of w.peds) {
+    if (!ped.active) continue;
     ped.speedingCd -= dt;
     let moveSpeed = 0;
 
-    if (ped.pos.y < -10) {
-      // riding in the player's taxi: hidden and inert
-      ped.rig.root.visible = false;
-      continue;
-    }
+    if (ped.hidden || ped.pos.y < -10) continue; // riding in the player's taxi
+
     // ---- reactions to the player's car ----
     if (pv && carPos && carVel && ped.state !== 'down') {
       tmp.copy(ped.pos).sub(carPos);
@@ -136,12 +275,12 @@ export function updatePeds(w: World, dt: number): void {
       const hx = pv.spec.halfExtents[0] + 0.35, hz = pv.spec.halfExtents[2] + 0.35;
       const dist = Math.hypot(tmp.x, tmp.z);
       if (Math.abs(lx) < hx && Math.abs(lz) < hz && ped.pos.y < carPos.y + 1.2) {
-        if (carSpeed > PT.hitSpeed) {
+        if (carSpeed > PT.hitSpeed && !ped.protectedTarget) {
           knockDown(w, ped, carVel, carSpeed);
           continue;
         }
-        // gentle bump: shove aside
-        ped.pos.addScaledVector(right, Math.sign(lx || 1) * (hx - Math.abs(lx) + 0.05));
+        // gentle bump (or a kid leaping clear): shove aside
+        ped.pos.addScaledVector(right, Math.sign(lx || 1) * (hx - Math.abs(lx) + (ped.protectedTarget ? 0.6 : 0.05)));
       } else if (ped.state !== 'dodge' && ped.state !== 'talk' && carSpeed > PT.dodgeCarSpeed && dist < PT.dodgeDistance + carSpeed * 0.4) {
         // car heading at me? jump out of the way
         const closing = -(tmp.x * carVel.x + tmp.z * carVel.z) / Math.max(1, dist);
@@ -158,42 +297,50 @@ export function updatePeds(w: World, dt: number): void {
       }
     }
 
+    // a kid sticks with their parent unless something dramatic is happening
+    const parent = ped.followId >= 0 ? w.peds[ped.followId] : null;
+    if (parent && (ped.state === 'walk' || ped.state === 'idle' || ped.state === 'follow')) {
+      if (parent.state === 'flee') startFlee(ped, pp.x, pp.z, parent.timer);
+      else ped.state = 'follow';
+    }
+
+    ped.armPose = 'none';
     switch (ped.state) {
       case 'down': {
         ped.timer -= dt;
         if (ped.pos.y > 0.02 || ped.vel.y > 0) {
           ped.vel.y -= 22 * dt;
           ped.pos.addScaledVector(ped.vel, dt);
-          ped.rig.root.rotation.x = Math.max(-Math.PI / 2, ped.rig.root.rotation.x - dt * 7);
+          ped.tilt = Math.max(-Math.PI / 2, ped.tilt - dt * 7);
           if (ped.pos.y <= 0.02) { ped.pos.y = 0.02; ped.vel.set(ped.vel.x * 0.3, 0, ped.vel.z * 0.3); }
         } else {
           ped.pos.addScaledVector(ped.vel, dt);
           ped.vel.multiplyScalar(Math.max(0, 1 - dt * 4));
+          ped.tilt = -Math.PI / 2;
         }
         if (ped.timer <= 0) {
-          ped.rig.root.rotation.x = 0;
+          ped.tilt = 0;
           ped.health = Math.max(ped.health, TUNING.reactions.healthAfterGettingUp);
-          startFlee(ped, w.player.mesh.position.x, w.player.mesh.position.z);
+          startFlee(ped, pp.x, pp.z);
         }
         break;
       }
       case 'flinch': {
         ped.timer -= dt;
-        ped.rig.root.rotation.x = -Math.sin((1 - ped.timer / TUNING.reactions.flinchTime) * Math.PI) * 0.35;
-        const pp = w.player.mesh.position;
+        ped.tilt = -Math.sin((1 - ped.timer / TUNING.reactions.flinchTime) * Math.PI) * 0.35;
         ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
         if (ped.timer <= 0) {
-          ped.rig.root.rotation.x = 0;
+          ped.tilt = 0;
           reactAfterFlinch(w, ped);
         }
         break;
       }
       case 'stumble': {
         ped.timer -= dt;
-        ped.rig.root.rotation.x = Math.sin((1 - ped.timer / TUNING.reactions.stumbleTime) * Math.PI) * 0.3;
+        ped.tilt = Math.sin((1 - ped.timer / TUNING.reactions.stumbleTime) * Math.PI) * 0.3;
         if (ped.timer <= 0) {
-          ped.rig.root.rotation.x = 0;
-          ped.state = ped.route.length && ped.routeIdx < ped.route.length ? 'walk' : 'idle';
+          ped.tilt = 0;
+          ped.state = ped.followId >= 0 ? 'follow' : ped.route.length && ped.routeIdx < ped.route.length ? 'walk' : 'idle';
           ped.timer = 1;
         }
         break;
@@ -201,11 +348,10 @@ export function updatePeds(w: World, dt: number): void {
       case 'confront': {
         ped.timer -= dt;
         ped.shoutT -= dt;
-        const pp = w.player.mesh.position;
         const dx = pp.x - ped.pos.x, dz = pp.z - ped.pos.z, d = Math.hypot(dx, dz);
         ped.heading = Math.atan2(dx, dz);
         if (d > TUNING.reactions.confrontDistance && d < 25) {
-          const sp = TUNING.peds.walkSpeed * 1.3;
+          const sp = PT.walkSpeed * 1.3;
           ped.pos.x += (dx / d) * sp * dt;
           ped.pos.z += (dz / d) * sp * dt;
           moveSpeed = sp;
@@ -219,10 +365,15 @@ export function updatePeds(w: World, dt: number): void {
       }
       case 'yell': {
         ped.timer -= dt;
-        const pp = w.player.mesh.position;
         ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
         if (ped.timer <= 0) planRoute(w, ped, chooseDestination(w, ped));
         break;
+      }
+      case 'phone': {
+        // on the phone to 999 (or filming): stands still, phone visible, faces the scene
+        ped.armPose = ped.phoneMode === 'film' ? 'film' : 'phone';
+        if (ped.report) ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
+        break; // the witness system advances the timer and decides what happens next
       }
       case 'dodge': {
         ped.timer -= dt;
@@ -234,21 +385,41 @@ export function updatePeds(w: World, dt: number): void {
       }
       case 'flee': {
         ped.timer -= dt;
-        ped.pos.x += ped.fleeDir.x * PT.fleeSpeed * dt;
-        ped.pos.z += ped.fleeDir.y * PT.fleeSpeed * dt;
-        moveSpeed = PT.fleeSpeed;
+        const sp = PT.fleeSpeed * (ped.archetype === 'elderly' ? 0.45 : ped.archetype === 'kid' ? 0.9 : 1);
+        ped.pos.x += ped.fleeDir.x * sp * dt;
+        ped.pos.z += ped.fleeDir.y * sp * dt;
+        moveSpeed = sp;
         ped.heading = Math.atan2(ped.fleeDir.x, ped.fleeDir.y);
-        if (ped.timer <= 0) planRoute(w, ped, chooseDestination(w, ped));
+        if (ped.timer <= 0) {
+          if (ped.followId >= 0) ped.state = 'follow';
+          else planRoute(w, ped, chooseDestination(w, ped));
+        }
         break;
       }
       case 'idle': {
         ped.timer -= dt;
+        if (ped.archetype === 'tourist' && ped.timer > 1.5 && ped.timer < 5) ped.armPose = 'film'; // taking photos
         if (ped.timer <= 0 && !ped.reserved) planRoute(w, ped, chooseDestination(w, ped));
         break;
       }
       case 'talk': {
-        const pp = w.player.mesh.position;
         ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
+        break;
+      }
+      case 'follow': {
+        if (!parent || !parent.active) { ped.state = 'idle'; ped.timer = 2; break; }
+        // walk at the parent's side
+        const side = 0.9;
+        const tx = parent.pos.x + Math.cos(parent.heading) * side, tz = parent.pos.z - Math.sin(parent.heading) * side;
+        const dx = tx - ped.pos.x, dz = tz - ped.pos.z, d = Math.hypot(dx, dz);
+        if (d > 8) { ped.pos.set(tx, 0.02, tz); break; }
+        if (d > 0.25) {
+          const sp = Math.min(PT.walkSpeed * 1.8, d * 2.2);
+          ped.pos.x += (dx / d) * sp * dt;
+          ped.pos.z += (dz / d) * sp * dt;
+          moveSpeed = sp;
+          ped.heading = Math.atan2(dx, dz);
+        } else ped.heading = parent.heading;
         break;
       }
       case 'walk': {
@@ -256,38 +427,107 @@ export function updatePeds(w: World, dt: number): void {
         if (!wp) { ped.state = 'idle'; ped.timer = 1; break; }
         const dx = wp.x - ped.pos.x, dz = wp.y - ped.pos.z;
         const d = Math.hypot(dx, dz);
-        // wait at the kerb if a car is about to cross our path
-        let speed = PT.walkSpeed * (0.85 + 0.3 * ((ped.id * 37) % 10) / 10);
+        let speed = PT.walkSpeed * ped.speedMul * (0.85 + 0.3 * ((ped.id * 37) % 10) / 10);
         if (d < 0.4) {
           ped.routeIdx++;
           if (ped.routeIdx >= ped.route.length) {
             ped.state = 'idle';
-            ped.timer = PT.idleTimeMin + Math.random() * (PT.idleTimeMax - PT.idleTimeMin);
+            ped.timer = idleTime(ped);
           }
           break;
         }
+        // wait at the kerb if a car is about to cross our path
         if (crossingBlocked(w, ped, dx / d, dz / d)) speed = 0;
         ped.pos.x += (dx / d) * speed * dt;
         ped.pos.z += (dz / d) * speed * dt;
         moveSpeed = speed;
         const target = Math.atan2(dx, dz);
         ped.heading += Math.atan2(Math.sin(target - ped.heading), Math.cos(target - ped.heading)) * Math.min(1, dt * 8);
+        if (ped.archetype === 'delivery') ped.armPose = 'carry';
         break;
       }
     }
+    if (ped.prop === 'cane' && ped.armPose === 'none' && ped.state !== 'down') ped.armPose = 'cane';
+    if (ped.reserved && ped.state === 'idle') ped.armPose = 'wave';
 
     // keep out of buildings and the bay (simple clamp against building rects)
-    if (ped.state === 'flee' || ped.state === 'dodge' || ped.state === 'down') pushOutOfBuildings(w, ped);
+    if (ped.state === 'flee' || ped.state === 'dodge' || ped.state === 'down' || ped.state === 'confront' || ped.state === 'stumble') pushOutOfBuildings(w, ped);
 
-    // render
-    const visible = ped.pos.distanceToSquared(cam) < 170 * 170;
-    ped.rig.root.visible = visible;
-    if (visible) {
-      ped.rig.root.position.copy(ped.pos);
-      ped.rig.root.rotation.y = ped.heading;
-      ped.walkPhase += moveSpeed * dt * 3.2;
-      animatePerson(ped.rig, ped.walkPhase, ped.state === 'down' ? 0 : Math.min(1.4, moveSpeed / PT.walkSpeed));
+    ped.walkPhase += moveSpeed * dt * 3.2 / Math.max(0.6, ped.scale);
+    ped.moveAmount = ped.state === 'down' ? 0 : Math.min(1.4, moveSpeed / PT.walkSpeed);
+    if (ped.dog) updateDog(w, ped, dt, moveSpeed);
+
+    // capsule follows the body (off while lying down or hidden)
+    const solid = ped.state !== 'down';
+    if (ped.body.isEnabled() !== solid) ped.body.setEnabled(solid);
+    if (solid) {
+      KIN.x = ped.pos.x; KIN.y = ped.pos.y + 0.95 * ped.scale; KIN.z = ped.pos.z;
+      ped.body.setNextKinematicTranslation(KIN);
     }
+  }
+  recycleFarPeds(w);
+}
+
+function updateDog(w: World, ped: Ped, dt: number, walkerSpeed: number) {
+  const d = ped.dog!;
+  d.barkCd -= dt;
+  d.orbit += dt * 0.6;
+  // trot around the walker on an imaginary leash
+  const tx = ped.pos.x + Math.cos(ped.heading) * 1.1 + Math.sin(d.orbit) * 0.6, tz = ped.pos.z - Math.sin(ped.heading) * 1.1 + Math.sin(ped.heading) * 0.8 + Math.cos(d.orbit) * 0.6;
+  const dx = tx - d.pos.x, dz = tz - d.pos.z, dist = Math.hypot(dx, dz);
+  if (dist > 6) d.pos.set(tx, 0.02, tz);
+  else if (dist > 0.1) {
+    const sp = Math.min(Math.max(walkerSpeed * 1.3, 1.2), dist * 3);
+    d.pos.x += (dx / dist) * sp * dt;
+    d.pos.z += (dz / dist) * sp * dt;
+    d.heading = Math.atan2(dx, dz);
+    d.phase += sp * dt * 6;
+  }
+  const pp = w.player.mesh.position;
+  const pd = Math.hypot(pp.x - d.pos.x, pp.z - d.pos.z);
+  if (pd < PT.dogBarkDistance && d.barkCd <= 0 && !w.player.vehicle) {
+    d.barkCd = PT.dogBarkCooldown;
+    d.heading = Math.atan2(pp.x - d.pos.x, pp.z - d.pos.z);
+    say(w, d, pick(LINES.bark), 1.4, `dog${ped.id}`);
+  }
+}
+
+/** Keep the crowd around the player: move one far-away walker per frame to a pavement spot out of view. */
+function recycleFarPeds(w: World) {
+  if (!w.peds.length) return;
+  for (let k = 0; k < 2; k++) {
+    recycleCursor = (recycleCursor + 1) % w.peds.length;
+    const p = w.peds[recycleCursor];
+    if (!p.active || p.reserved || p.hidden || p.followId >= 0) continue;
+    if (p.state !== 'walk' && p.state !== 'idle') continue;
+    const pp = w.player.mesh.position;
+    if (Math.hypot(p.pos.x - pp.x, p.pos.z - pp.z) < PT.recycleDistance) continue;
+    if (inView(w, p.pos.x, p.pos.z)) continue;
+    relocateNearPlayer(w, p);
+  }
+}
+
+function inView(w: World, x: number, z: number): boolean {
+  const cam = w.camera;
+  cam.getWorldDirection(tmp);
+  const dx = x - cam.position.x, dz = z - cam.position.z, d = Math.hypot(dx, dz) || 1;
+  return (dx * tmp.x + dz * tmp.z) / d > 0.35 && d < 260;
+}
+
+function relocateNearPlayer(w: World, p: Ped) {
+  const pp = w.player.mesh.position;
+  const nodes = w.city.sideNodes;
+  for (let tries = 0; tries < 30; tries++) {
+    const n = nodes[Math.floor(Math.random() * nodes.length)];
+    const d = Math.hypot(n.x - pp.x, n.z - pp.z);
+    if (d < PT.respawnMin || d > PT.respawnMax || (w.started && inView(w, n.x, n.z))) continue;
+    p.pos.set(n.x, 0.02, n.z);
+    p.state = 'idle';
+    p.timer = Math.random() * 2;
+    p.tilt = 0;
+    for (const kid of w.peds) if (kid.followId === p.id) { kid.pos.set(n.x + 0.8, 0.02, n.z); kid.state = 'follow'; }
+    if (p.dog) p.dog.pos.set(n.x + 1.2, 0.02, n.z);
+    return;
   }
 }
 
@@ -334,6 +574,7 @@ export function startFlee(ped: Ped, fromX: number, fromZ: number, time = TUNING.
   if (ped.state === 'down') return;
   ped.state = 'flee';
   ped.timer = time;
+  ped.tilt = 0;
   ped.fleeDir.set(ped.pos.x - fromX, ped.pos.z - fromZ);
   if (ped.fleeDir.lengthSq() < 0.01) ped.fleeDir.set(Math.random() - 0.5, Math.random() - 0.5);
   ped.fleeDir.normalize();
@@ -345,6 +586,8 @@ function knockDown(w: World, ped: Ped, carVel: THREE.Vector3, speed: number) {
   ped.vel.set(carVel.x * 0.7, Math.min(7, 2 + speed * 0.18), carVel.z * 0.7);
   ped.pos.y = 0.1;
   ped.reserved = false;
+  ped.phoneMode = null;
+  ped.report = null;
   emit(w, { type: 'pedHit', pedId: ped.id, x: ped.pos.x, z: ped.pos.z, speed });
   w.audio.thud?.(ped.pos.x, ped.pos.z, speed);
 }
@@ -353,7 +596,7 @@ function knockDown(w: World, ped: Ped, carVel: THREE.Vector3, speed: number) {
 export function nearestPed(w: World, x: number, z: number, range: number): Ped | null {
   let best: Ped | null = null, bd = range;
   for (const p of w.peds) {
-    if (p.state === 'down') continue;
+    if (!p.active || p.hidden || p.state === 'down') continue;
     const d = Math.hypot(p.pos.x - x, p.pos.z - z);
     if (d < bd) { bd = d; best = p; }
   }

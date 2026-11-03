@@ -64,7 +64,7 @@ export function reactAfterFlinch(w: World, ped: Ped): void {
 
 /** Shoved by the player walking into them. */
 export function shovePed(w: World, ped: Ped, pushX: number, pushZ: number): void {
-  if (ped.state === 'down' || ped.state === 'flinch') return;
+  if (!ped.active || ped.hidden || ped.state === 'down' || ped.state === 'flinch' || ped.state === 'phone') return;
   ped.pos.x += pushX;
   ped.pos.z += pushZ;
   if (w.time - ped.lastShoved < RX.shoveCooldown) return;

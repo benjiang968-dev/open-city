@@ -203,6 +203,23 @@ const RAW = {
   },
 
   peds: {
+    maxPopulation: 60, // people created at load (the quality preset activates 30 / 45 / 60 of them)
+    recycleDistance: 230, // metres: walkers further than this (and out of view) are moved closer to you
+    respawnMin: 70, // metres from you where they reappear (always out of view)
+    respawnMax: 170,
+    kidScale: 0.62, // size of children next to adults
+    dogBarkDistance: 7, // metres: dogs bark at you when you're this close
+    dogBarkCooldown: 7, // seconds between barks
+    // archetypes: how common (weight), how fast (x walk speed) and how big (scale range)
+    archetypes: {
+      adult: { weight: 10, speed: 1.0, scale: [0.92, 1.08] },
+      jogger: { weight: 2, speed: 2.3, scale: [0.95, 1.05] },
+      delivery: { weight: 1.6, speed: 1.25, scale: [0.95, 1.05] },
+      tourist: { weight: 2, speed: 0.8, scale: [0.92, 1.05] },
+      elderly: { weight: 2, speed: 0.6, scale: [0.88, 0.96] },
+      family: { weight: 1.6, speed: 0.9, scale: [0.95, 1.05] }, // a parent and a kid walking together
+      dogwalker: { weight: 1.6, speed: 0.9, scale: [0.95, 1.05] },
+    },
     count: 40, // pedestrians walking routines
     walkSpeed: 1.4, // m/s
     fleeSpeed: 4.8, // m/s
@@ -389,6 +406,7 @@ const RAW = {
     repeatWindow: 30, // seconds: a second hit within this counts as assault
     shoveCooldown: 1.2, // seconds between complaints when you bump into someone
     shovesToHarass: 3, // shoving the same person this many times is harassment
+    shovePush: 0.07, // metres a person is pushed per physics step while you walk into them
     relationshipOnAssault: -55,
     relationshipOnHarass: -20,
     relationshipOnShove: -3,
