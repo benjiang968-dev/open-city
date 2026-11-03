@@ -33,6 +33,12 @@
       #chat .log .me { color: #9ecbff; } #chat .log .npc { color: #fff; } #chat .log .act { color: #ffd166; font-style: italic; font-size: 13px; }
       #chat input { width: 100%; box-sizing: border-box; padding: 8px 10px; border-radius: 6px; border: 1px solid #456; background: #0b1222; color: #fff; font-size: 15px; outline: none; }
       #chat .hint { font-size: 12px; opacity: .55; margin-top: 4px; }
+      #chat .quick { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+      #chat .quick button { font: 600 14px system-ui, sans-serif; color: #fff; background: #23395d; border: 1px solid #3d5a85; border-radius: 18px; padding: 8px 12px; min-height: 36px; cursor: pointer; touch-action: manipulation; }
+      #chat .quick button:hover, #chat .quick button:focus-visible { background: #2f4f80; outline: 2px solid #7bdff2; outline-offset: 1px; }
+      #chat .quick button:active { transform: scale(.96); }
+      #chat .close { position: absolute; top: 8px; right: 8px; width: 34px; height: 34px; border-radius: 50%; border: none; background: rgba(255,255,255,.12); color: #fff; font-size: 16px; cursor: pointer; }
+      #chat .head { padding-right: 40px; }
     </style>
   </head>
   <body>

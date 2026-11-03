@@ -105,23 +105,14 @@ export function updatePlayer(w: World, dt: number): void {
     }
   }
 
-  // camera-relative movement
-  const yaw = w.cam.yaw;
-  const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
-  const rx = -fz, rz = fx; // right = (cos yaw, -sin yaw)
-  let ix = 0, iz = 0;
-  if (act.forward(inp)) { ix += fx; iz += fz; }
-  if (act.back(inp)) { ix -= fx; iz -= fz; }
-  if (act.right(inp)) { ix += rx; iz += rz; }
-  if (act.left(inp)) { ix -= rx; iz -= rz; }
-  const len = Math.hypot(ix, iz);
-  const speed = act.run(inp) ? P.runSpeed : P.walkSpeed;
-  if (len > 0) {
-    ix /= len; iz /= len;
-    const target = Math.atan2(ix, iz);
-    const diff = Math.atan2(Math.sin(target - p.facing), Math.cos(target - p.facing));
-    p.facing += diff * Math.min(1, dt * P.turnLerp);
-  }
+  // tank-style movement: A/D turn the character, W/S walk along the way they face
+  const turn = (act.left(inp) ? 1 : 0) - (act.right(inp) ? 1 : 0);
+  p.facing += turn * P.turnSpeed * dt;
+  const fwdIn = (act.forward(inp) ? 1 : 0) - (act.back(inp) ? 1 : 0);
+  const running = act.run(inp) && fwdIn > 0;
+  const speed = fwdIn > 0 ? (running ? P.runSpeed : P.walkSpeed) : P.walkSpeed * P.backSpeedFactor;
+  const ix = Math.sin(p.facing) * fwdIn, iz = Math.cos(p.facing) * fwdIn;
+  const len = Math.abs(fwdIn) + Math.abs(turn) * 0.3; // a little leg movement when turning on the spot
   if (p.grounded) {
     p.vy = -1;
     if (act.jump(inp)) p.vy = P.jumpVelocity;

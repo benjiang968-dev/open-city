@@ -40,6 +40,7 @@ const RAW = {
     maxPitch: 1.2, // looking down limit
     autoRecenterDelay: 1.6, // seconds after mouse stops before the car camera swings behind
     autoRecenterSpeed: 2.2, // how fast it swings back behind the car
+    footRecenterSpeed: 5, // on foot the camera swings behind the character faster
     fov: 62, // base field of view (degrees)
     fovSpeedBoost: 12, // extra FOV degrees at top speed
   },
@@ -49,7 +50,8 @@ const RAW = {
     runSpeed: 8.5, // m/s with Shift
     jumpVelocity: 6.2, // m/s upward on Space
     gravity: 22, // m/s² for the on-foot controller (snappier than real 9.8)
-    turnLerp: 12, // how fast the body rotates to face movement
+    turnSpeed: 3.0, // rad/s the character turns with A/D (tank-style controls)
+    backSpeedFactor: 0.55, // walking backwards is this fraction of walk speed
     capsuleRadius: 0.35,
     capsuleHalfHeight: 0.55,
     enterCarRange: 3.6, // metres from the car to be able to press E

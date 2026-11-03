@@ -366,3 +366,28 @@ export async function backtick(page, S) {
   await page.waitForTimeout(1200);
   return page.evaluate(() => getComputedStyle(document.getElementById('debug')).display);
 }
+
+export async function tank(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, k = w.input.keys;
+    const p = () => { const m = w.player.mesh.position; return { x: +m.x.toFixed(1), z: +m.z.toFixed(1), facing: +w.player.facing.toFixed(2), camYaw: +w.cam.yaw.toFixed(2) }; };
+    const a = p();
+    k.add('KeyW'); run(1); k.delete('KeyW'); const b = p();
+    k.add('KeyA'); run(0.5); k.delete('KeyA'); const c = p();
+    k.add('KeyW'); run(1); k.delete('KeyW'); run(1); const d = p();
+    k.add('KeyS'); run(1); k.delete('KeyS'); const e = p();
+    return { a, b, c, d, e };
+  });
+}
+
+export async function chatbuttons(page, S) {
+  await S.start(page);
+  await page.evaluate(() => { const w = window.__oc; const p = w.peds[5]; p.state = 'idle'; p.timer = 30; w.player.body.setTranslation({ x: p.pos.x + 1.2, y: 1.2, z: p.pos.z }, true); window.__ocRun(0.3); });
+  await page.keyboard.press('KeyE');
+  await page.waitForTimeout(300);
+  for (const label of ['👋 Hi', 'Gossip?', 'Any work?']) { await page.click(`#chat .quick button:has-text("${label}")`); await page.waitForTimeout(250); }
+  await page.screenshot({ path: 'screenshots/10-chat-buttons.png' });
+  await page.click('#chat .close');
+  return page.evaluate(() => ({ open: window.__oc.chat.open, lines: window.__oc.peds[5].npc.history.length }));
+}

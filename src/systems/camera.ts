@@ -52,6 +52,12 @@ export function updateCamera(w: World, dt: number): void {
     }
   } else {
     target = w.player.mesh.position;
+    // stay behind the way the character faces (tank controls), unless the mouse is looking around
+    if (w.time - inp.mouseMovedAt > T.autoRecenterDelay * 0.5) {
+      const behind = w.player.facing + Math.PI;
+      const diff = Math.atan2(Math.sin(behind - c.yaw), Math.cos(behind - c.yaw));
+      c.yaw += diff * Math.min(1, dt * T.footRecenterSpeed);
+    }
   }
   const wantDist = veh ? T.distanceInCar + (veh.spec.halfExtents[2] - 2) * 2 : T.distanceOnFoot;
   c.dist += (wantDist - c.dist) * Math.min(1, dt * 3);

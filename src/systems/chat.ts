@@ -25,12 +25,24 @@ export interface ChatState {
 export function createChat(w: World): ChatState {
   const root = document.createElement('div');
   root.id = 'chat';
-  root.innerHTML = '<div class="head"></div><div class="log"></div><input type="text" maxlength="200" placeholder="Say something…" /><div class="hint">Enter to send · Esc to leave</div>';
+  root.innerHTML = '<button class="close" aria-label="Leave conversation">✕</button><div class="head"></div><div class="log"></div><div class="quick"></div><input type="text" maxlength="200" placeholder="Say something…" /><div class="hint">Enter to send · Esc to leave · or tap a reply</div>';
   document.getElementById('ui')!.appendChild(root);
   const s: ChatState = {
     open: false, ped: null, root, head: root.querySelector('.head')!, log: root.querySelector('.log')!,
     input: root.querySelector('input')!, busy: false, conversations: 0,
   };
+  // tap-friendly quick replies (iPad / touch); each just sends its text like typing would
+  const quick = root.querySelector('.quick') as HTMLElement;
+  for (const [label, text] of QUICK_REPLIES) {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      void send(w, text);
+    });
+    quick.appendChild(btn);
+  }
+  (root.querySelector('.close') as HTMLElement).addEventListener('click', () => closeChat(w));
   s.input.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Escape') closeChat(w);
@@ -44,6 +56,19 @@ export function createChat(w: World): ChatState {
   });
   return s;
 }
+
+/** Quick-reply buttons: label shown, text sent to the NPC. */
+export const QUICK_REPLIES: [string, string][] = [
+  ['👋 Hi', 'Hi there!'],
+  ['How are you?', 'How are you?'],
+  ['Any work?', 'Any work around here?'],
+  ['Need a ride?', 'Need a ride?'],
+  ['Got any cash?', 'Can you spare some money?'],
+  ['Trade?', 'Got anything to trade?'],
+  ['Gossip?', 'Heard any gossip?'],
+  ['Sorry', 'Sorry about that.'],
+  ['Bye', 'Bye!'],
+];
 
 export function openChat(w: World, ped: Ped): void {
   const s = w.chat;
@@ -61,7 +86,7 @@ export function openChat(w: World, ped: Ped): void {
   // show the last couple of lines if you've talked before
   for (const h of ped.npc.history.slice(-4)) line(s, h.who === 'player' ? 'me' : 'npc', h.text, ped);
   s.root.style.display = 'block';
-  setTimeout(() => s.input.focus(), 0);
+  if (!matchMedia('(pointer: coarse)').matches) setTimeout(() => s.input.focus(), 0);
 }
 
 export function closeChat(w: World): void {
