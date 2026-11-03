@@ -55,6 +55,11 @@ async function boot() {
   const seed = seedFromUrl(TUNING.world.defaultSeed);
   const physics = new RAPIER.World({ x: 0, y: -TUNING.vehicles.gravity, z: 0 });
   physics.timestep = 1 / 60;
+  // Rapier 0.21's World.step() ends with mapNewSoftBodies(), which walks every body and collider through
+  // JS callbacks to sync its lookup maps. Measured: ~150 KB of garbage per frame with ~2000 colliders,
+  // the main cause of GC stutter. We never create or remove anything inside the engine (no soft bodies),
+  // and createRigidBody/createCollider/remove* already update those maps, so the per-step walk is skipped.
+  (physics as unknown as { mapNewSoftBodies: () => void }).mapNewSoftBodies = () => {};
 
   // Systems fill in the World in order; fields used before creation get safe placeholders.
   const w = {

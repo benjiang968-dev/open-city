@@ -218,27 +218,61 @@ export function cachePositions(w: World): void {
   for (const c of w.police.cars ?? []) { const t = c.body.translation(); c.px = t.x; c.pz = t.z; }
 }
 
-const OB = { dist: Infinity, player: false };
-let obPx = 0, obPz = 0, obFx = 0, obFz = 0, obLook = 0, obHalf = 0;
-function consider(x: number, z: number, halfLen: number, width: number, player: boolean) {
-  const rx = x - obPx, rz = z - obPz;
-  const along = rx * obFx + rz * obFz;
-  if (along <= 0 || along > obLook + halfLen) return;
-  const lat = Math.abs(rx * obFz - rz * obFx);
-  if (lat > width) return;
-  const d = along - halfLen - obHalf;
-  if (d < OB.dist) { OB.dist = d; OB.player = player; }
-}
-/** Distance to the nearest obstacle ahead in this car's lane (Infinity if clear) and whether it is the player.
- *  Returns a shared object: read it immediately. */
+const OB = { dist: 0, player: false };
+/**
+ * Distance to the nearest obstacle ahead in this car's lane (Infinity if clear) and whether it is the player.
+ * Returns a shared object: read it immediately. Written as flat loops with no helper calls: passing
+ * doubles to a non-inlined helper boxes them, which made this the biggest allocator in the game.
+ */
 export function obstacleAhead(w: World, car: AiCar, look: number): { dist: number; player: boolean } {
-  obPx = car.px; obPz = car.pz; obFx = Math.sin(car.heading); obFz = Math.cos(car.heading); obLook = look; obHalf = car.halfL;
-  OB.dist = Infinity; OB.player = false;
-  for (const o of w.traffic) if (o !== car) consider(o.px, o.pz, o.halfL, 2.3, false);
-  for (const o of w.police.cars ?? []) if (o !== car) consider(o.px, o.pz, o.halfL, 2.3, false);
-  for (const v of w.vehicles) consider(v.px, v.pz, v.spec.halfExtents[2], 2.4, v.driven);
-  for (const ped of w.peds) if (ped.active && !ped.hidden && ped.state !== 'down') consider(ped.pos.x, ped.pos.z, 0.3, 1.7, false);
-  if (!w.player.vehicle) { const pp = w.player.mesh.position; consider(pp.x, pp.z, 0.3, 1.8, true); }
+  const px = car.px, pz = car.pz, fx = Math.sin(car.heading), fz = Math.cos(car.heading), half = car.halfL;
+  let best = Infinity, isPlayer = false;
+  const traffic = w.traffic;
+  for (let i = 0; i < traffic.length; i++) {
+    const o = traffic[i];
+    if (o === car) continue;
+    const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
+    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > 2.3) continue;
+    const d = along - o.halfL - half;
+    if (d < best) { best = d; isPlayer = false; }
+  }
+  const police = w.police.cars;
+  for (let i = 0; i < police.length; i++) {
+    const o = police[i];
+    if (o === car) continue;
+    const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
+    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > 2.3) continue;
+    const d = along - o.halfL - half;
+    if (d < best) { best = d; isPlayer = false; }
+  }
+  const vehicles = w.vehicles;
+  for (let i = 0; i < vehicles.length; i++) {
+    const v = vehicles[i];
+    const hl = v.spec.halfExtents[2];
+    const rx = v.px - px, rz = v.pz - pz, along = rx * fx + rz * fz;
+    if (along <= 0 || along > look + hl || Math.abs(rx * fz - rz * fx) > 2.4) continue;
+    const d = along - hl - half;
+    if (d < best) { best = d; isPlayer = v.driven; }
+  }
+  const peds = w.peds;
+  for (let i = 0; i < peds.length; i++) {
+    const p = peds[i];
+    if (!p.active || p.hidden || p.state === 'down') continue;
+    const rx = p.pos.x - px, rz = p.pos.z - pz, along = rx * fx + rz * fz;
+    if (along <= 0 || along > look + 0.3 || Math.abs(rx * fz - rz * fx) > 1.7) continue;
+    const d = along - 0.3 - half;
+    if (d < best) { best = d; isPlayer = false; }
+  }
+  if (!w.player.vehicle) {
+    const pp = w.player.mesh.position;
+    const rx = pp.x - px, rz = pp.z - pz, along = rx * fx + rz * fz;
+    if (along > 0 && along <= look + 0.3 && Math.abs(rx * fz - rz * fx) <= 1.8) {
+      const d = along - 0.3 - half;
+      if (d < best) { best = d; isPlayer = true; }
+    }
+  }
+  OB.dist = best;
+  OB.player = isPlayer;
   return OB;
 }
 

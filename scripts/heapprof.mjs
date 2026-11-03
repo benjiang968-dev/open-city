@@ -14,7 +14,7 @@ await page.keyboard.press('Enter');
 await page.waitForTimeout(800);
 const cdp = await page.context().newCDPSession(page);
 await cdp.send('HeapProfiler.enable');
-await cdp.send('HeapProfiler.startSampling', { samplingInterval: 4096 });
+await cdp.send('HeapProfiler.startSampling', { samplingInterval: 4096, includeObjectsCollectedByMajorGC: true, includeObjectsCollectedByMinorGC: true });
 const t0 = Date.now();
 await page.evaluate(() => window.__ocFrames(900, false)); // 15 s of game time, all systems except drawing
 const { profile } = await cdp.send('HeapProfiler.stopSampling');
