@@ -228,8 +228,10 @@ export function drivePolice(w: World, dt: number): void {
       car.speed += THREE.MathUtils.clamp(want - car.speed, -TUNING.traffic.brake * dt, P.accel * dt);
       const lv = car.body.linvel();
       car.body.setLinvel(velXZ(Math.sin(car.heading) * car.speed, lv.y, Math.cos(car.heading) * car.speed), true);
-      car.body.setAngvel(velXZ(0, 0, 0), true);
-      car.body.setRotation(yawQuat(car.heading), true);
+      if (Math.abs(car.heading - car.lastSetHeading) > 1e-4) {
+        car.lastSetHeading = car.heading;
+        car.body.setRotation(yawQuat(car.heading), true);
+      }
       car.phase = 'lane';
       car.stuckT = 0;
     } else {

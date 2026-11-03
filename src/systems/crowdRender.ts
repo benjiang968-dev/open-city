@@ -6,6 +6,7 @@ import { GeoBuilder } from '../art/geo';
 import type { Ped } from './pedestrians';
 
 const WHITE = new THREE.Color(1, 1, 1);
+const PART_KEYS = ['torso', 'head', 'hair', 'legL', 'legR', 'armL', 'armR', 'phone', 'camera', 'parcel', 'cane', 'dog', 'dogTail'] as const;
 
 interface Part {
   mesh: THREE.InstancedMesh;
@@ -92,7 +93,7 @@ function limb(px: number, py: number, pz: number, rx: number, rz = 0) {
 
 export function renderCrowd(w: World): void {
   const C = w.crowd;
-  for (const k of Object.keys(C) as (keyof CrowdRender)[]) C[k].n = 0;
+  for (const k of PART_KEYS) C[k].n = 0;
   const cam = w.camera;
   pv.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse);
   frustum.setFromProjectionMatrix(pv);
@@ -107,7 +108,7 @@ export function renderCrowd(w: World): void {
     drawPed(C, ped);
     if (ped.dog) drawDog(C, ped);
   }
-  for (const k of Object.keys(C) as (keyof CrowdRender)[]) {
+  for (const k of PART_KEYS) {
     const p = C[k];
     p.mesh.count = p.n;
     p.mesh.instanceMatrix.needsUpdate = true;

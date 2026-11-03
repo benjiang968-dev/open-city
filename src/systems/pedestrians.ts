@@ -79,6 +79,7 @@ export interface Ped {
   report: { x: number; z: number; heat: number; kind: string } | null;
   /** Kids and dogs are never targets: things pass them by and they always dodge cars. */
   protectedTarget: boolean;
+  solid: boolean; // capsule currently enabled
 }
 
 const SKIN = ['#f1c27d', '#e0ac69', '#c68642', '#8d5524', '#ffdbac', '#a0522d'];
@@ -127,7 +128,7 @@ function makePed(w: World, id: number, rng: Rng, archetype: Archetype, startX: n
     walkPhase: rng.range(0, 6), moveAmount: 0, speedingCd: 0, offset: rng.range(-0.9, 0.9), reserved: false,
     health: 100, hitCount: 0, lastHitByPlayer: -100, lastShoved: -100, shoveCount: 0, shoutT: 0,
     scale, tilt: 0, armPose: 'none', prop, shirt, pants, skin: C(SKIN), hair, speedMul: spec.speed, followId: -1, dog: null,
-    body, collider, phoneT: 0, phoneMode: null, report: null, protectedTarget: archetype === 'kid',
+    body, collider, phoneT: 0, phoneMode: null, report: null, protectedTarget: archetype === 'kid', solid: true,
   };
 }
 
@@ -170,7 +171,8 @@ export function applyPedBudget(w: World): void {
     if (want === p.active) continue;
     if (!want && (p.state === 'talk' || p.reserved)) continue; // never vanish mid-conversation or as a fare
     p.active = want;
-    p.body.setEnabled(want && !p.hidden);
+    p.solid = want && !p.hidden;
+    p.body.setEnabled(p.solid);
     if (want) relocateNearPlayer(w, p);
   }
 }
@@ -457,9 +459,13 @@ export function updatePeds(w: World, dt: number): void {
     ped.moveAmount = ped.state === 'down' ? 0 : Math.min(1.4, moveSpeed / PT.walkSpeed);
     if (ped.dog) updateDog(w, ped, dt, moveSpeed);
 
-    // capsule follows the body (off while lying down or hidden)
-    const solid = ped.state !== 'down';
-    if (ped.body.isEnabled() !== solid) ped.body.setEnabled(solid);
+    // capsule follows the body, but only near the player: nothing else touches it, and every Rapier
+    // body update allocates, so far-away capsules are switched off (also off while lying down)
+    const solid = ped.state !== 'down' && Math.abs(ped.pos.x - pp.x) < PT.capsuleRange && Math.abs(ped.pos.z - pp.z) < PT.capsuleRange;
+    if (ped.solid !== solid) {
+      ped.solid = solid;
+      ped.body.setEnabled(solid);
+    }
     if (solid) {
       KIN.x = ped.pos.x; KIN.y = ped.pos.y + 0.95 * ped.scale; KIN.z = ped.pos.z;
       ped.body.setNextKinematicTranslation(KIN);

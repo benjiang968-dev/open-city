@@ -208,6 +208,7 @@ const RAW = {
     respawnMin: 70, // metres from you where they reappear (always out of view)
     respawnMax: 170,
     kidScale: 0.62, // size of children next to adults
+    capsuleRange: 35, // metres: people's collision capsules are only active this close to you
     dogBarkDistance: 7, // metres: dogs bark at you when you're this close
     dogBarkCooldown: 7, // seconds between barks
     // archetypes: how common (weight), how fast (x walk speed) and how big (scale range)

@@ -36,6 +36,7 @@ export interface AiCar {
   swerveT: number;
   stunT: number;
   stuckT: number;
+  lastSetHeading: number; // heading last written to the physics body
   px: number; // cached position, refreshed once per physics step (avoids allocating translation() calls)
   pz: number;
   /** Optional route chooser at junctions (police use BFS toward the player). */
@@ -125,7 +126,7 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
   const car: AiCar = {
     id: kind === 'police' ? w.police?.cars?.length ?? 0 : w.traffic.length, kind, type, body, collider, mesh, meshYOffset: rideY - halfH, halfW: hx, halfL: hz,
     from, to, next: -1, phase: 'lane', path: [], cum: [], s: 0, speed: 0, heading: 0, waitT: 0, honkCd: 0, blockedT: 0,
-    swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, pz: 0,
+    swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, pz: 0, lastSetHeading: NaN,
   };
   placeOnEdge(w, car, from, to, s0);
   return car;
@@ -142,6 +143,7 @@ export function placeOnEdge(w: World, car: AiCar, from: number, to: number, s0: 
   car.heading = Math.atan2(d.x, d.y);
   car.body.setTranslation({ x: p.x, y: 0.62, z: p.y }, true);
   car.body.setRotation(yawQuat(car.heading), true);
+  car.lastSetHeading = car.heading;
   car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
   car.px = p.x;
   car.pz = p.y;
@@ -284,8 +286,11 @@ export function driveAlongPath(w: World, car: AiCar, want: number, dt: number, r
   car.heading += THREE.MathUtils.clamp(dh * 4 * dt, -turnRate * dt, turnRate * dt);
   const lv = car.body.linvel();
   car.body.setLinvel(velXZ(Math.sin(car.heading) * car.speed, lv.y, Math.cos(car.heading) * car.speed), true);
-  car.body.setAngvel(velXZ(0, 0, 0), true);
-  car.body.setRotation(yawQuat(car.heading), true);
+  // every Rapier write allocates: only push the rotation when the heading actually changed
+  if (Math.abs(car.heading - car.lastSetHeading) > 1e-4) {
+    car.lastSetHeading = car.heading;
+    car.body.setRotation(yawQuat(car.heading), true);
+  }
 }
 
 /** After a collision the car is "stunned": physics moves it freely for a moment. */
