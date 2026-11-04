@@ -1847,6 +1847,7 @@ async function crowdAt(page, place, hour, settle = 40) {
     if (w.player.vehicle) { w.input.pressed.add('KeyE'); run(0.3); }
     w.player.body.setTranslation({ x: n.x, y: n.y + 1.2, z: n.z }, true);
     w.dayNight.hour = hour;
+    const c0 = { added: w.pedDensity.added, removed: w.pedDensity.removed, relocated: w.pedDensity.relocated };
     for (let t = 0; t < settle; t += 5) { w.dayNight.hour = hour; run(5); }
     w.dayNight.hour = hour;
     window.__ocDensity.update();
@@ -1858,6 +1859,7 @@ async function crowdAt(page, place, hour, settle = 40) {
     return {
       place: typeof place === 'string' ? place : `${Math.round(n.x)},${Math.round(n.z)}`, at: [Math.round(n.x), Math.round(n.z)], street: n.street, hour,
       inWindow: inWin.length, arch, f3: { target: pd.target, real: Math.round(pd.real), active: pd.active, near: pd.near, budget: w.settings.pedBudget },
+      flow: { added: pd.added - c0.added, removed: pd.removed - c0.removed, relocated: pd.relocated - c0.relocated }, rings: [30, 60, 90, 140, 300, 1e9].map((r, i, a) => w.peds.filter((q) => q.active && Math.hypot(q.pos.x - n.x, q.pos.z - n.z) < r && Math.hypot(q.pos.x - n.x, q.pos.z - n.z) >= (i ? a[i - 1] : 0)).length), states: w.peds.filter((q) => q.active).reduce((o, q) => (o[q.state] = (o[q.state] || 0) + 1, o), {}),
       perMetre: +dens.perMetre.toFixed(4), metresPerPerson: dens.perMetre ? Math.round(1 / dens.perMetre) : null, pavementM: Math.round(dens.metres), shopsMax: dens.shops,
     };
   }, [place, hour, settle, WINDOW]);
@@ -1866,13 +1868,181 @@ async function crowdAt(page, place, hour, settle = 40) {
 export async function geolife(page, S) {
   await S.start(page);
   const out = {};
+  // ---- 0) seeded items as placed at load (before any car or person moves them): none inside a building, in the
+  // water, or at the edge of a deck (a drop of more than 0.5 m within 0.6 m) ----
+  out.items = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, S = w.itemsState;
+    let inBlocked = 0, inWater = 0, onEdge = 0, n = 0;
+    const bad = [];
+    for (const it of S.items) {
+      if (!it.inWorld) continue;
+      n++;
+      const y = c.heightAt(it.px, it.pz, it.py);
+      const blocked = c.isBlocked(it.px, it.pz), water = c.isWater(it.px, it.pz) && y < c.waterLevelAt(it.px, it.pz) + 0.3;
+      let edge = false;
+      for (const [ox, oz] of [[0.6, 0], [-0.6, 0], [0, 0.6], [0, -0.6]]) if (Math.abs(c.heightAt(it.px + ox, it.pz + oz, y + 0.5) - y) > 0.5) edge = true;
+      if (blocked) inBlocked++;
+      if (water) inWater++;
+      if (edge) onEdge++;
+      if ((blocked || water || edge) && bad.length < 8) bad.push(`${it.type}@${Math.round(it.px)},${Math.round(it.pz)}`);
+    }
+    const byType = {};
+    for (const it of S.items) if (it.inWorld) byType[it.type] = (byType[it.type] ?? 0) + 1;
+    return { items: n, byType, skippedAtLoad: S.skipped, inBlocked, inWater, nearDrop: onEdge, bad };
+  });
+  // ---- 1) crowds: M St at lunch vs 29th St at lunch; M St at night; the waterfront in the evening; the towpath early ----
   out.mstLunch = await crowdAt(page, 'M St at Wisconsin Ave', 12.5);
+  await lifeShot(page, 'screenshots/29-life-mst-lunch.png', 'M St at Wisconsin Ave', false);
+  await lifeShot(page, 'screenshots/29-life-f3.png', 'M St at Wisconsin Ave', true);
   out.st29Lunch = await crowdAt(page, '29th St between N and P', 12.5);
+  await lifeShot(page, 'screenshots/29-life-29th.png', '29th St between N and P', false);
   out.mstNight = await crowdAt(page, 'M St at Wisconsin Ave', 2.5);
   out.waterfrontEvening = await crowdAt(page, 'waterfront', 19.5);
-  out.waterfrontMorning = await crowdAt(page, 'waterfront', 9);
+  const tow = await page.evaluate(() => {
+    const W = window.__oc.city.walk.nodes;
+    let best = null;
+    for (const n of W) if (n.kind === 'towpath' && (!best || Math.hypot(n.x + 200, n.z - 230) < Math.hypot(best.x + 200, best.z - 230))) best = n;
+    return best ? { x: best.x, z: best.z, y: best.y } : null;
+  });
+  if (tow) {
+    out.towpathMorning = await crowdAt(page, tow, 7.5, 60);
+    await lifeShot(page, 'screenshots/29-life-towpath.png', tow, false);
+  }
+  const share = (r) => { const t = Object.values(r.arch).reduce((a, b) => a + b, 0); return t ? +(((r.arch.jogger ?? 0) + (r.arch.dogwalker ?? 0)) / t).toFixed(2) : null; };
+  out.dogsAndJoggersShare = { mstLunch: share(out.mstLunch), st29Lunch: share(out.st29Lunch), towpathMorning: tow ? share(out.towpathMorning) : null, waterfrontEvening: share(out.waterfrontEvening) };
   out.ratioLunch = out.st29Lunch.inWindow ? +(out.mstLunch.inWindow / out.st29Lunch.inWindow).toFixed(1) : null;
+  out.ratioTargetLunch = +(out.mstLunch.f3.target / Math.max(1, out.st29Lunch.f3.target)).toFixed(1);
+
+  // ---- 2) parked cars: counts by street class, and driving into one at speed (its stand-in is there in time) ----
+  out.parked = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, P = w.parked, run = window.__ocRun;
+    const kerbM = {}, cars = {};
+    for (const s of c.parkingSpots) if (s.cls !== 'lot') kerbM[s.cls] = (kerbM[s.cls] ?? 0) + (s.span ?? 13);
+    for (const r of P.cars) if (r.cls !== 'lot') cars[r.cls] = (cars[r.cls] ?? 0) + 1;
+    const per100 = {};
+    for (const k of Object.keys(kerbM)) per100[k] = +((cars[k] ?? 0) / kerbM[k] * 100).toFixed(1);
+    const street = (name) => { let m = 0, n = 0; for (const s of c.parkingSpots) if (s.street === name) m += s.span ?? 13; for (const r of P.cars) if (r.street === name) n++; return m ? +(n / m * 100).toFixed(1) : null; };
+    const lots = {};
+    for (const s of c.parkingSpots) if (s.cls === 'lot') { lots[s.lot] ??= { bays: 0, cars: 0, at: [Math.round(s.x), Math.round(s.z)] }; lots[s.lot].bays++; }
+    for (const r of P.cars) if (r.cls === 'lot' && lots[r.lot]) lots[r.lot].cars++;
+    // drive into a parked car on M St from 40 m back along its parking lane at ~50 km/h
+    const target = P.cars.find((r) => r.street === 'M St NW' && !r.v && !P.cars.some((o) => o !== r && o.street === r.street && Math.hypot(o.x - r.x, o.z - r.z) < 45 && ((o.x - r.x) * Math.sin(r.heading) + (o.z - r.z) * Math.cos(r.heading)) < 0));
+    let crash = null;
+    const mine = w.vehicles[0];
+    if (target && mine) {
+      if (w.player.vehicle) { w.input.pressed.add('KeyE'); run(0.3); }
+      const fx = Math.sin(target.heading), fz = Math.cos(target.heading);
+      const sx = target.x - fx * 40, sz = target.z - fz * 40;
+      const t0 = mine.body.translation();
+      window.__mh.put(w.player.body, t0.x + Math.cos(mine.heading) * 2.4, t0.z - Math.sin(mine.heading) * 2.4, 1.2);
+      run(0.3); w.input.pressed.add('KeyE'); run(0.2);
+      const q = { x: 0, y: Math.sin(target.heading / 2), z: 0, w: Math.cos(target.heading / 2) };
+      mine.body.setTranslation({ x: sx, y: target.y + 1.0, z: sz }, true); mine.body.setRotation(q, true);
+      mine.body.setLinvel({ x: fx * 14, y: 0, z: fz * 14 }, true); mine.body.setAngvel({ x: 0, y: 0, z: 0 }, true); mine.prevVel.set(fx * 14, 0, fz * 14);
+      const standInAt = [];
+      w.input.keys.add('KeyW');
+      for (let k = 0; k < 40; k++) { run(0.1); if (target.v && !standInAt.length) standInAt.push(+(Math.hypot(mine.px - target.x, mine.pz - target.z)).toFixed(1)); }
+      w.input.keys.delete('KeyW');
+      run(1);
+      const v = target.v;
+      crash = {
+        inCar: w.player.vehicle === mine, standInWhenCarWasM: standInAt[0] ?? null, standIn: v ? `${v.type} #${v.id}` : null,
+        pushedM: v ? +Math.hypot(v.px - target.pos[0], v.pz - target.pos[2]).toFixed(2) : 0, dented: v ? +v.dmg.dentTotal.toFixed(2) : 0, ownMeshes: v ? v.mesh.visible : null,
+        myDamage: Math.round(mine.maxHealth - mine.health),
+      };
+      mine.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.5); w.input.pressed.add('KeyE'); run(0.3);
+    }
+    return { total: P.stats.cars, kerb: P.stats.kerb, lot: P.stats.lot, byClass: P.stats.byClass, per100mKerbByClass: per100, mSt: street('M St NW'), wisconsin: street('Wisconsin Ave NW'), nSt: street('N St NW'), prospect: street('Prospect St NW'), st29: street('29th St NW'), lots, crash, pool: P.stats.pool, poolGrown: P.stats.poolGrown, vehicles: w.vehicles.length };
+  });
+
+  // ---- 3) three taxi fares between real places ----
+  out.taxi = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    w.dayNight.hour = 14;
+    const taxi = w.jobs.get('taxi');
+    const v = w.vehicles[0];
+    const t = v.body.translation();
+    window.__mh.put(w.player.body, t.x + Math.cos(v.heading) * 2.4, t.z - Math.sin(v.heading) * 2.4, 1.2);
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const res = { inCar: w.player.vehicle === v, fares: [] };
+    const tp = (x, z) => { window.__mh.put(v.body, x, z, 1.0); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0); };
+    for (let k = 0; k < 3; k++) {
+      let guard = 0;
+      while (taxi.phase !== 'waiting' && guard++ < 100) run(0.2);
+      const startCash = w.cash;
+      const pk = taxi.pickupName;
+      tp(taxi.pickup.x, taxi.pickup.y); run(2.5);
+      const boarded = taxi.phase;
+      const hud = w.jobs.statusText().replace(/<[^>]+>/g, '');
+      const d = taxi.dest;
+      run(Math.max(5, (taxi.tripDist ?? 300) / 20));
+      if (d) tp(d.curbX, d.curbZ);
+      run(1.5);
+      res.fares.push({ pickup: pk, boarded, dest: d ? `${d.name} [${d.kind}${d.cat ? ` ${d.cat}` : ''}]` : null, address: taxi.destAddress?.() ?? null, hud, paid: w.cash - startCash });
+    }
+    res.completed = taxi.completed;
+    if (w.player.vehicle) { w.input.pressed.add('KeyE'); run(0.3); }
+    return res;
+  });
+
+  // ---- 4) thefts: unseen on a quiet residential street; a locked car on M St in front of people ----
+  out.theft = await theftRun(page, { quiet: 'residential', busy: 'M St NW', shots: false });
+
+  // ---- 5) a dealership: the showrooms, buying a car, the minimap ----
+  out.dealer = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    w.dayNight.hour = 13;
+    if (w.player.vehicle) { w.player.vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.3); w.input.pressed.add('KeyE'); run(0.3); }
+    w.police.heat = 0; w.police.stars = 0; w.police.seen = false; // the theft's stars: a clean slate for shopping
+    run(1);
+    const job = w.jobs.get('dealership');
+    const sites = job.sites.map((s) => ({ name: s.name, poi: `${w.city.pois[s.poiId].kind}${w.city.pois[s.poiId].cat ? ` ${w.city.pois[s.poiId].cat}` : ''}`, street: w.city.pois[s.poiId].street, showroom: s.showroom, at: [Math.round(s.x), Math.round(s.z)], cars: s.slots.filter((q) => q.car).map((q) => `${q.type} $${q.car.forSale.price}`) }));
+    const site = job.sites[0];
+    const slot = site.slots.find((s) => s.car);
+    const v = slot.car;
+    const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh;
+    window.__mh.put(w.player.body, v.px + kx * 2.0, v.pz + kz * 2.0, 1.2);
+    w.player.facing = Math.atan2(-kx, -kz);
+    w.cash = 5000; w.hud.shownCash = 5000;
+    run(0.4);
+    const prompt = w.player.prompt.replace(/<[^>]+>/g, ' ');
+    const player = { inCar: !!w.player.vehicle, dead: w.player.dead, knockT: w.player.knockT, toCar: +Math.hypot(w.player.mesh.position.x - v.px, w.player.mesh.position.z - v.pz).toFixed(1) };
+    const vehicles0 = w.vehicles.length;
+    w.input.pressed.add('KeyE'); run(0.2);
+    const bought = { owned: v.owned, forSale: !!v.forSale, paid: 5000 - w.cash };
+    window.__ocFrames(3, true);
+    const minimap = { ownedCars: window.__ocMinimap.ownedCars, dealerships: window.__ocMinimap.dealerships };
+    // the slot restocks later (out of the parked-car pool: the car list does not grow)
+    const slotIdx = site.slots.indexOf(slot);
+    slot.soldAt = w.time - 10000;
+    window.__mh.put(w.player.body, site.x + 300, site.z, 1.2); run(1.2);
+    const restocked = !!site.slots[slotIdx].car;
+    window.__mh.put(w.player.body, v.px + kx * 2.0, v.pz + kz * 2.0, 1.2); run(0.4);
+    // picture: from across the showroom row
+    const sx = (site.slots[0].x + site.slots[site.slots.length - 1].x) / 2, sz = (site.slots[0].z + site.slots[site.slots.length - 1].z) / 2;
+    const fx = Math.sin(site.slots[0].heading), fz = Math.cos(site.slots[0].heading);
+    window.__Dcam = { px: sx + fx * 16 + kx * 3, py: 5, pz: sz + fz * 16 + kz * 3, lx: sx, ly: 1.2, lz: sz };
+    return { sites, car: `${v.type} #${v.id}`, player, prompt, bought, minimap, restocked, vehiclesBefore: vehicles0, vehiclesAfter: w.vehicles.length };
+  });
+  await frozenShot(page, 'screenshots/29-life-dealer.png', await page.evaluate(() => window.__Dcam));
+
   return out;
+}
+
+/** Camera above and behind a place on the pavement, looking along its street (F3 overlay on if `f3`). */
+async function lifeShot(page, path, place, f3) {
+  const cam = await page.evaluate(([place, f3]) => {
+    const w = window.__oc, c = w.city;
+    const p = typeof place === 'string' ? window.__mh.place(place) : place;
+    const n = c.walk.nodes[c.nearestWalk(p.x, p.z, p.y ?? NaN)];
+    // along the street: the walk link with the longest run from here
+    let dx = 1, dz = 0;
+    if (n.nbrs.length) { const m = c.walk.nodes[n.nbrs[0]]; const l = Math.hypot(m.x - n.x, m.z - n.z) || 1; dx = (m.x - n.x) / l; dz = (m.z - n.z) / l; }
+    w.debugVisible = f3;
+    return { px: n.x - dx * 16 - dz * 4, py: 7, pz: n.z - dz * 16 + dx * 4, lx: n.x + dx * 20, ly: 0.8, lz: n.z + dz * 20 };
+  }, [place, f3]);
+  await frozenShot(page, path, cam);
+  await page.evaluate(() => { window.__oc.debugVisible = false; });
 }
 
 // Parked cars (any map: MAP=<id> node scripts/shot.mjs x parkcheck): how many by street class, cars per 100 m of kerb on

@@ -275,6 +275,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     const place = bd ? frontOf(bd.pts, sp.x, sp.z) : openSpot(sp.x, sp.z);
     if (!place) continue;
     const poi = addPoi(name, kind, place.x, place.z, place.door);
+    if (poi) poi.cat = sp.cat;
     if (poi && bd && SIGN_CATS.test(sp.cat)) poi.signed = true; // facades.ts paints this name on the shop front
   }
   // homes: rowhouses and flats, spread over the residential streets (fixed by the map, never the seed)

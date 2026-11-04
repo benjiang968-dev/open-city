@@ -142,6 +142,8 @@ export interface Poi {
   walkNode: number;
   /** The name is painted on the building's sign (real maps): systems that rename places must keep it. */
   signed?: boolean;
+  /** The map data's category (OSM-style, e.g. 'shop=car', 'amenity=parking'), if the map has one. */
+  cat?: string;
 }
 
 export interface ParkingSpot {

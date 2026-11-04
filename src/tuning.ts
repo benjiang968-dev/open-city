@@ -383,6 +383,8 @@ const RAW = {
       nextFareDelay: 2, // s before a new fare appears
       lateAfterFactor: 2.2, // fare is "late" after this multiple of the time allowance (pay reduced)
       lateFareFactor: 0.6, // pay multiplier when late
+      homeDestShare: 0.15, // share of fares going to someone's home rather than a shop, restaurant, hotel, museum or park
+      crossStreetRange: 160, // metres: the HUD names the destination's nearest cross street within this ("M St NW at 31st St NW")
     },
     dealership: {
       prices: { hatchback: 900, sedan: 1600, pickup: 2200 }, // $ per car type at a dealership
@@ -390,6 +392,7 @@ const RAW = {
       stock: [
         ['hatchback', 'sedan', 'hatchback'],
         ['pickup', 'sedan', 'pickup', 'hatchback'],
+        ['sedan', 'hatchback', 'pickup', 'sedan'],
       ],
       slotOffsets: [-7.5, 7.5, -15, 15], // metres along the kerb from the dealership's door for each display car
       slotClearance: 6.5, // metres: a display slot must be this far from any other car (and other POIs' taxi stops)
@@ -398,8 +401,11 @@ const RAW = {
       signOut: 1.2, // metres from the dealership door towards the kerb where its sign stands
       restockSeconds: 600, // real seconds before a sold display car is replaced
       restockMinDistance: 60, // metres: restocking only happens while you are at least this far away
-      maxSites: 2, // dealerships placed on the grid city
-      minSiteSpacing: 200, // metres between the two grid dealerships
+      maxSites: { grid: 2, georgetown: 3 } as Record<string, number>, // dealerships per map: car dealers first, then big car parks (used-car lots), then garages, then shops
+      minSiteSpacing: 200, // metres between dealerships
+      lotSearch: 140, // metres: a dealership with a car park this close shows its cars in the car park's bays (else at the kerb)
+      lotMinBays: 12, // car parks with fewer bays than this are not used as showrooms or used-car lots
+      lotSignOut: 2.6, // metres from the first display bay, along the row, to a car-park showroom's sign (the next bay, kept empty)
     },
   },
 
@@ -527,6 +533,11 @@ const RAW = {
     batsPerGym: 2, // baseball bats lying by a gym
     gymsWithBats: 2, // how many gyms have bats outside
     wrenchesPerGarage: 3, // wrenches by each garage
+    // where seeded items may lie (scatterItems): never in a building or the water, never at an edge
+    waterClearance: 0.3, // metres: a spot whose surface is less than this above water is in the water
+    edgeProbe: 0.35, // metres out on four sides where the surface is checked (and must be free of buildings)...
+    maxStep: 0.12, // ...and must be within this of the item's (no deck, pier, kerb or stair edge right beside it)
+    wallProbe: 0.2, // metres: an item this close to a wall (or the map edge) on any side would stick into it: left out
     // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
     // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
     defs: {
@@ -719,6 +730,10 @@ const RAW = {
     minimapLabelPx: 10, // street-name font size on the minimap (pixels)
     minimapLabelSpacing: 260, // metres between repeated street-name labels along a long street
     minimapLabelMinLength: 60, // metres: shorter named streets get no label
+    minimapLabelGapPx: 3, // pixels kept between two street-name labels (a label that would overlap one is left out)
+    minimapLabelRepeatPx: 110, // pixels: the same street name is not shown twice closer than this
+    minimapDealerBadgePx: 8, // radius of the car dealership badge ($) on the minimap
+    minimapRankBadgePx: 6, // radius of the taxi rank badge (T) on the minimap
   },
 } as const;
 
