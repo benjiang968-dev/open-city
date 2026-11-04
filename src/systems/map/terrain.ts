@@ -301,7 +301,9 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
       const slope = Math.sqrt(gx * gx + gz * gz);
       const kind = ras.k[o];
       let c = kind & K.PARK ? (cemetery && pointInPoly(x, z, cemetery) ? COL.cemetery : COL.park) : COL.yard;
-      const noise = Math.sin(x * 0.071 + z * 0.023) * Math.cos(z * 0.057 - x * 0.019);
+      // two octaves of value noise (~40 m patches, ~13 m mottling): the old product of two sine waves read as a
+      // regular checkerboard from the air. Fixed hash, so it never depends on the world seed.
+      const noise = (valueNoise(x / 40, z / 40) * 0.65 + valueNoise(x / 13 + 17.3, z / 13 - 4.1) * 0.35) * 2 - 1;
       c = mixc(c, COL.grassDry, clamp(0.12 + noise * 0.22, 0, 0.4));
       if (slope > 0.35) c = mixc(c, COL.earth, clamp((slope - 0.35) * 2, 0, 0.8));
       const wl = waterLevelAt(x, z);
@@ -382,6 +384,20 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
   }
   ras.meshed = meshed;
   return tris;
+}
+
+/** Smooth 2D value noise in 0..1 on a unit lattice (deterministic integer hash). */
+function valueNoise(x: number, z: number): number {
+  const ix = Math.floor(x), iz = Math.floor(z), fx = x - ix, fz = z - iz;
+  const sx = fx * fx * (3 - 2 * fx), sz = fz * fz * (3 - 2 * fz);
+  const a = latticeHash(ix, iz), b = latticeHash(ix + 1, iz), c = latticeHash(ix, iz + 1), d = latticeHash(ix + 1, iz + 1);
+  const top = a + (b - a) * sx, bot = c + (d - c) * sx;
+  return top + (bot - top) * sz;
+}
+function latticeHash(i: number, j: number): number {
+  let h = Math.imul(i, 374761393) ^ Math.imul(j, 668265263);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
 /** Terrain triangle with per-vertex smooth normals from the height grid. */
