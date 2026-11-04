@@ -595,7 +595,12 @@ export function driveAlongPath(w: World, car: AiCar, want: number, dt: number, r
     if (look > stop && car.phase === 'lane') chooseNext(w, car, rng);
     if (look > stop && car.next >= 0 && car.phase === 'lane' && !needsTurn(e, edges[car.next])) {
       laneSample(edges[car.next], laneStart(edges[car.next]) + look - stop, tgt);
-    } else if (car.phase === 'wait') laneSample(e, Math.min(Math.max(look, stop + 0.01), e.len), tgt); // straight on, never back to the line
+    } else if (car.phase === 'wait') {
+      // straight on, never back to the line (a car that pulled up past the lane's end keeps its heading)
+      laneSample(e, Math.min(Math.max(look, stop + 0.01), e.len), tgt);
+      const past = look - e.len;
+      if (past > 0) { tgt.x += Math.sin(tgt.heading) * past; tgt.z += Math.cos(tgt.heading) * past; }
+    }
     else laneSample(e, Math.min(look, stop + 0.01), tgt);
     if (car.latOff !== 0) {
       // the sideways offset the car will still have when it gets to the look-ahead point

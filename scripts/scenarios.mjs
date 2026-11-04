@@ -2069,7 +2069,8 @@ export async function geodrive(page, S) {
   const until = [
     "if (/M St/.test(e.name || '') && v.px > -100) return 'mst';",
     "const J = window.__oc.junctions; if (J.nodes[e.to].kind === 1 && J.light[e.id] === 2 && v.speed < 0.3 && G.cum[G.stopIdx[k]] - G.cum[G.idx] < 12) return 'signals';",
-    "if (k > 0 && window.__oc.city.roads.edges[G.route[k]].roundabout && G.cum[G.idx] - G.cum[G.stopIdx[k - 1]] > 10) return 'circle';",
+    // the circle: on the ring with at least 4 AI cars round it (else on the last ring lane before the exit)
+    "const E = window.__oc.city.roads.edges; if (k > 0 && E[G.route[k]].roundabout && G.cum[G.idx] - G.cum[G.stopIdx[k - 1]] > 10) { const ring = window.__oc.city.roads.nodes.filter((n) => n.roundabout); const cx = ring.reduce((s, n) => s + n.x, 0) / ring.length, cz = ring.reduce((s, n) => s + n.z, 0) / ring.length; const near = window.__oc.traffic.filter((o) => Math.hypot(o.px - cx, o.pz - cz) < 75).length; if (near >= 4 || !E[G.route[k + 1]].roundabout) return 'circle'; }",
     'return null;',
   ].join('\n');
   for (let k = 0; k < 60 && r.status !== 'done' && r.status !== 'stuck' && r.status !== 'out of car'; k++) {
