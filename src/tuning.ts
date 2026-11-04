@@ -437,7 +437,7 @@ const RAW = {
     carsPerStar: 1, // police cars per star
     maxCars: 5,
     spawnDistance: 160, // metres from player they spawn
-    spawnRouteChecks: 12, // dispatch: the best this many spawn lanes (by distance and camera) get a route check ...
+    spawnRouteChecks: 8, // dispatch: the best this many spawn lanes (by distance and camera, out of sight; at most 3x this many looked at) get a route check ...
     spawnRoutePenalty: 400, // ... and every this many metres of driving to your last known position counts as much as being in front of the camera vs behind it
     spawnMaxDrive: 700, // metres: a dispatch spot whose drive to you is longer than this is only used if none further out (or in view) is shorter
     spawnFarFactor: 3, // ... looking out to this many times spawnDistance

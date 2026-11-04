@@ -214,7 +214,7 @@ function spawnCar(w: World): void {
     cand.sort((p, q) => q.score - p.score);
     let bestScore = -Infinity, checked = 0;
     best = -1;
-    for (let k = 0; k < cand.length && checked < P.spawnRouteChecks; k++) {
+    for (let k = 0; k < cand.length && k < 3 * P.spawnRouteChecks && checked < P.spawnRouteChecks; k++) {
       const e = edges[cand[k].e];
       laneSample(e, laneStart(e) + 5, LP);
       if (pass < 2 && visible(w, LP.x, LP.y, LP.z)) continue; // never appear in sight of the camera (unless nothing else will do)
