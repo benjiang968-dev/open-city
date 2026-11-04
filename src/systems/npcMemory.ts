@@ -54,6 +54,20 @@ export function updateNpcMemory(w: World): void {
       case 'busted':
         mem('busted', 'got arrested by the police', -5, 40);
         break;
+      case 'carTheft': {
+        const label = w.vehicles[e.carId]?.spec.label.toLowerCase() ?? 'car';
+        const owner = e.ownerId >= 0 ? w.peds[e.ownerId] : null;
+        // the owner (if around at all) knows it was you and holds a grudge
+        if (owner && owner.active) {
+          remember(owner.npc, 'stoleMyCar', e.ownerSaw ? `stole my ${label} right in front of me` : `stole my ${label}`, hour, day);
+          adjustRelationship(owner.npc, N.relationshipOnCarTheft);
+          owner.npc.mood = Math.max(-1, owner.npc.mood - 0.5);
+        }
+        const name = owner ? `${owner.npc.name.split(' ')[0]}'s` : 'an abandoned';
+        const radius = e.alarm ? TUNING.witness.radius.carTheftAlarm : TUNING.peds.memoryRadius;
+        mem('sawCarTheft', e.forced ? `smashed the window of ${name} ${label} and drove off in it` : `drove off in ${name} ${label}`, N.relationshipOnSawTheft, radius, e.ownerId);
+        break;
+      }
     }
   }
 }

@@ -18,8 +18,10 @@ import { updateNpcMemory } from './systems/npcMemory';
 import { createPolice, spawnPolicePool, updatePolice, drivePolice, syncPolice } from './systems/police';
 import { JobManager } from './systems/economy/jobManager';
 import { TaxiJob } from './systems/economy/taxi';
+import { DealershipJob, pickDealershipPois } from './systems/economy/dealership';
+import { assignCarOwners, updateCarTheft, theftStats } from './systems/carTheft';
 import { createChat, updateChat } from './systems/chat';
-import { createMinimap, showMinimap, updateMinimap } from './systems/minimap';
+import { createMinimap, showMinimap, updateMinimap, minimapStats } from './systems/minimap';
 import { createAudio, startAudio, updateAudio, toggleMute } from './systems/audio';
 import { ScriptedProvider } from './npc/providers/scripted';
 import { Profiler } from './systems/profiler';
@@ -74,17 +76,23 @@ async function boot() {
   w.weather = createWeather(w);
   const rank = w.city.taxiRanks[0];
   w.player = createPlayer(w, rank.x, rank.z);
-  spawnInitialVehicles(w);
+  // dealership showrooms plan their kerb slots first so random parked cars keep clear of them; the display
+  // cars are parked after the starting cars (vehicle ids 0..2 stay the cars at the taxi rank)
+  const dealerships = new DealershipJob(w, pickDealershipPois(w.city));
+  spawnInitialVehicles(w, dealerships.reservedSpots());
+  dealerships.stockShowrooms(w);
   w.itemsState = createItems(w);
   scatterItems(w);
   spawnTraffic(w);
   spawnPolicePool(w);
   spawnPeds(w);
+  assignCarOwners(w); // every parked car that isn't yours belongs to someone (or nobody)
   w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
   w.hud = createHud();
   w.chat = createChat(w);
   w.jobs.bind(w);
   w.jobs.register(new TaxiJob(w));
+  w.jobs.register(dealerships);
   createMinimap(w);
   createDebug(w);
   createHealthUi();
@@ -111,6 +119,8 @@ async function boot() {
   // expose read-only state for automated tests (scripts/*.mjs)
   (window as unknown as { __oc: World }).__oc = w;
   (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
+  (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
+  (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {
@@ -191,6 +201,7 @@ async function boot() {
       P.begin('peds'); updatePeds(w, dt); P.end('peds');
       P.begin('chat'); updateChat(w); P.end('chat');
       P.begin('jobs'); w.jobs.update(w, dt); P.end('jobs');
+      P.begin('theft'); updateCarTheft(w, dt); P.end('theft');
     }
     // event consumers run once per frame, then events are cleared
     P.begin('memory'); updateNpcMemory(w); P.end('memory');

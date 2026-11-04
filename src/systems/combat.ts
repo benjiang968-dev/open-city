@@ -10,6 +10,7 @@ import { placeInWorld, type WorldItem } from './worldItems';
 import { hitPed } from './npcReactions';
 import { dentAt } from './carDamage';
 import type { Vehicle } from './vehicles';
+import { triggerAlarm } from './carTheft';
 
 const CB = TUNING.combat;
 const IT = TUNING.items;
@@ -83,7 +84,7 @@ export function updateCombat(w: World, dt: number): void {
   const inp = w.input;
   const p = w.player;
   c.cooldown = Math.max(0, c.cooldown - dt);
-  const usable = w.started && !w.paused && !inp.blocked && !p.dead && !p.vehicle;
+  const usable = w.started && !w.paused && !inp.blocked && !p.dead && !p.vehicle && !p.breakIn;
   const held = usable && (inp.mouse0 || inp.keys.has('KeyF'));
   const pressed = held && !c.heldBefore;
   const released = !held && c.heldBefore;
@@ -185,6 +186,7 @@ export function thrownItemHitCollider(w: World, item: WorldItem, otherHandle: nu
   if (owner.kind === 'vehicle') {
     const v = w.vehicles[owner.id];
     if (d.heavy) dentVehicleAt(w, v, item.px, item.py, item.pz, item.speed * d.mass * CB.thrownDentPerMomentum);
+    if (d.heavy && v.locked && !v.driven) triggerAlarm(w, v);
     emit(w, { type: 'vandalism', x: item.px, z: item.pz, what: v.spec.label });
   } else if (owner.kind === 'traffic' || owner.kind === 'police') {
     const car = owner.kind === 'traffic' ? w.traffic[owner.id] : w.police.cars.find((q) => q.id === owner.id);
@@ -240,6 +242,7 @@ function meleeHit(w: World, item: WorldItem, m: { damage: number; reach: number;
     if (Math.abs(local.x) > hx + 0.35 || Math.abs(local.z) > hz + 0.35) continue;
     dentVehicleAt(w, v, hx0, 0.95, hz0, m.dent);
     v.health = Math.max(0, v.health - m.damage * 0.3);
+    if (v.locked) triggerAlarm(w, v); // a bat on a locked car sets its alarm off
     emit(w, { type: 'vandalism', x: hx0, z: hz0, what: v.spec.label });
     w.audio.thud?.(hx0, hz0, 12);
     hitSomething = true;

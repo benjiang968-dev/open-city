@@ -37,13 +37,16 @@ export interface WitnessStats {
 }
 export const witnessStats: WitnessStats = { callsStarted: 0, callsCompleted: 0, callsInterrupted: 0, filming: 0 };
 
-function crimeFromEvent(e: GameEvent): { kind: CrimeKind; x: number; z: number; victim: number } | null {
+function crimeFromEvent(e: GameEvent): { kind: CrimeKind; x: number; z: number; victim: number; radius?: number } | null {
   switch (e.type) {
     case 'pedHit': return { kind: 'pedHit', x: e.x, z: e.z, victim: e.pedId };
     case 'assault': return { kind: 'assault', x: e.x, z: e.z, victim: e.pedId };
     case 'harassment': return { kind: 'harassment', x: e.x, z: e.z, victim: e.pedId };
     case 'vandalism': return { kind: 'vandalism', x: e.x, z: e.z, victim: -1 };
     case 'menace': return { kind: 'menace', x: e.x, z: e.z, victim: -1 };
+    // the owner (if they noticed) is the victim: they chase you first and may call afterwards (pedestrians 'chase').
+    // While the alarm sounds, everyone within earshot has turned to look, so the witness radius grows
+    case 'carTheft': return { kind: 'carTheft', x: e.x, z: e.z, victim: e.ownerSaw ? e.ownerId : -1, radius: e.alarm ? WT.radius.carTheftAlarm : undefined };
     case 'carHit':
       if (e.speed < 6 || e.targetKind === 'parked') return null;
       return { kind: e.targetKind === 'police' ? 'ramPolice' : 'ramming', x: e.x, z: e.z, victim: -1 };
@@ -69,7 +72,8 @@ function pickReaction(ped: Ped, kind: CrimeKind): Reaction {
   return 'flee';
 }
 
-function canSee(w: World, ped: Ped, x: number, z: number): boolean {
+/** Line of sight from a person's eyes to a point on the ground (static geometry only). */
+export function canSee(w: World, ped: Ped, x: number, z: number): boolean {
   const R = w.R;
   const ox = ped.pos.x, oy = ped.pos.y + 1.6 * ped.scale, oz = ped.pos.z;
   const dx = x - ox, dy = 1.0 - oy, dz = z - oz;
@@ -87,7 +91,8 @@ export function startCall(w: World, ped: Ped, crime: { x: number; z: number; hea
   ped.phoneT = WT.callTimeMin + Math.random() * (WT.callTimeMax - WT.callTimeMin);
   ped.report = { x: crime.x, z: crime.z, heat: crime.heat, kind: crime.id !== undefined ? String(crime.id) : crime.kind };
   const total = ped.phoneT;
-  say(w, ped, pick(LINES.calling), total + 0.2, `ped${ped.id}`, () => 1 - ped.phoneT / total);
+  const kind = crime.id !== undefined ? crimes.get(crime.id)?.kind ?? crime.kind : crime.kind;
+  say(w, ped, pick(kind === 'carTheft' ? LINES.callingTheft : LINES.calling), total + 0.2, `ped${ped.id}`, () => 1 - ped.phoneT / total);
   witnessStats.callsStarted++;
 }
 
@@ -125,7 +130,7 @@ export function updateWitnesses(w: World, dt: number): void {
       if (v && v.archetype !== 'kid' && Math.random() < WT.victimCall[v.npc.personality]) v.report = { x: c.x, z: c.z, heat: crime.heat, kind: String(crime.id) };
     }
     // bystanders with line of sight
-    const radius = WT.radius[c.kind];
+    const radius = c.radius ?? WT.radius[c.kind];
     const nearby = w.peds
       .filter((p) => p.active && !p.hidden && p.id !== c.victim && p.state !== 'down' && p.state !== 'phone' && p.state !== 'talk' && !p.reserved)
       .map((p) => ({ p, d: Math.hypot(p.pos.x - c.x, p.pos.z - c.z) }))

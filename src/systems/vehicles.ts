@@ -43,6 +43,15 @@ export interface Vehicle {
   dmg: CarDamage; // dents, bumpers, lights, windscreen
   px: number; // cached position (refreshed every physics step)
   pz: number;
+  // ---- ownership (M3) ----
+  /** Whose car this is: an NPC id (index into w.peds) or 'nobody' (abandoned, or stock at a dealership). */
+  owner: number | 'nobody';
+  owned: boolean; // the player's own car: driving it is never theft and it has no alarm for you
+  locked: boolean; // getting in means smashing the side window (alarm!)
+  stolen: boolean; // the player already took it; getting back in isn't a new crime
+  /** Display car at a dealership (E shows price and stats, buys it). */
+  forSale: { site: number; slot: number; price: number } | null;
+  alarmUntil: number; // w.time until which the car alarm sounds
 }
 
 export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, heading: number, paint?: THREE.Color): Vehicle {
@@ -102,6 +111,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
     health: spec.health, maxHealth: spec.health, steer: 0, speed: 0, heading, slip: 0, throttle: 0,
     rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, inWaterTimer: 0,
     driven: false, wrecked: false, lastHitTime: -10, px: x, pz: z, dmg,
+    owner: 'nobody', owned: false, locked: false, stolen: false, forSale: null, alarmUntil: 0,
   };
   w.vehicles.push(v);
   w.colliderOwner.set(collider.handle, { kind: 'vehicle', id: v.id });
@@ -109,31 +119,63 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   return v;
 }
 
-/** Spawns the starting cars next to the first taxi rank plus a sprinkling of parked drivable cars. */
-export function spawnInitialVehicles(w: World): void {
+type StreetClass = keyof typeof V.parkedCarsPer100m;
+interface KerbSpot { x: number; z: number; heading: number; cls: StreetClass }
+
+/**
+ * Kerb parking spots on the grid city, tagged by street class: the generator's spots are on ordinary
+ * streets (residential); the bay boulevard (main) gets its own kerb spots here, both sides, clear of
+ * junctions and POI stops. The real map will supply tagged spots (including waterfront lots) instead.
+ */
+function gridKerbSpots(w: World): KerbSpot[] {
+  const c = w.city;
+  const out: KerbSpot[] = c.parkingSpots.map((s) => ({ x: s.x, z: s.z, heading: s.heading, cls: 'residential' as StreetClass }));
+  const j = c.zs.length - 1; // the boulevard is the last east-west road
+  const kerbOff = c.roadHalfZ[j] - V.parkingKerbGap;
+  const clear = V.parkedClearOfPoi;
+  for (let i = 0; i < c.xs.length - 1; i++)
+    for (let x = c.xs[i] + c.roadHalfX[i] + V.parkingJunctionGap; x < c.xs[i + 1] - c.roadHalfX[i + 1] - V.parkingJunctionGap; x += V.kerbSlotSpacing)
+      for (const [z, heading] of [[c.zs[j] - kerbOff, -Math.PI / 2], [c.zs[j] + kerbOff, Math.PI / 2]]) {
+        if (c.pois.some((p) => (p.curbX - x) ** 2 + (p.curbZ - z) ** 2 < clear * clear)) continue;
+        out.push({ x, z, heading, cls: 'main' });
+      }
+  return out;
+}
+
+/**
+ * Spawns the starting cars next to the first taxi rank (the first `ownedAtStart` are yours), then parks
+ * drivable cars along the kerbs at `parkedCarsPer100m` for each street class. Owners and locks are
+ * assigned once people exist (carTheft.assignCarOwners). `reserved` kerb spots (dealership showrooms) stay free.
+ */
+export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z: number }[] = []): void {
   const rank = w.city.taxiRanks[0];
   const rng = w.rng.fork(31);
+  const taken: { x: number; z: number }[] = [...reserved];
+  const isFree = (s: { x: number; z: number }) => !taken.some((t) => Math.hypot(t.x - s.x, t.z - s.z) < V.kerbSlotSpacing * 0.5);
   // kerb-side spots nearest the starting taxi rank, one of each type
   const spots = [...w.city.parkingSpots].sort(
     (a, b) => (a.x - rank.x) ** 2 + (a.z - rank.z) ** 2 - ((b.x - rank.x) ** 2 + (b.z - rank.z) ** 2),
-  );
-  const used = new Set<number>();
+  ).filter(isFree);
   V.playerCarSpawn.forEach((t, k) => {
     const s = spots[k];
-    used.add(w.city.parkingSpots.indexOf(s));
-    spawnVehicle(w, t, s.x, s.z, s.heading);
+    taken.push(s);
+    const v = spawnVehicle(w, t, s.x, s.z, s.heading);
+    v.owned = k < V.ownedAtStart;
   });
   const types = Object.keys(V.types) as CarTypeName[];
   const paints = ['#e63946', '#f1faee', '#457b9d', '#2a9d8f', '#e9c46a', '#264653', '#8d99ae', '#ff8fab', '#606c38', '#bc6c25'];
-  let placed = 0, tries = 0;
-  while (placed < V.extraDrivableCars && tries++ < 500) {
-    const k = Math.floor(rng.next() * w.city.parkingSpots.length);
-    if (used.has(k)) continue;
-    const s = w.city.parkingSpots[k];
-    if (Math.hypot(s.x - rank.x, s.z - rank.z) < 40) continue;
-    used.add(k);
-    spawnVehicle(w, rng.pick(types), s.x, s.z, s.heading, new THREE.Color(rng.pick(paints)));
-    placed++;
+  const kerb = gridKerbSpots(w);
+  for (const cls of Object.keys(V.parkedCarsPer100m) as StreetClass[]) {
+    const pool = kerb.filter((s) => s.cls === cls);
+    const want = Math.round(((pool.length * V.kerbSlotSpacing) / 100) * V.parkedCarsPer100m[cls]);
+    let placed = 0, tries = 0;
+    while (placed < want && pool.length && tries++ < 500) {
+      const s = pool[Math.floor(rng.next() * pool.length)];
+      if (Math.hypot(s.x - rank.x, s.z - rank.z) < V.parkedClearOfRank || !isFree(s)) continue;
+      taken.push(s);
+      spawnVehicle(w, rng.pick(types), s.x, s.z, s.heading, new THREE.Color(rng.pick(paints)));
+      placed++;
+    }
   }
 }
 
@@ -145,6 +187,9 @@ const vel = new THREE.Vector3();
 
 export function updateVehicles(w: World, dt: number): void {
   for (const v of w.vehicles) {
+    // parked and at rest: Rapier has put the body to sleep, so skip it (no controller update and no
+    // allocating Rapier reads). Anything that bumps it (a car, you, a thrown brick) wakes it up again.
+    if (!v.driven && v.body.isSleeping()) continue;
     const r = v.body.rotation();
     q.set(r.x, r.y, r.z, r.w);
     fwd.set(0, 0, 1).applyQuaternion(q);
@@ -216,8 +261,9 @@ export function updateVehicles(w: World, dt: number): void {
     // grounded wheels count for assists
     let contacts = 0;
     for (let i = 0; i < 4; i++) if (v.ctrl.wheelIsInContact(i)) contacts++;
-    if (contacts >= 2) {
-      // downforce keeps the car planted at speed
+    if (contacts >= 2 && v.driven) {
+      // downforce keeps the car planted at speed (driven cars only: these writes wake the body, and a
+      // parked car must be allowed to fall asleep)
       const df = V.downforce * speedAbs * speedAbs * (v.spec.mass / 1000) * dt;
       v.body.applyImpulse({ x: -up.x * df, y: -up.y * df, z: -up.z * df }, true);
       // yaw stability: damp yaw rate beyond what the steering asks for
@@ -247,6 +293,7 @@ export function updateVehicles(w: World, dt: number): void {
 /** Called after the physics step: detect sudden speed changes (crashes) on the player's car. */
 export function detectCrashes(w: World): void {
   for (const v of w.vehicles) {
+    if (!v.driven && v.body.isSleeping()) continue; // at rest (prevVel stays ~0 until it is woken)
     const lv = v.body.linvel();
     vel.set(lv.x, lv.y, lv.z);
     const dv = vel.distanceTo(v.prevVel);

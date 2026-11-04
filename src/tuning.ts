@@ -183,7 +183,33 @@ const RAW = {
       'hatchback',
       'pickup',
     ],
-    extraDrivableCars: 9, // more drivable cars scattered around the district
+    ownedAtStart: 1, // the first N cars at the starting taxi rank are yours; the others belong to locals
+    // drivable parked cars per 100 m of kerb, by street class (both kerbs counted). On the grid city the
+    // bay boulevard is 'main' and every other street 'residential'; 'waterfrontLot' is for car parks by
+    // the water, used once the map provides lot spaces (the real-map rebuild)
+    parkedCarsPer100m: { main: 0.6, residential: 0.07, waterfrontLot: 2.5 },
+    kerbSlotSpacing: 13, // metres of kerb one grid parking spot stands for (matches the generator's spacing)
+    parkingKerbGap: 1.3, // metres from the road edge to a parked car's centre line (matches the generator)
+    parkingJunctionGap: 10, // metres of kerb kept free next to each junction (matches the generator)
+    parkedClearOfRank: 40, // metres: no random parked cars this close to the starting taxi rank
+    parkedClearOfPoi: 12, // metres: boulevard spots this close to a POI kerb (taxi stop) stay free
+  },
+
+  theft: {
+    lockedFraction: 0.5, // share of locals' parked cars that are locked (abandoned cars are never locked)
+    abandonedFraction: 0.12, // share of parked cars nobody owns any more (no owner comes after you)
+    breakInTime: 3.0, // seconds to smash the side window of a locked car and get in
+    strikeTimes: [0.75, 1.55, 2.35], // seconds into the break-in when the elbow hits the glass
+    alarmSeconds: 12, // how long a car alarm sounds once triggered
+    lookTime: 3.5, // seconds people stop and stare at a car alarm (plus up to 1.5 s random)
+    lookCheckInterval: 0.25, // seconds between checks for people hearing an alarm
+    ownerNoticeRange: 60, // metres: an owner this close who sees it (or hears their alarm) comes after you
+    ownerChaseTime: 14, // seconds the owner chases and shouts before giving up (then may call 999)
+    ownerGiveUpDistance: 70, // metres: owner stops chasing once you are this far away
+    ownerRunFactor: 0.85, // owner's chasing speed as a fraction of the flee (running) speed
+    shoutEvery: 2.4, // seconds between the owner's shouts
+    shoveImpulse: 140, // N·s sideways push on the car per strike (it rocks on its springs)
+    cancelDistance: 3.5, // metres: the break-in stops if you end up this far from the car
   },
 
   traffic: {
@@ -251,6 +277,22 @@ const RAW = {
       lateAfterFactor: 2.2, // fare is "late" after this multiple of the time allowance (pay reduced)
       lateFareFactor: 0.6, // pay multiplier when late
     },
+    dealership: {
+      prices: { hatchback: 900, sedan: 1600, pickup: 2200 }, // $ per car type at a dealership
+      // what each showroom has on display (2–4 cars, one list per dealership in order)
+      stock: [
+        ['hatchback', 'sedan', 'hatchback'],
+        ['pickup', 'sedan', 'pickup', 'hatchback'],
+      ],
+      slotOffsets: [-7.5, 7.5, -15, 15], // metres along the kerb from the dealership's door for each display car
+      slotClearance: 6.5, // metres: a display slot must be this far from any other car (and other POIs' taxi stops)
+      kerbNudge: 0.3, // metres from a POI's taxi-stop line out to the parking lane, so traffic passes display cars
+      signOut: 1.2, // metres from the dealership door towards the kerb where its sign stands
+      restockSeconds: 600, // real seconds before a sold display car is replaced
+      restockMinDistance: 60, // metres: restocking only happens while you are at least this far away
+      maxSites: 2, // dealerships placed on the grid city
+      minSiteSpacing: 200, // metres between the two grid dealerships
+    },
   },
 
   police: {
@@ -283,6 +325,8 @@ const RAW = {
     relationshipOnFareNearby: 3, // finishing a fare near someone impresses them
     memorySize: 5, // things each NPC remembers about you
     callPoliceBelow: -70, // relationship at which an angry NPC calls the police
+    relationshipOnCarTheft: -65, // the owner of a car you steal (enough to hold a grudge)
+    relationshipOnSawTheft: -10, // people who saw you take a car
   },
 
   health: {
@@ -348,6 +392,12 @@ const RAW = {
     engineMaxHz: 165,
     screechSlipThreshold: 0.25, // lateral slip (m/s ÷ speed) before tyres squeal
     hornVolume: 0.25,
+    alarmVolume: 0.13, // car alarm loudness right next to it
+    alarmRange: 120, // metres until a car alarm fades out
+    alarmLowHz: 620, // the alarm hops between these two pitches...
+    alarmHighHz: 1040, // ...and the high one
+    alarmHopHz: 2.2, // ...this many times a second
+    smashVolume: 0.5, // breaking glass
   },
 
   items: {
@@ -417,9 +467,10 @@ const RAW = {
 
   witness: {
     // heat a completed 999 call adds for each kind of crime (40 heat = 1 star)
-    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34 },
-    // metres within which people can witness each crime (they also need line of sight)
-    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40 },
+    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34, carTheft: 30 },
+    // metres within which people can witness each crime (they also need line of sight).
+    // carTheftAlarm: while a car alarm sounds everyone this close turns to look, so they can witness the theft
+    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40, carTheft: 24, carTheftAlarm: 55 },
     maxWitnesses: 8, // nearest people considered per crime
     callTimeMin: 2.0, // seconds the phone is visibly at their ear before the call goes through
     callTimeMax: 3.0,

@@ -20,6 +20,8 @@ export interface CarParts {
   lightL: GeoBuilder; // headlights, one per side so they can break separately (+X = car's left)
   lightR: GeoBuilder;
   windscreen: { x: number; y: number; z: number; w: number; h: number };
+  /** Left side window (mirror x for the right): centre, length along the car, height. */
+  sideWindow: { x: number; y: number; z: number; w: number; h: number };
   len: number; // half length
   halfW: number;
 }
@@ -79,7 +81,9 @@ export function buildCarParts(type: CarTypeName, paint: THREE.Color, extras?: { 
   }
   const windscreen =
     type === 'hatchback' ? { x: 0, y: 0.57, z: 0.575, w: 1.4, h: 0.5 } : type === 'sedan' ? { x: 0, y: 0.53, z: 0.875, w: 1.5, h: 0.5 } : { x: 0, y: 0.7, z: 1.325, w: 1.6, h: 0.55 };
-  return { body: b, bumperF: bf, bumperR: br, lightL: ll, lightR: lr, windscreen, len, halfW: w };
+  const sideWindow =
+    type === 'hatchback' ? { x: 0.79, y: 0.57, z: -0.5, w: 1.8, h: 0.45 } : type === 'sedan' ? { x: 0.85, y: 0.53, z: -0.18, w: 1.8, h: 0.45 } : { x: 0.96, y: 0.7, z: 0.55, w: 1.2, h: 0.5 };
+  return { body: b, bumperF: bf, bumperR: br, lightL: ll, lightR: lr, windscreen, sideWindow, len, halfW: w };
 }
 
 /** Split every triangle into 4 (repeatable) so dents can bend flat panels smoothly. Non-indexed only. */

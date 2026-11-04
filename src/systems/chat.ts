@@ -130,7 +130,10 @@ export function buildRequest(w: World, ped: Ped, text: string): DialogueRequest 
   const gossip: string[] = [];
   for (const o of w.peds) {
     if (o === ped) continue;
-    for (const m of o.npc.memory) if (['hitMe', 'hitSomeone', 'rammedCar', 'speeding', 'busted', 'sawAssault', 'vandalism'].includes(m.kind)) gossip.push(m.kind === 'hitMe' ? `ran over ${o.npc.name.split(' ')[0]}` : m.note);
+    for (const m of o.npc.memory) {
+      if (['hitMe', 'hitSomeone', 'rammedCar', 'speeding', 'busted', 'sawAssault', 'vandalism', 'sawCarTheft'].includes(m.kind)) gossip.push(m.kind === 'hitMe' ? `ran over ${o.npc.name.split(' ')[0]}` : m.note);
+      else if (m.kind === 'stoleMyCar') gossip.push(`stole ${o.npc.name.split(' ')[0]}'s car`);
+    }
   }
   const v = w.player.vehicle;
   return {
