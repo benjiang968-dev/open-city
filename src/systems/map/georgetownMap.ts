@@ -11,6 +11,7 @@ import type { GeoDoc, Pt } from './geoDoc';
 import { hashStr, pointInPoly } from './geoDoc';
 import { buildGeorgetownWorld, type GeoQuality, type GeoRoadPoly, type GeoWorld } from './georgetownWorld';
 import { SIGN_CATS } from './facades';
+import { K } from './terrain';
 import {
   MapIndex, laneSample,
   type Building, type CityMap, type KerbHit, type LaneEdge, type LaneHit, type LanePoint, type MinimapDrawOpts,
@@ -87,6 +88,8 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   const b = geo.bounds;
   const bounds = { minX: b.x0, maxX: b.x1, minZ: b.z0, maxZ: b.z1 };
   const roadById = new Map(doc.roads.map((r) => [r.id, r]));
+  // the buildings that stand in the world (it drops the ones a bridge or the freeway passes over)
+  const standing = doc.buildings.filter((bd) => !geo.droppedBuildings.has(bd.id));
   const polys = geo.roadPolys;
   const J = geo.junctions;
 
@@ -193,7 +196,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   const tWalk = performance.now();
 
   // ------------------------------------------------------------------ buildings, streets, index
-  const buildings: Building[] = doc.buildings.map((bd) => {
+  const buildings: Building[] = standing.map((bd) => {
     const pts = new Float32Array(bd.pts.length * 2);
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     bd.pts.forEach((p, i) => { pts[i * 2] = p[0]; pts[i * 2 + 1] = p[1]; x0 = Math.min(x0, p[0]); z0 = Math.min(z0, p[1]); x1 = Math.max(x1, p[0]); z1 = Math.max(z1, p[1]); });
@@ -262,12 +265,13 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   }
 
   // places from the data (names invented by category; the same key as the shop signs so they match)
-  const bById = new Map(doc.buildings.map((bd) => [bd.id, bd]));
+  const bById = new Map(standing.map((bd) => [bd.id, bd]));
   const srcPois = [...doc.pois].sort((p, q) => POI_ORDER(p.cat) - POI_ORDER(q.cat));
   for (const sp of srcPois) {
     const name = poiName(sp.cat, `${sp.id}:${seed}`);
     const kind = kindOf(sp.cat);
     const bd = sp.b ? bById.get(sp.b) : undefined;
+    if (sp.b && !bd) continue; // its building was dropped from the world
     const place = bd ? frontOf(bd.pts, sp.x, sp.z) : openSpot(sp.x, sp.z);
     if (!place) continue;
     const poi = addPoi(name, kind, place.x, place.z, place.door);
@@ -275,7 +279,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   }
   // homes: rowhouses and flats, spread over the residential streets (fixed by the map, never the seed)
   {
-    const res = doc.buildings.filter((bd) => RESIDENTIAL.has(bd.type)).sort((p, q) => hashStr(p.id) - hashStr(q.id));
+    const res = standing.filter((bd) => RESIDENTIAL.has(bd.type)).sort((p, q) => hashStr(p.id) - hashStr(q.id));
     let made = 0;
     for (const bd of res) {
       if (made >= M.homePois) break;
@@ -308,7 +312,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   }
 
   // ------------------------------------------------------------------ parking
-  const parkingSpots = buildParking(doc, geo, polys, polyLanes, edges, taxiRanks);
+  const parkingSpots = buildParking(doc, geo, polys, polyLanes, edges, taxiRanks, R, physics);
 
   // ------------------------------------------------------------------ spawn
   let spawn = { x: taxiRanks[0]?.x ?? 0, z: taxiRanks[0]?.z ?? 0, heading: Math.PI / 2 };
@@ -325,7 +329,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   }
 
   // ------------------------------------------------------------------ minimap
-  const drawMinimapBase = (ctx: CanvasRenderingContext2D, o: MinimapDrawOpts) => paintMinimap(ctx, o, doc, geo, polys, polyLanes);
+  const drawMinimapBase = (ctx: CanvasRenderingContext2D, o: MinimapDrawOpts) => paintMinimap(ctx, o, doc, standing, geo, polys, polyLanes);
 
   const tEnd = performance.now();
   const stats = {
@@ -746,26 +750,39 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
     const kind: WalkKind = f.towpath ? 'towpath' : f.pier || f.surface === 'wood' || f.surface === 'paving_stones' ? 'waterfront' : 'path';
     const deck = !!(f.bridge || f.pier || f.surface === 'wood');
     const yAt = (x: number, z: number) => (deck ? geo.walkSurfaceAt(x, z) : geo.walkSurfaceAt(x, z, geo.heightAt(x, z)));
-    let prev = -1;
+    // a path on the ground stops at a building in its way (synthesized footprints overlap a few data paths); the
+    // pieces either side become path ends, joined to the network below
+    const inBuilding = (x: number, z: number) => !deck && (geo.kindAt(x, z) & (K.BUILDING | K.DECK)) === K.BUILDING;
+    let prev = -1, cut = false;
+    const gapAt = () => { if (prev >= 0) pathEnds.push(prev); prev = -1; cut = true; };
+    /** Join the path's last node to `id` unless the stretch between them crosses a building. */
+    const step2 = (id: number) => {
+      if (prev >= 0 && !deck) {
+        const a = W.nodes[prev], c = W.nodes[id], n = Math.ceil(Math.hypot(c.x - a.x, c.z - a.z));
+        for (let k = 1; k < n; k++) if (inBuilding(a.x + ((c.x - a.x) * k) / n, a.z + ((c.z - a.z) * k) / n)) { gapAt(); break; }
+      }
+      if (prev < 0 && cut) pathEnds.push(id);
+      W.link(prev, id);
+      prev = id;
+    };
     for (let i = 0; i < f.pts.length; i++) {
       const p = f.pts[i];
       if (i > 0) {
         const q = f.pts[i - 1], L = Math.hypot(p[0] - q[0], p[1] - q[1]), n = Math.ceil(L / step);
         for (let k = 1; k < n; k++) {
           const x = q[0] + ((p[0] - q[0]) * k) / n, z = q[1] + ((p[1] - q[1]) * k) / n;
-          const id = add(x, yAt(x, z), z, kind, f.name);
-          W.link(prev, id);
-          prev = id;
+          if (inBuilding(x, z)) { gapAt(); continue; }
+          step2(add(x, yAt(x, z), z, kind, f.name));
         }
       }
+      if (inBuilding(p[0], p[1])) { gapAt(); continue; }
       const key = `${p[0]},${p[1]}`;
       let id = vkey.get(key) ?? -1;
       if (id < 0 || Math.abs(W.nodes[id].y - yAt(p[0], p[1])) > gap) {
         id = add(p[0], yAt(p[0], p[1]), p[1], kind, f.name);
         vkey.set(key, id);
       }
-      W.link(prev, id);
-      prev = id;
+      step2(id);
       if (i === 0 || i === f.pts.length - 1) pathEnds.push(id);
     }
   }
@@ -844,8 +861,26 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
 // ======================================================================================================
 // parking
 
-function buildParking(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: { fwd: number[]; bwd: number[]; parkR: boolean; parkL: boolean; cls: RoadClass }[], edges: LaneEdge[], ranks: Poi[]): ParkingSpot[] {
+function buildParking(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: { fwd: number[]; bwd: number[]; parkR: boolean; parkL: boolean; cls: RoadClass }[], edges: LaneEdge[], ranks: Poi[], R: typeof RAPIER, physics: RAPIER.World): ParkingSpot[] {
   const spots: ParkingSpot[] = [];
+  // a parked car must not stand in anything solid (a tree or lamp in a car-park bay, a wall or a slope where a lane
+  // meets a bridge): the box of the biggest car type, lifted clear of the surface and its slope, against the world
+  physics.step(); // only static bodies exist yet: this brings the scene-query tree up to date with the world's colliders
+  let hx = 0, hz = 0;
+  for (const t of Object.values(V.types)) { hx = Math.max(hx, t.halfExtents[0]); hz = Math.max(hz, t.halfExtents[2]); }
+  const box = new R.Cuboid(hx, M.parkingCheckHalfHeight, hz);
+  const rot = { x: 0, y: 0, z: 0, w: 1 }, at = { x: 0, y: 0, z: 0 };
+  let solidHit = false;
+  const onHit = () => { solidHit = true; return false; };
+  const solid = (x: number, y: number, z: number, heading: number) => {
+    const fx = Math.sin(heading) * hz, fz = Math.cos(heading) * hz;
+    const lift = Math.max(Math.abs(geo.roadSurfaceAt(x + fx, z + fz, y) - y), Math.abs(geo.roadSurfaceAt(x - fx, z - fz, y) - y));
+    rot.y = Math.sin(heading / 2); rot.w = Math.cos(heading / 2);
+    at.x = x; at.y = y + M.parkingCheckClearance + lift + M.parkingCheckHalfHeight; at.z = z;
+    solidHit = false;
+    physics.intersectionsWithShape(at, rot, box, onHit, R.QueryFilterFlags.ONLY_FIXED);
+    return solidHit;
+  };
   // things the kerb must keep clear of
   const clear: number[] = []; // x, z, radius
   for (const f of doc.footways) if (f.kind === 'crossing' && f.pts.length >= 2) {
@@ -874,14 +909,19 @@ function buildParking(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: {
         laneSample(e, s, LP);
         const x = LP.x - Math.cos(LP.heading) * shift, z = LP.z + Math.sin(LP.heading) * shift;
         if (!geo.isRoad(x, z) || geo.isBlocked(x, z) || !isClear(x, z)) continue;
-        spots.push({ x, y: geo.roadSurfaceAt(x, z, LP.y), z, heading: LP.heading, cls: e.cls, street: e.name, lot: -1, edge: e.id, s });
+        const y = geo.roadSurfaceAt(x, z, LP.y);
+        if (solid(x, y, z, LP.heading)) continue;
+        spots.push({ x, y, z, heading: LP.heading, cls: e.cls, street: e.name, lot: -1, edge: e.id, s });
       }
     }
   });
   // car parks: every painted bay
   geo.lotStalls.forEach((lot, li) => {
     const st = lot.stalls;
-    for (let i = 0; i < st.length; i += 4) spots.push({ x: st[i], y: st[i + 1], z: st[i + 2], heading: st[i + 3], cls: 'lot', street: null, lot: li, edge: -1, s: 0 });
+    for (let i = 0; i < st.length; i += 4) {
+      if (solid(st[i], st[i + 1], st[i + 2], st[i + 3])) continue;
+      spots.push({ x: st[i], y: st[i + 1], z: st[i + 2], heading: st[i + 3], cls: 'lot', street: null, lot: li, edge: -1, s: 0 });
+    }
   });
   return spots;
 }
@@ -934,7 +974,7 @@ const MM = {
 const CLASS_RANK: Record<RoadClass, number> = { parkway: 5, primary: 4, secondary: 3, tertiary: 2, residential: 1, service: 0 };
 
 /** Paints the static map once into the minimap's base image (land, parks, water, canal, lots, buildings, roads). */
-function paintMinimap(ctx: CanvasRenderingContext2D, o: MinimapDrawOpts, doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: { cls: RoadClass }[]): void {
+function paintMinimap(ctx: CanvasRenderingContext2D, o: MinimapDrawOpts, doc: GeoDoc, standing: GeoDoc['buildings'], geo: GeoWorld, polys: GeoRoadPoly[], lanes: { cls: RoadClass }[]): void {
   const s = o.scale;
   const X = (x: number) => (x - o.ox) * s, Z = (z: number) => (z - o.oz) * s;
   const ring = (pts: ArrayLike<number> | Pt[], flat: boolean) => {
@@ -969,7 +1009,7 @@ function paintMinimap(ctx: CanvasRenderingContext2D, o: MinimapDrawOpts, doc: Ge
     ctx.stroke();
   }
   ctx.fillStyle = MM.building;
-  for (const bd of doc.buildings) { ring(bd.pts, false); ctx.fill(); }
+  for (const bd of standing) { ring(bd.pts, false); ctx.fill(); }
   // roads: kerb-to-kerb outlines (pavements as a darker rim), junctions, then decks on top in layer order
   const drawRoad = (P: GeoRoadPoly, col: string) => {
     ring(P.outline, true);

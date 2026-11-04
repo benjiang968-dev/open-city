@@ -51,6 +51,8 @@ const RAW = {
     parkingCrossingGap: 5, // metres of kerb kept free either side of a pedestrian crossing
     parkingRankGap: 18, // metres of kerb kept free either side of a taxi rank
     parkingBusStopGap: 12, // metres of kerb kept free either side of a bus stop
+    parkingCheckClearance: 0.35, // metres: a parking spot is dropped if anything solid stands higher than this inside a car's footprint (kerbs and lines are lower)
+    parkingCheckHalfHeight: 0.5, // metres: half the height of the box tested above that clearance
     passThroughMaxBend: 0.6, // radians: where two pieces of the same street meet bending less than this, cars run straight on (real maps)
     deadEndTurnRoom: 12, // metres before a dead end (a road leaving the map) where cars turn round (real maps)
     parkingLaneCost: 3, // RoadRouter: driving along a parking lane costs this many times its travel time (routes keep out)

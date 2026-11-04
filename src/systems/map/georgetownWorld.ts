@@ -131,6 +131,8 @@ export interface GeoWorld {
   quality: GeoQuality;
   /** Ways left out of the render (to be removed from the graph): data ids with a reason. */
   omitted: { roadId: string; name: string; reason: string }[];
+  /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
+  droppedBuildings: ReadonlySet<string>;
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number };
   root: THREE.Group;
 }
@@ -334,6 +336,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     water: { meshes: water.meshes, update: water.update },
     update, setQuality, quality,
     omitted,
+    droppedBuildings: dropped,
     stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris },
     root,
   };
