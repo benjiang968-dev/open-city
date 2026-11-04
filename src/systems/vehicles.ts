@@ -9,6 +9,7 @@ import { buildCarParts, carMaterial, makeWheel } from '../art/car';
 import { buildDamageableCar, applyImpact, type CarDamage } from './carDamage';
 import { GROUPS } from '../physicsGroups';
 import { act } from './input';
+import type { ParkingSpot } from './map/cityMap';
 
 const V = TUNING.vehicles;
 
@@ -52,6 +53,8 @@ export interface Vehicle {
   /** Display car at a dealership (E shows price and stats, buys it). */
   forSale: { site: number; slot: number; price: number } | null;
   alarmUntil: number; // w.time until which the car alarm sounds
+  /** Class of the parking spot it was parked on at load (road class or 'lot'), null if not from a spot. */
+  spotCls: ParkingSpot['cls'] | null;
 }
 
 export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, heading: number, paint?: THREE.Color): Vehicle {
@@ -63,7 +66,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   const m = spec.mass;
   const inertia = { x: (m / 3) * (hy * hy + hz * hz), y: (m / 3) * (hx * hx + hz * hz), z: (m / 3) * (hx * hx + hy * hy) };
   const bodyDesc = R.RigidBodyDesc.dynamic()
-    .setTranslation(x, rideY, z)
+    .setTranslation(x, w.city.heightAt(x, z) + rideY, z)
     .setRotation({ x: q.x, y: q.y, z: q.z, w: q.w })
     .setAdditionalMassProperties(m, { x: 0, y: spec.comHeight, z: 0 }, inertia, { x: 0, y: 0, z: 0, w: 1 })
     .setLinearDamping(V.linearDamping)
@@ -111,7 +114,7 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
     health: spec.health, maxHealth: spec.health, steer: 0, speed: 0, heading, slip: 0, throttle: 0,
     rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, inWaterTimer: 0,
     driven: false, wrecked: false, lastHitTime: -10, px: x, pz: z, dmg,
-    owner: 'nobody', owned: false, locked: false, stolen: false, forSale: null, alarmUntil: 0,
+    owner: 'nobody', owned: false, locked: false, stolen: false, forSale: null, alarmUntil: 0, spotCls: null,
   };
   w.vehicles.push(v);
   w.colliderOwner.set(collider.handle, { kind: 'vehicle', id: v.id });
@@ -119,61 +122,41 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   return v;
 }
 
-type StreetClass = keyof typeof V.parkedCarsPer100m;
-interface KerbSpot { x: number; z: number; heading: number; cls: StreetClass }
+type SpotClass = keyof typeof V.parkedCarsPer100m;
 
 /**
- * Kerb parking spots on the grid city, tagged by street class: the generator's spots are on ordinary
- * streets (residential); the bay boulevard (main) gets its own kerb spots here, both sides, clear of
- * junctions and POI stops. The real map will supply tagged spots (including waterfront lots) instead.
- */
-function gridKerbSpots(w: World): KerbSpot[] {
-  const c = w.city;
-  const out: KerbSpot[] = c.parkingSpots.map((s) => ({ x: s.x, z: s.z, heading: s.heading, cls: 'residential' as StreetClass }));
-  const j = c.zs.length - 1; // the boulevard is the last east-west road
-  const kerbOff = c.roadHalfZ[j] - V.parkingKerbGap;
-  const clear = V.parkedClearOfPoi;
-  for (let i = 0; i < c.xs.length - 1; i++)
-    for (let x = c.xs[i] + c.roadHalfX[i] + V.parkingJunctionGap; x < c.xs[i + 1] - c.roadHalfX[i + 1] - V.parkingJunctionGap; x += V.kerbSlotSpacing)
-      for (const [z, heading] of [[c.zs[j] - kerbOff, -Math.PI / 2], [c.zs[j] + kerbOff, Math.PI / 2]]) {
-        if (c.pois.some((p) => (p.curbX - x) ** 2 + (p.curbZ - z) ** 2 < clear * clear)) continue;
-        out.push({ x, z, heading, cls: 'main' });
-      }
-  return out;
-}
-
-/**
- * Spawns the starting cars next to the first taxi rank (the first `ownedAtStart` are yours), then parks
- * drivable cars along the kerbs at `parkedCarsPer100m` for each street class. Owners and locks are
- * assigned once people exist (carTheft.assignCarOwners). `reserved` kerb spots (dealership showrooms) stay free.
+ * Spawns the starting cars at the kerb spots nearest the player's spawn (the first `ownedAtStart` are yours),
+ * then parks drivable cars on the map's parking spots at `parkedCarsPer100m` for each spot's class (its road
+ * class, or 'lot' for car parks). Owners and locks are assigned once people exist (carTheft.assignCarOwners).
+ * `reserved` kerb spots (dealership showrooms) stay free.
  */
 export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z: number }[] = []): void {
-  const rank = w.city.taxiRanks[0];
+  const start = w.city.spawn;
   const rng = w.rng.fork(31);
   const taken: { x: number; z: number }[] = [...reserved];
   const isFree = (s: { x: number; z: number }) => !taken.some((t) => Math.hypot(t.x - s.x, t.z - s.z) < V.kerbSlotSpacing * 0.5);
-  // kerb-side spots nearest the starting taxi rank, one of each type
+  // spots nearest the spawn, one of each type
   const spots = [...w.city.parkingSpots].sort(
-    (a, b) => (a.x - rank.x) ** 2 + (a.z - rank.z) ** 2 - ((b.x - rank.x) ** 2 + (b.z - rank.z) ** 2),
+    (a, b) => (a.x - start.x) ** 2 + (a.z - start.z) ** 2 - ((b.x - start.x) ** 2 + (b.z - start.z) ** 2),
   ).filter(isFree);
   V.playerCarSpawn.forEach((t, k) => {
     const s = spots[k];
     taken.push(s);
     const v = spawnVehicle(w, t, s.x, s.z, s.heading);
     v.owned = k < V.ownedAtStart;
+    v.spotCls = s.cls;
   });
   const types = Object.keys(V.types) as CarTypeName[];
   const paints = ['#e63946', '#f1faee', '#457b9d', '#2a9d8f', '#e9c46a', '#264653', '#8d99ae', '#ff8fab', '#606c38', '#bc6c25'];
-  const kerb = gridKerbSpots(w);
-  for (const cls of Object.keys(V.parkedCarsPer100m) as StreetClass[]) {
-    const pool = kerb.filter((s) => s.cls === cls);
+  for (const cls of Object.keys(V.parkedCarsPer100m) as SpotClass[]) {
+    const pool = w.city.parkingSpots.filter((s) => s.cls === cls);
     const want = Math.round(((pool.length * V.kerbSlotSpacing) / 100) * V.parkedCarsPer100m[cls]);
     let placed = 0, tries = 0;
     while (placed < want && pool.length && tries++ < 500) {
       const s = pool[Math.floor(rng.next() * pool.length)];
-      if (Math.hypot(s.x - rank.x, s.z - rank.z) < V.parkedClearOfRank || !isFree(s)) continue;
+      if (Math.hypot(s.x - start.x, s.z - start.z) < V.parkedClearOfRank || !isFree(s)) continue;
       taken.push(s);
-      spawnVehicle(w, rng.pick(types), s.x, s.z, s.heading, new THREE.Color(rng.pick(paints)));
+      spawnVehicle(w, rng.pick(types), s.x, s.z, s.heading, new THREE.Color(rng.pick(paints))).spotCls = s.cls;
       placed++;
     }
   }
@@ -218,7 +201,7 @@ export function updateVehicles(w: World, dt: number): void {
         if (v.speed > 1) brake = 1;
         else throttle = -1;
       }
-      if (act.reset(inp)) resetUpright(v);
+      if (act.reset(inp)) resetUpright(w, v);
     } else if (!v.driven || v.wrecked) {
       brake = 0.4; // parked or wrecked: wheels drag
     }
@@ -284,7 +267,7 @@ export function updateVehicles(w: World, dt: number): void {
     // flipped? auto-right after a moment
     if (up.y < 0.35 && speedAbs < 3) {
       v.upsideTimer += dt;
-      if (v.upsideTimer > V.flipRecoverTime) resetUpright(v);
+      if (v.upsideTimer > V.flipRecoverTime) resetUpright(w, v);
     } else v.upsideTimer = 0;
 
     syncMesh(v);
@@ -333,10 +316,10 @@ function wreck(v: Vehicle) {
   v.bodyMesh.material = wreckMaterial;
 }
 
-export function resetUpright(v: Vehicle): void {
+export function resetUpright(w: World, v: Vehicle): void {
   const p = v.body.translation();
   const qq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), v.heading);
-  v.body.setTranslation({ x: p.x, y: Math.max(p.y, 0) + 1.2, z: p.z }, true);
+  v.body.setTranslation({ x: p.x, y: Math.max(p.y, w.city.heightAt(p.x, p.z)) + 1.2, z: p.z }, true);
   v.body.setRotation({ x: qq.x, y: qq.y, z: qq.z, w: qq.w }, true);
   v.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
   v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);

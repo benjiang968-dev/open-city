@@ -25,6 +25,27 @@ const RAW = {
     marinaPiers: 4, // number of finger piers in the marina
   },
 
+  // The map interface (src/systems/map/): shared by every map implementation (grid city, Georgetown).
+  map: {
+    defaultMap: 'grid', // map loaded when the URL has no ?map= (or an unknown one); the seed never picks the map
+    // cruise speed (m/s) for roads without a maxspeed tag, by road class (the grid city uses traffic.cruiseSpeed)
+    classSpeed: { primary: 13.4, secondary: 12.5, tertiary: 11.2, residential: 11, service: 6.7, parkway: 15.6 },
+    laneWidth: 3.5, // metres per traffic lane (grid: how many lanes per direction fit a road's width)
+    parkingLaneWidth: 2.4, // metres along each kerb kept for parked cars before the first traffic lane (grid)
+    stopLineGap: 3.2, // metres from a crossing road's edge to the stop line (grid junction boxes)
+    kerbStopGap: 1.6, // metres from the kerb to where a car stops at the kerb (taxi pick-ups and drop-offs)
+    kerbSearchRange: 120, // metres: kerbPoint looks for a kerbside lane this far
+    laneHashCell: 32, // metres per cell of the nearest-lane spatial hash (lookup speed only)
+    walkHashCell: 32, // metres per cell of the walk-node spatial hash (lookup speed only)
+    buildingHashCell: 32, // metres per cell of the building spatial hash (lookup speed only)
+    // levels (bridge decks, elevated roads over other roads; see LEVELS in map/cityMap.ts)
+    levelTolerance: 4, // metres: lane / walk lookups given a height prefer lanes and walk nodes this close above or below it
+    levelSearchRange: 150, // metres: nearestWalk with a height looks this far for a node on that level before taking any level
+    levelStep: 1.2, // metres: heightAt(x, z, y) counts a deck as underfoot if its top is at most this far above y
+    minStrongShare: 0.9, // validateCityMap: the largest strongly connected road component must hold this share of lanes
+    minWalkShare: 0.95, // validateCityMap: the largest connected walk component must hold this share of walk nodes
+  },
+
   time: {
     realSecondsPerGameDay: 24 * 60, // 24 real minutes = one game day
     startHour: 15, // game opens mid-afternoon; dusk arrives ~3.5 real minutes in
@@ -56,6 +77,7 @@ const RAW = {
     capsuleHalfHeight: 0.55,
     enterCarRange: 3.6, // metres from the car to be able to press E
     talkRange: 3.0, // metres to an NPC to be able to press E and talk
+    rescuePavementStep: 2.0, // metres past the kerb onto the pavement where you land after swimming back to shore
   },
 
   vehicles: {
@@ -184,15 +206,15 @@ const RAW = {
       'pickup',
     ],
     ownedAtStart: 1, // the first N cars at the starting taxi rank are yours; the others belong to locals
-    // drivable parked cars per 100 m of kerb, by street class (both kerbs counted). On the grid city the
-    // bay boulevard is 'main' and every other street 'residential'; 'waterfrontLot' is for car parks by
-    // the water, used once the map provides lot spaces (the real-map rebuild)
-    parkedCarsPer100m: { main: 0.6, residential: 0.07, waterfrontLot: 2.5 },
-    kerbSlotSpacing: 13, // metres of kerb one grid parking spot stands for (matches the generator's spacing)
-    parkingKerbGap: 1.3, // metres from the road edge to a parked car's centre line (matches the generator)
-    parkingJunctionGap: 10, // metres of kerb kept free next to each junction (matches the generator)
-    parkedClearOfRank: 40, // metres: no random parked cars this close to the starting taxi rank
-    parkedClearOfPoi: 12, // metres: boulevard spots this close to a POI kerb (taxi stop) stay free
+    // drivable parked cars per 100 m of kerb, by the parking spot's road class (both kerbs counted), or 'lot'
+    // (car park spaces). On the grid city the bay boulevard is 'secondary' and every other street
+    // 'residential'. Keep 'secondary' before 'residential': the order is the order cars are placed in.
+    parkedCarsPer100m: { primary: 0.6, secondary: 0.6, tertiary: 0.3, residential: 0.07, service: 0, parkway: 0, lot: 2.5 },
+    kerbSlotSpacing: 13, // metres of kerb one kerbside parking spot stands for (matches the grid generator's spacing)
+    parkingKerbGap: 1.3, // metres from the road edge to a parked car's centre line (grid boulevard spots)
+    parkingJunctionGap: 10, // metres of kerb kept free next to each junction (grid boulevard spots)
+    parkedClearOfRank: 40, // metres: no random parked cars this close to the player's spawn
+    parkedClearOfPoi: 12, // metres: kerb spots this close to a POI kerb (taxi stop) stay free (grid boulevard spots)
   },
 
   theft: {
@@ -215,12 +237,12 @@ const RAW = {
 
   traffic: {
     count: 26, // AI cars on the road graph
-    cruiseSpeed: 11, // m/s (~40 km/h)
+    cruiseSpeed: 11, // m/s (~40 km/h): the grid city's speed limit (real maps use maxspeed or map.classSpeed)
     accel: 4, // m/s²
     brake: 9, // m/s²
     followGap: 9, // metres kept to the car ahead
     intersectionWait: 0.9, // seconds stopped at each junction
-    laneOffset: 3.1, // metres right of centreline
+    laneOffset: 3.1, // metres right of the centre line: the grid city's (innermost) lane centre
     honkDistance: 10, // player within this in front of a stopped AI car = honk
     honkCooldown: 3, // seconds between honks per car
     swerveDistance: 16, // player car approaching faster than swerveSpeed within this triggers a swerve
@@ -238,6 +260,7 @@ const RAW = {
     capsuleRange: 35, // metres: people's collision capsules are only active this close to you
     dogBarkDistance: 7, // metres: dogs bark at you when you're this close
     dogBarkCooldown: 7, // seconds between barks
+    wallClearance: 0.4, // metres people keep from walls and water when fleeing, dodging or flung off the pavement
     // archetypes: how common (weight), how fast (x walk speed) and how big (scale range)
     archetypes: {
       adult: { weight: 10, speed: 1.0, scale: [0.92, 1.08] },
@@ -269,6 +292,8 @@ const RAW = {
       minTripDistance: 280, // m: destinations are at least this far
       maxTripDistance: 900, // m
       expectedSpeed: 11, // m/s used to compute the time allowance
+      routeLaneSearch: 60, // metres: the time allowance follows the roads from the lanes this close to the start and the drop-off
+      offRoadDetour: 1.4, // allowance distance = this x the straight line when either end has no lane near it (or no route)
       timeBonusMax: 25, // $ extra for beating the time allowance by a lot
       tipFraction: 0.25, // tip = this fraction of the fare when no crash happened
       crashTipLossDamage: 3, // health lost during a fare that voids the tip
@@ -312,6 +337,9 @@ const RAW = {
     chaseSpeed: [0, 14, 17, 20, 23, 26], // m/s by star level
     accel: 7, // m/s²
     directChaseRange: 45, // metres: drive straight at the player when visible this close
+    offRoadRejoin: 10, // metres off its lane (after a direct chase) before a police car rejoins the nearest lane
+    rejoinSearch: 80, // metres: how far a police car looks for a lane to rejoin
+    goalLaneRange: 400, // metres: police route to the lane nearest your last known position within this distance
     bustTime: 3.5, // seconds stopped next to police before you are busted
     bustRange: 7, // metres
     bustFineFraction: 0.2, // fraction of cash lost when busted
@@ -578,6 +606,10 @@ const RAW = {
   hud: {
     minimapRange: 220, // metres shown across the minimap radius
     minimapSize: 190, // pixels
+    minimapBaseScale: 1.2, // pixels per metre of the pre-rendered map image behind the minimap
+    minimapLabelPx: 10, // street-name font size on the minimap (pixels)
+    minimapLabelSpacing: 260, // metres between repeated street-name labels along a long street
+    minimapLabelMinLength: 60, // metres: shorter named streets get no label
   },
 } as const;
 

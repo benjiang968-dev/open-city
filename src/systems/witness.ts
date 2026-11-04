@@ -85,7 +85,7 @@ function pickReaction(ped: Ped, kind: CrimeKind): Reaction {
 export function canSee(w: World, ped: Ped, x: number, z: number): boolean {
   const R = w.R;
   const ox = ped.pos.x, oy = ped.pos.y + 1.6 * ped.scale, oz = ped.pos.z;
-  const dx = x - ox, dy = 1.0 - oy, dz = z - oz;
+  const dx = x - ox, dy = w.city.heightAt(x, z) + 1.0 - oy, dz = z - oz;
   const d = Math.hypot(dx, dy, dz);
   if (d < 1.5) return true;
   const hit = w.physics.castRay(new R.Ray({ x: ox, y: oy, z: oz }, { x: dx / d, y: dy / d, z: dz / d }), d - 0.5, true, R.QueryFilterFlags.ONLY_FIXED);

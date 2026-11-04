@@ -3,7 +3,7 @@ import type * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { Rng } from './rng';
 import type { InputState } from './systems/input';
-import type { CityData } from './systems/cityGen';
+import type { CityMap } from './systems/map/cityMap';
 import type { PlayerState } from './systems/player';
 import type { Vehicle } from './systems/vehicles';
 import type { TrafficCar } from './systems/traffic';
@@ -66,7 +66,8 @@ export interface World {
   combat: CombatState;
   crowd: CrowdRender;
   hurtFx: HurtFxState;
-  city: CityData;
+  /** The map (road and walk graphs, places, lookups). Every system reads the city through this interface. */
+  city: CityMap;
   player: PlayerState;
   vehicles: Vehicle[];
   traffic: TrafficCar[];

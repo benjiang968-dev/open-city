@@ -16,8 +16,27 @@ import { pickUp, freeSlot } from './inventory';
 import { shovePed } from './npcReactions';
 import { carPrompt, useCar, type BreakIn } from './carTheft';
 import { showroomPrompt, buyDisplayCar } from './economy/dealership';
+import type { KerbHit } from './map/cityMap';
 
 const P = TUNING.player;
+const KERB: KerbHit = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
+
+/**
+ * Somewhere safe on dry land near (x, z): the pavement behind the nearest kerb (the kerb stop itself if that is
+ * blocked). Used when you swim back from the water or fall out of the world.
+ */
+export function safeSpotNear(w: World, x: number, z: number, out: { x: number; z: number }): void {
+  const c = w.city;
+  // a kerb at ground / water level (the waterfront, not a bridge deck above the river)
+  const level = c.isWater(x, z) ? c.waterLevelAt(x, z) : c.heightAt(x, z);
+  if (!c.kerbPoint(x, z, KERB, level)) { out.x = c.spawn.x; out.z = c.spawn.z; return; }
+  // the pavement is to the right of the kerbside lane
+  const step = TUNING.map.kerbStopGap + P.rescuePavementStep;
+  const px = KERB.x - Math.cos(KERB.heading) * step, pz = KERB.z + Math.sin(KERB.heading) * step;
+  if (!c.isBlocked(px, pz)) { out.x = px; out.z = pz; }
+  else { out.x = KERB.x; out.z = KERB.z; }
+}
+const SAFE = { x: 0, z: 0 };
 
 export interface PlayerState {
   mesh: THREE.Group;
@@ -48,7 +67,7 @@ export function createPlayer(w: World, x: number, z: number): PlayerState {
   const R = w.R;
   const rig = makePerson(new THREE.Color('#ff7a59'), new THREE.Color('#2d3047'), new THREE.Color('#e0ac69'), new THREE.Color('#3b2416'));
   w.scene.add(rig.root);
-  const body = w.physics.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, P.capsuleHalfHeight + P.capsuleRadius + 0.05, z));
+  const body = w.physics.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, w.city.heightAt(x, z) + P.capsuleHalfHeight + P.capsuleRadius + 0.05, z));
   const collider = w.physics.createCollider(R.ColliderDesc.capsule(P.capsuleHalfHeight, P.capsuleRadius).setCollisionGroups(GROUPS.player), body);
   const cc = w.physics.createCharacterController(0.04);
   cc.setUp({ x: 0, y: 1, z: 0 });
@@ -76,15 +95,17 @@ export function updatePlayer(w: World, dt: number): void {
   if (p.vehicle) {
     const v = p.vehicle;
     p.mesh.position.copy(v.mesh.position);
-    // drove into the bay: swim back to the promenade
-    if (v.mesh.position.y < TUNING.world.waterLevel - 0.8) {
+    // drove into the water (open water, or sunk under a pier deck): swim back to the nearest pavement
+    const vp = v.mesh.position;
+    const wet = w.city.isWater(vp.x, vp.z);
+    if (vp.y < (wet ? w.city.waterLevelAt(vp.x, vp.z) : w.city.waterLevel) - 0.8 && (wet || vp.y < w.city.heightAt(vp.x, vp.z) - 1.5)) {
       v.inWaterTimer += dt;
       if (v.inWaterTimer > 1.5) {
         v.health = 0;
         v.wrecked = true;
         exitVehicle(w);
-        const z = w.city.coastZ - 12;
-        p.body.setTranslation({ x: Math.max(w.city.bounds.minX + 5, Math.min(w.city.bounds.maxX - 5, v.mesh.position.x)), y: 1.2, z }, true);
+        safeSpotNear(w, vp.x, vp.z, SAFE);
+        p.body.setTranslation({ x: SAFE.x, y: w.city.heightAt(SAFE.x, SAFE.z) + 1.2, z: SAFE.z }, true);
         toast(w, 'You swam back to shore', 2.5);
       }
       return;
@@ -189,9 +210,11 @@ export function updatePlayer(w: World, dt: number): void {
   p.grounded = p.cc.computedGrounded();
   if (p.grounded && p.vy > 0 && move.y > 0 && c.y < move.y * 0.5) p.vy = 0; // bumped head
   p.body.setNextKinematicTranslation({ x: pos.x + c.x, y: pos.y + c.y, z: pos.z + c.z });
-  // safety: fell through or into the bay -> back to the promenade
-  if (pos.y < -3) {
-    p.body.setTranslation({ x: pos.x, y: 1.2, z: Math.min(pos.z, w.city.coastZ - 20) }, true);
+  // safety: fell through the ground or into the water -> back onto the nearest pavement
+  if (pos.y < w.city.heightAt(pos.x, pos.z) - 3) {
+    if (w.city.isWater(pos.x, pos.z) || w.city.isBlocked(pos.x, pos.z)) safeSpotNear(w, pos.x, pos.z, SAFE);
+    else { SAFE.x = pos.x; SAFE.z = pos.z; }
+    p.body.setTranslation({ x: SAFE.x, y: w.city.heightAt(SAFE.x, SAFE.z) + 1.2, z: SAFE.z }, true);
   }
   p.walkPhase += Math.hypot(c.x, c.z) * 3.2;
   animatePerson(p.rig, p.walkPhase, p.grounded ? Math.min(1, (len * speed) / P.walkSpeed) : 0.3);
@@ -232,10 +255,10 @@ export function exitVehicle(w: World): void {
   // if blocked on the left, try the right
   const R = w.R;
   const blocked = (px: number, pz: number) =>
-    w.physics.intersectionWithShape({ x: px, y: 1.0, z: pz }, { x: 0, y: 0, z: 0, w: 1 }, new R.Capsule(P.capsuleHalfHeight, P.capsuleRadius), undefined, undefined, v.collider) !== null;
+    w.physics.intersectionWithShape({ x: px, y: w.city.heightAt(px, pz) + 1.0, z: pz }, { x: 0, y: 0, z: 0, w: 1 }, new R.Capsule(P.capsuleHalfHeight, P.capsuleRadius), undefined, undefined, v.collider) !== null;
   if (blocked(x, z)) { x = t.x - lx; z = t.z - lz; }
   if (blocked(x, z)) { x = t.x; z = t.z; }
-  p.body.setTranslation({ x, y: Math.max(1.0, t.y + 0.4), z }, true);
+  p.body.setTranslation({ x, y: Math.max(w.city.heightAt(x, z) + 1.0, t.y + 0.4), z }, true);
   p.collider.setEnabled(true);
   p.mesh.visible = true;
   p.facing = v.heading;

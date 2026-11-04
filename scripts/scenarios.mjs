@@ -6,6 +6,56 @@ const state = (page) => page.evaluate(() => {
 });
 export { hold, state };
 
+/**
+ * Map-agnostic spots for the scenarios (installed in the page as window.__mh by shot.mjs). Spots are given as
+ * offsets from the map centre; on the grid city the offsets used below land exactly where the old scenarios
+ * put things (between avenues, in a lane, on a pavement), and on any other map they snap to the nearest road.
+ */
+export function installMapHelpers() {
+  const w = window.__oc, c = w.city;
+  const hit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+  const kerb = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
+  const free = (x, z) => !c.isBlocked(x, z) && !c.isWater(x, z);
+  const H = {};
+  /** The pavement behind the kerb nearest to centre + (dx, dz). */
+  H.pavement = (dx, dz) => {
+    c.kerbPoint(c.center.x + dx, c.center.z + dz, kerb);
+    const h = kerb.heading, step = 3.6;
+    return { x: kerb.x - Math.cos(h) * step, z: kerb.z + Math.sin(h) * step, heading: h };
+  };
+  /** centre + (dx, dz) itself if it is open ground, else the pavement nearest to it. */
+  H.spot = (dx, dz) => {
+    const x = c.center.x + dx, z = c.center.z + dz;
+    return free(x, z) ? { x, z, heading: 0 } : H.pavement(dx, dz);
+  };
+  /** centre + (dx, dz) if it is on a road, else the nearest lane centre. */
+  H.road = (dx, dz) => {
+    const x = c.center.x + dx, z = c.center.z + dz;
+    c.nearestLane(x, z, 5000, hit);
+    return c.isRoad(x, z) ? { x, z, heading: hit.heading, edge: hit.edge } : { x: hit.x, z: hit.z, heading: hit.heading, edge: hit.edge };
+  };
+  /** Start of the longest straight run of lanes (widest road first): { x, z, heading, length }. */
+  H.straight = () => {
+    const { nodes, edges } = c.roads;
+    const dir = (e) => Math.atan2(e.pts[e.pts.length - 3] - e.pts[0], e.pts[e.pts.length - 1] - e.pts[2]);
+    const same = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b))) < 0.05;
+    const straightNext = (e) => nodes[e.to].out.map((i) => edges[i]).find((n) => n.lane === e.lane && n.roadId === e.roadId && n.to !== e.from && same(dir(n), dir(e)));
+    const straightPrev = (e) => nodes[e.from].in.map((i) => edges[i]).find((p) => p.lane === e.lane && p.roadId === e.roadId && p.from !== e.to && same(dir(p), dir(e)));
+    let best = null;
+    for (const e of edges) {
+      if (e.lane !== 0 || straightPrev(e)) continue; // only chain starts
+      let len = 0;
+      for (let k = e, n = 0; k && n < 500; k = straightNext(k), n++) len += k.len;
+      if (!best || len > best.len + 1 || (Math.abs(len - best.len) <= 1 && e.halfWidth > best.e.halfWidth)) best = { e, len };
+    }
+    const e = best.e;
+    return { x: e.pts[0], z: e.pts[2], heading: dir(e), length: best.len };
+  };
+  /** Tall, wide buildings (crash walls), in map order. */
+  H.walls = () => c.buildings.filter((b) => b.h > 10 && b.maxX - b.minX > 12);
+  window.__mh = H;
+}
+
 export async function world(page, S) {
   await S.start(page);
   await page.waitForTimeout(800);
@@ -54,16 +104,18 @@ export async function handling(page, S) {
     const keys = w.input.keys;
     const v = w.vehicles.find((c) => c.type === (window.__carType || 'sedan'));
     v.owned = true; // (M3) only the rank sedan is yours at the start; this test is about handling, not theft
-    const z = w.city.zs[w.city.zs.length - 1] + 3;
-    const x0 = w.city.xs[0] + 15;
-    const q = { x: 0, y: Math.sin(Math.PI / 4), z: 0, w: Math.cos(Math.PI / 4) };
+    // the longest straight road (the bay boulevard on the grid city), 15 m in, heading along it
+    const st = window.__mh.straight(), fx = Math.sin(st.heading), fz = Math.cos(st.heading);
+    const x0 = st.x + fx * 15, z = st.z + fz * 15;
+    const q = { x: 0, y: Math.sin(st.heading / 2), z: 0, w: Math.cos(st.heading / 2) };
     const place = (kmh) => {
-      v.body.setTranslation({ x: x0, y: 1, z }, true); v.body.setRotation(q, true);
-      v.body.setLinvel({ x: kmh / 3.6, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-      v.health = v.maxHealth; v.wrecked = false; v.prevVel.set(kmh / 3.6, 0, 0); keys.clear(); step(5);
+      v.body.setTranslation({ x: x0, y: w.city.heightAt(x0, z) + 1, z }, true); v.body.setRotation(q, true);
+      v.body.setLinvel({ x: fx * kmh / 3.6, y: 0, z: fz * kmh / 3.6 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.health = v.maxHealth; v.wrecked = false; v.prevVel.set(fx * kmh / 3.6, 0, fz * kmh / 3.6); keys.clear(); step(5);
     };
     place(0);
-    w.player.body.setTranslation({ x: x0, y: 1, z: z - 2.5 }, true);
+    // stand at the driver's door (the car's left)
+    w.player.body.setTranslation({ x: x0 + fz * 2.5, y: w.city.heightAt(x0, z) + 1, z: z - fx * 2.5 }, true);
     step(30);
     w.input.pressed.add('KeyE'); step(1);
     out.inCar = !!w.player.vehicle;
@@ -124,7 +176,7 @@ export async function traffic2(page, S) {
       const ph = {}; let stopped = 0, sum = 0, stun = 0;
       for (const c of w.traffic) { ph[c.phase] = (ph[c.phase] || 0) + 1; if (c.speed < 0.3) stopped++; sum += c.speed; if (c.stunT > 0) stun++; }
       const t0 = w.traffic[0]; const tt = t0.body.translation();
-      return { t: Math.round(w.time), ph, stopped, avg: +(sum / w.traffic.length).toFixed(1), stun, c0: [Math.round(tt.x), Math.round(tt.y * 10) / 10, Math.round(tt.z), t0.phase, +t0.speed.toFixed(1), t0.from, t0.to] };
+      return { t: Math.round(w.time), ph, stopped, avg: +(sum / w.traffic.length).toFixed(1), stun, c0: [Math.round(tt.x), Math.round(tt.y * 10) / 10, Math.round(tt.z), t0.phase, +t0.speed.toFixed(1), t0.edge, t0.next] };
     }));
   }
   return out;
@@ -259,8 +311,8 @@ export async function police(page, S) {
   out.chase = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun;
     const v = w.player.vehicle;
-    const c = w.city;
-    v.body.setTranslation({ x: c.xs[4] + 30, y: 1, z: c.zs[2] + 3 }, true); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0);
+    const sp = window.__mh.road(-18, -45); // grid: a long road east of the centre junction
+    v.body.setTranslation({ x: sp.x, y: w.city.heightAt(sp.x, sp.z) + 1, z: sp.z }, true); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0);
     const samples = [];
     for (let k = 0; k < 6; k++) {
       run(3);
@@ -275,11 +327,10 @@ export async function police(page, S) {
   // escape: teleport into a different car far away behind buildings (out of sight), then wait
   out.escape = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun;
-    const c = w.city;
     const v2 = w.vehicles.find((x) => x.type === 'hatchback');
     v2.owned = true; // (M3) switching to a car of your own (stealing one is the theft scenario)
     w.input.pressed.add('KeyE'); run(0.1); // get out
-    const far = { x: c.xs[c.xs.length - 2] - 30, z: c.zs[0] + 3 };
+    const far = window.__mh.road(306, -237); // grid: the north-east corner, behind buildings
     v2.body.setTranslation({ x: far.x, y: 1, z: far.z }, true); v2.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v2.prevVel.set(0, 0, 0);
     w.player.body.setTranslation({ x: far.x + 2.2, y: 1.2, z: far.z }, true);
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
@@ -298,8 +349,8 @@ export async function bust(page, S) {
   await S.start(page);
   return page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun;
-    const c = w.city;
-    w.player.body.setTranslation({ x: c.xs[4] + 30, y: 1.2, z: c.zs[2] + 9 }, true);
+    const sp = window.__mh.spot(-18, -39); // grid: the pavement of the long road east of the centre junction
+    w.player.body.setTranslation({ x: sp.x, y: w.city.heightAt(sp.x, sp.z) + 1.2, z: sp.z }, true);
     run(0.2);
     w.events.push({ type: 'policeCalled', x: 0, z: 0, byPed: 0 }, { type: 'policeCalled', x: 0, z: 0, byPed: 0 });
     run(0.05);
@@ -426,10 +477,10 @@ export async function crashbench(page, S) {
     const speeds = [20, 35, 50, 60, 70, 80, 90, 100, 110, 120];
     const crashes = [];
     // pick tall buildings far from each other
-    const bs = w.city.buildingRects.filter((b) => b.h > 10).slice(0, 40);
+    const bs = w.city.buildings.filter((b) => b.h > 10).slice(0, 40);
     speeds.forEach((kmh, i) => {
       const b = bs[(i * 3) % bs.length];
-      const cx = (b.x0 + b.x1) / 2, z = b.z1 + 18; // south of the building, facing north (-z)
+      const cx = (b.minX + b.maxX) / 2, z = b.maxZ + 18; // south of the building, facing north (-z)
       const h = Math.PI;
       v.body.setTranslation({ x: cx, y: 0.9, z }, true);
       v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
@@ -458,7 +509,7 @@ export async function crashspikes(page, S) {
     R(60);
     const heap0 = performance.memory ? performance.memory.usedJSHeapSize : 0;
     const all = [];
-    const bs = w.city.buildingRects.filter((b) => b.h > 10 && b.x1 - b.x0 > 12);
+    const bs = window.__mh.walls();
     const launch = (x, z, h, kmh) => {
       v.body.setTranslation({ x, y: 0.9, z }, true);
       v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
@@ -471,7 +522,7 @@ export async function crashspikes(page, S) {
       const b = bs[(i * 5) % bs.length];
       v.health = v.maxHealth; v.wrecked = false;
       const hp0 = v.health;
-      launch((b.x0 + b.x1) / 2, b.z1 + 12, Math.PI, kmh);
+      launch((b.minX + b.maxX) / 2, b.maxZ + 12, Math.PI, kmh);
       const fr = R(60); all.push(...fr); const wf = fr.reduce((a, f) => (f.cpu > a.cpu ? f : a));
       hits.push(`${kmh}km/h -${Math.round(hp0 - v.health)}hp worst ${wf.cpu} [${wf.top}]`);
     });
@@ -485,7 +536,7 @@ export async function crashspikes(page, S) {
     }
     // a wreck
     v.health = 5; v.wrecked = false;
-    const b = bs[3]; launch((b.x0 + b.x1) / 2, b.z1 + 12, Math.PI, 90);
+    const b = bs[3]; launch((b.minX + b.maxX) / 2, b.maxZ + 12, Math.PI, 90);
     { const fr = R(60); all.push(...fr); const wf = fr.reduce((a, f) => (f.cpu > a.cpu ? f : a)); hits.push(`wreck worst ${wf.cpu} [${wf.top}]`); }
     const heap1 = performance.memory ? performance.memory.usedJSHeapSize : 0;
     const worst = all.reduce((a, f) => (f.cpu > a.cpu ? f : a));
@@ -513,10 +564,10 @@ export async function dent(page, S) {
     // a building with open ground (road) for 20 m south of it
     const R0 = w.R;
     const free = (x, z) => !w.physics.castRay(new R0.Ray({ x, y: 30, z }, { x: 0, y: -1, z: 0 }), 29.5, true, R0.QueryFilterFlags.ONLY_FIXED);
-    const b = w.city.buildingRects.filter((q) => q.h > 10 && q.x1 - q.x0 > 12).find((q) => [4, 8, 12, 16, 20].every((d) => free((q.x0 + q.x1) / 2 - 1, q.z1 + d) && free((q.x0 + q.x1) / 2 + 1, q.z1 + d)));
+    const b = window.__mh.walls().find((q) => [4, 8, 12, 16, 20].every((d) => free((q.minX + q.maxX) / 2 - 1, q.maxZ + d) && free((q.minX + q.maxX) / 2 + 1, q.maxZ + d)));
     const launch = (kmh, xoff) => {
       const h = Math.PI;
-      v.body.setTranslation({ x: (b.x0 + b.x1) / 2 + xoff, y: 0.9, z: b.z1 + 10 }, true);
+      v.body.setTranslation({ x: (b.minX + b.maxX) / 2 + xoff, y: 0.9, z: b.maxZ + 10 }, true);
       v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
       v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       v.body.setLinvel({ x: 0, y: 0, z: -kmh / 3.6 }, true); v.prevVel.set(0, 0, -kmh / 3.6);
@@ -548,7 +599,7 @@ export async function gate1(page, S) {
   const out = await page.evaluate(() => {
     const w = window.__oc, R0 = w.R;
     const free = (x, z) => !w.physics.castRay(new R0.Ray({ x, y: 30, z }, { x: 0, y: -1, z: 0 }), 29.5, true, R0.QueryFilterFlags.ONLY_FIXED);
-    const walls = w.city.buildingRects.filter((q) => q.h > 10 && q.x1 - q.x0 > 12).filter((q) => [4, 8, 12, 16].every((d) => free((q.x0 + q.x1) / 2 - 1, q.z1 + d) && free((q.x0 + q.x1) / 2 + 1, q.z1 + d)));
+    const walls = window.__mh.walls().filter((q) => [4, 8, 12, 16].every((d) => free((q.minX + q.maxX) / 2 - 1, q.maxZ + d) && free((q.minX + q.maxX) / 2 + 1, q.maxZ + d)));
     const v = w.vehicles.find((c) => c.type === 'pickup'); const t = v.body.translation();
     v.owned = true; // (M3) crash test, not a theft
     w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.6, y: 1.2, z: t.z - Math.sin(v.heading) * 2.6 }, true);
@@ -558,7 +609,7 @@ export async function gate1(page, S) {
     const log = [];
     const launch = (b, kmh) => {
       const h = Math.PI;
-      v.body.setTranslation({ x: (b.x0 + b.x1) / 2, y: 1.0, z: b.z1 + 9 }, true);
+      v.body.setTranslation({ x: (b.minX + b.maxX) / 2, y: 1.0, z: b.maxZ + 9 }, true);
       v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
       v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       v.body.setLinvel({ x: 0, y: 0, z: -kmh / 3.6 }, true); v.prevVel.set(0, 0, -kmh / 3.6);
@@ -778,8 +829,8 @@ export async function lineup(page, S) {
   await S.start(page);
   const r = await page.evaluate(() => {
     const w = window.__oc;
-    const c = w.city;
-    w.player.body.setTranslation({ x: c.xs[3] + 20, y: 1.2, z: c.zs[c.zs.length - 1] + 12 }, true);
+    const sp = window.__mh.spot(-124, 348); // grid: the bay promenade
+    w.player.body.setTranslation({ x: sp.x, y: w.city.heightAt(sp.x, sp.z) + 1.2, z: sp.z }, true);
     window.__ocRun(0.2);
     const pp = w.player.mesh.position;
     const want = ['adult', 'jogger', 'delivery', 'tourist', 'elderly', 'parent', 'dogwalker'];
@@ -836,8 +887,8 @@ export async function witness(page, S) {
   // escape: run far away and hide
   const escape = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun;
-    const c = w.city;
-    w.player.body.setTranslation({ x: c.xs[c.xs.length - 2] - 30, y: 1.2, z: c.zs[0] + 3 }, true);
+    const sp = window.__mh.road(306, -237); // grid: the north-east corner, behind buildings
+    w.player.body.setTranslation({ x: sp.x, y: w.city.heightAt(sp.x, sp.z) + 1.2, z: sp.z }, true);
     const s = [];
     for (let k = 0; k < 15; k++) { run(3); s.push([Math.round(w.time), w.police.stars, w.police.cars.length, w.police.seen ? 'seen' : '-']); if (w.police.stars === 0) break; }
     return s;
@@ -889,8 +940,9 @@ export async function gate2(page, S) {
   }, victim.id);
   // 3) escape
   const escape = await page.evaluate(() => {
-    const w = window.__oc, run = window.__ocRun; const c = w.city;
-    w.player.body.setTranslation({ x: c.xs[c.xs.length - 2] - 30, y: 1.2, z: c.zs[0] + 3 }, true);
+    const w = window.__oc, run = window.__ocRun;
+    const sp = window.__mh.road(306, -237); // grid: the north-east corner, behind buildings
+    w.player.body.setTranslation({ x: sp.x, y: w.city.heightAt(sp.x, sp.z) + 1.2, z: sp.z }, true);
     const t0 = w.time;
     while (w.police.stars > 0 && w.time - t0 < 60) run(1);
     return { seconds: Math.round(w.time - t0), stars: w.police.stars };
@@ -942,7 +994,7 @@ export async function hurtfx(page, S) {
     await page.evaluate(() => { const w = window.__oc; w.paused = false; w.cam.override = null; });
   };
   await page.evaluate(() => {
-    const w = window.__oc, run = window.__ocRun, c = w.city;
+    const w = window.__oc, run = window.__ocRun;
     const H = {};
     H.run = run;
     H.fx = () => { const f = w.hurtFx; return { bursts: f.bursts, dots: f.live, stains: f.stainLive, stainsMade: f.stainsMade, dotsVisible: f.dots.visible, stainsVisible: f.stains.visible }; };
@@ -955,8 +1007,9 @@ export async function hurtfx(page, S) {
       cpu.sort((a, b) => a - b);
       return { frames: n, median: cpu[n >> 1], p95: cpu[Math.floor(n * 0.95)], fxMeanMs: +(fx.reduce((a, b) => a + b, 0) / n).toFixed(4), fxMaxMs: +Math.max(...fx).toFixed(4) };
     };
-    // a clear stretch of road between two junctions
-    H.spot = (i, j) => ({ x: (c.xs[i] + c.xs[i + 1]) / 2, z: c.zs[j] });
+    // a clear stretch of road between two junctions: (i, j) picks an offset from the map centre (on the grid city:
+    // mid-block between avenues i and i + 1 on street j); other maps snap it to the nearest lane
+    H.spot = (i, j) => window.__mh.road(96 * i - 384, 96 * j - 240);
     H.tp = (x, z, facing = 0) => { w.player.body.setTranslation({ x, y: 1.2, z }, true); w.player.facing = facing; w.cam.yaw = facing + Math.PI; w.cam.pitch = 0.49; run(0.2, 60); };
     H.hold = (ped, x, z) => { ped.pos.set(x, 0.02, z); ped.state = 'idle'; ped.timer = 40; ped.route = []; ped.tilt = 0; };
     // put a dog walker so that their dog stands exactly at (x, z), its leash spot for owner heading h and orbit o
@@ -1264,7 +1317,7 @@ export async function theft(page, S) {
     const v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked && typeof c.owner === 'number' && w.peds[c.owner].active)
       ?? w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked);
     // empty the street: everyone within 120 m (the owner too) is sent to a pavement far away
-    const far = w.city.sideNodes.filter((n) => Math.hypot(n.x - v.px, n.z - v.pz) > 200);
+    const far = w.city.walk.nodes.filter((n) => Math.hypot(n.x - v.px, n.z - v.pz) > 200);
     let moved = 0;
     for (const p of w.peds) {
       if (!p.active || Math.hypot(p.pos.x - v.px, p.pos.z - v.pz) > 120) continue;
@@ -1447,4 +1500,68 @@ export async function dealership(page, S) {
   await page.screenshot({ path: 'screenshots/23-dealership-bought.png' });
   buy.minimapAfterParking = await page.evaluate(() => window.__ocMinimap.ownedCars);
   return { setup, buy };
+}
+
+// Map integrity (any map: MAP=<id> node scripts/shot.mjs x mapcheck): validateCityMap on the loaded map; one traffic
+// car followed through 30 consecutive junction choices (every move must be onto an outgoing lane of the node it
+// reached, and it must stay on its lane); 20 random walks on the walk graph; kerb points for every place.
+export async function mapcheck(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, M = window.__ocMap, c = w.city, E = c.roads.edges, N = c.roads.nodes;
+    const t0 = performance.now();
+    const report = M.validate();
+    const validateMs = +(performance.now() - t0).toFixed(1);
+    let seed = 12345;
+    const rand = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296);
+    // ---- 1) drive ----
+    const hit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+    const car = w.traffic.find((t) => t.phase === 'lane') ?? w.traffic[0];
+    let prev = car.edge, streak = 0, best = 0, jumps = 0, maxOff = 0, uTurns = 0;
+    const visited = new Set([prev]), path = [];
+    const simStart = w.time;
+    while (streak < 30 && w.time - simStart < 900) {
+      window.__ocRun(0.1, 30);
+      if (car.phase === 'lane' && car.stunT <= 0) maxOff = Math.max(maxOff, M.projectOnLane(E[car.edge], car.px, car.pz, hit).dist);
+      if (car.edge === prev) continue;
+      const from = E[prev], legal = N[from.to].out.includes(car.edge);
+      if (legal) {
+        streak++;
+        if (car.edge === from.twin && !N[from.to].deadEnd) uTurns++;
+        if (path.length < 30) path.push(`${E[car.edge].name ?? E[car.edge].roadId}#${car.edge}`);
+      } else { jumps++; streak = 0; } // recycled (teleported) or skipped a lane
+      best = Math.max(best, streak);
+      visited.add(car.edge);
+      prev = car.edge;
+    }
+    const drive = { choices: best, jumps, uTurnsNotAtDeadEnds: uTurns, maxOffLaneM: +maxOff.toFixed(2), simSeconds: Math.round(w.time - simStart), lanesVisited: visited.size, route: path.slice(0, 12).join(' > ') };
+    // ---- 2) walks ----
+    const router = M.walkRouter(), W = c.walk.nodes;
+    let ok = 0, fail = 0, badLink = 0, hops = 0, metres = 0;
+    for (let k = 0; k < 20; k++) {
+      const a = Math.floor(rand() * W.length), b = Math.floor(rand() * W.length);
+      const n = router.path(a, b);
+      if (n <= 0) { fail++; continue; }
+      if (router.nodes[0] !== a || router.nodes[n - 1] !== b) badLink++;
+      for (let i = 1; i < n; i++) {
+        const p = W[router.nodes[i - 1]], q = W[router.nodes[i]];
+        if (!p.nbrs.includes(q.id)) badLink++;
+        metres += Math.hypot(q.x - p.x, q.z - p.z);
+      }
+      hops += n;
+      ok++;
+    }
+    const walkInside = W.filter((n) => c.isBlocked(n.x, n.z)).length;
+    const walks = { ok, fail, badLink, avgNodes: ok ? +(hops / ok).toFixed(1) : 0, avgMetres: ok ? Math.round(metres / ok) : 0, walkNodesInsideBlocked: walkInside };
+    // ---- 3) places ----
+    const kerb = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
+    let farKerb = 0, noKerb = 0;
+    for (const p of c.pois) {
+      if (!c.kerbPoint(p.x, p.z, kerb)) { noKerb++; continue; }
+      if (Math.hypot(kerb.x - p.curbX, kerb.z - p.curbZ) > 15) farKerb++;
+    }
+    const places = { pois: c.pois.length, noKerbPoint: noKerb, kerbPointFarFromCurb: farKerb, spawnBlocked: c.isBlocked(c.spawn.x, c.spawn.z) };
+    const pass = report.ok && drive.choices >= 30 && drive.uTurnsNotAtDeadEnds === 0 && drive.maxOffLaneM < 3 && walks.fail === 0 && walks.badLink === 0 && noKerb === 0;
+    return { map: c.id, pass, validateMs, report: { ok: report.ok, errors: report.errors, warnings: report.warnings.slice(0, 8), warningCount: report.warnings.length, stats: report.stats }, drive, walks, places };
+  });
 }

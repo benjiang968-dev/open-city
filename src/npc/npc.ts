@@ -1,7 +1,7 @@
 // NPC identity, personality, routine, mood, relationship and memory. Pure data, no rendering.
 import { Rng } from '../rng';
 import { FIRST_NAMES, LAST_NAMES, JOBS } from '../names';
-import type { CityData, Poi } from '../systems/cityGen';
+import type { CityMap, Poi } from '../systems/map/cityMap';
 import { TUNING } from '../tuning';
 
 export type Personality = 'friendly' | 'grumpy' | 'nervous' | 'chatty' | 'posh' | 'laidback';
@@ -55,7 +55,7 @@ export interface NpcProfile {
   archetype: string; // adult, jogger, delivery, tourist, elderly, parent, kid, dogwalker
 }
 
-export function generateNpc(id: number, rng: Rng, city: CityData): NpcProfile {
+export function generateNpc(id: number, rng: Rng, city: CityMap): NpcProfile {
   const homes = city.pois.filter((p) => p.kind === 'apartment');
   const works = city.pois.filter((p) => ['office', 'cafe', 'diner', 'shop', 'bar', 'hotel', 'gym', 'clinic', 'market', 'garage', 'marina'].includes(p.kind));
   const leisure = city.pois.filter((p) => ['park', 'cafe', 'bar', 'beach', 'pier', 'diner', 'market'].includes(p.kind));

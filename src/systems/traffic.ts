@@ -1,14 +1,17 @@
-// AI traffic on the road graph. Cars are dynamic bodies steered by setting velocity along a lane path,
-// so the player can shove them; they stop at junctions, keep a gap, honk at and swerve from the player.
+// AI traffic on the road graph. Cars are dynamic bodies steered by setting velocity along their lane edge
+// (map.roads), so the player can shove them; they stop at junctions, keep a gap, honk at and swerve from the player.
+// At a junction a car picks its next lane from the node's outgoing edges (never straight back the way it came,
+// unless it is a dead end) and follows a curve from its stop line to the next lane's start.
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING, type CarTypeName } from '../tuning';
 import type { World } from '../world';
-import type { RoadNode } from './cityGen';
+import { laneSample, type LaneEdge, type LanePoint } from './map/cityMap';
 import { makeAiCarGeometry, carMaterial } from '../art/car';
 import { GROUPS } from '../physicsGroups';
 
 const TT = TUNING.traffic;
+const TURN_SEGS = 8; // segments on a junction curve
 
 export interface AiCar {
   id: number;
@@ -20,13 +23,16 @@ export interface AiCar {
   meshYOffset: number;
   halfW: number;
   halfL: number;
-  from: number; // node ids
-  to: number;
+  /** Lane edge being driven (while waiting or turning: the edge being left). */
+  edge: number;
+  /** Lane edge after the coming junction, -1 until chosen. */
   next: number;
   phase: 'lane' | 'wait' | 'turn';
-  path: THREE.Vector2[];
-  cum: number[]; // cumulative lengths along path
-  s: number; // distance along path
+  /** 'lane'/'wait': distance along the edge's pts; 'turn': distance along the junction curve. */
+  s: number;
+  turnPts: Float32Array; // x,z pairs of the current junction curve (preallocated)
+  turnCum: Float32Array;
+  turnLen: number;
   speed: number;
   heading: number;
   waitT: number;
@@ -39,74 +45,98 @@ export interface AiCar {
   lastSetHeading: number; // heading last written to the physics body
   px: number; // cached position, refreshed once per physics step (avoids allocating translation() calls)
   pz: number;
-  /** Optional route chooser at junctions (police use BFS toward the player). */
+  /** Optional route chooser at junctions: returns the next lane edge id (police head for the player). */
   chooser?: (car: AiCar) => number;
 }
 export type TrafficCar = AiCar;
 
-const tmpA = new THREE.Vector2();
-const tmpB = new THREE.Vector2();
+const LP: LanePoint = { x: 0, y: 0, z: 0, heading: 0 };
+const LP2: LanePoint = { x: 0, y: 0, z: 0, heading: 0 };
 
 // ---------- lane geometry ----------
-function laneEnds(w: World, a: RoadNode, b: RoadNode, offset: number): [THREE.Vector2, THREE.Vector2] {
-  const c = w.city;
-  const dx = Math.sign(b.x - a.x), dz = Math.sign(b.z - a.z);
-  const rx = -dz, rz = dx; // right-hand side
-  const stopA = (dx !== 0 ? c.roadHalfX[a.i] : c.roadHalfZ[a.j]) + 3.2;
-  const stopB = (dx !== 0 ? c.roadHalfX[b.i] : c.roadHalfZ[b.j]) + 3.2;
-  return [
-    new THREE.Vector2(a.x + dx * stopA + rx * offset, a.z + dz * stopA + rz * offset),
-    new THREE.Vector2(b.x - dx * stopB + rx * offset, b.z - dz * stopB + rz * offset),
-  ];
+/** Where a lane's drivable part starts (cars leave the junction at `from` here). */
+export function laneStart(e: LaneEdge): number {
+  return Math.min(e.trimStart, e.len * 0.5);
+}
+/** Where a lane's drivable part ends: the stop line before the junction at `to`. */
+export function stopLine(e: LaneEdge): number {
+  return Math.max(laneStart(e), e.len - e.trimEnd);
 }
 
-function setPath(car: AiCar, pts: THREE.Vector2[]) {
-  car.path = pts;
-  car.cum = [0];
-  for (let k = 1; k < pts.length; k++) car.cum.push(car.cum[k - 1] + pts[k].distanceTo(pts[k - 1]));
-  car.s = 0;
+/** True when the next lane does not continue where this one stops, so a junction curve is needed. */
+function needsTurn(e: LaneEdge, n: LaneEdge): boolean {
+  laneSample(e, stopLine(e), LP);
+  laneSample(n, laneStart(n), LP2);
+  const dh = Math.abs(Math.atan2(Math.sin(LP2.heading - LP.heading), Math.cos(LP2.heading - LP.heading)));
+  return Math.hypot(LP2.x - LP.x, LP2.z - LP.z) > 0.5 || dh > 0.6;
 }
 
-function lanePath(w: World, car: AiCar) {
-  const a = w.city.nodes[car.from], b = w.city.nodes[car.to];
-  const [p0, p1] = laneEnds(w, a, b, TT.laneOffset);
-  setPath(car, [p0, p1]);
-}
-
-function turnPath(w: World, car: AiCar) {
-  const n = w.city.nodes;
-  const [, p0] = laneEnds(w, n[car.from], n[car.to], TT.laneOffset);
-  const [p2] = laneEnds(w, n[car.to], n[car.next], TT.laneOffset);
-  const d1 = tmpA.set(Math.sign(n[car.to].x - n[car.from].x), Math.sign(n[car.to].z - n[car.from].z));
-  const ctrl = p0.clone().addScaledVector(d1, tmpB.copy(p2).sub(p0).dot(d1));
-  const pts: THREE.Vector2[] = [];
-  for (let k = 0; k <= 8; k++) {
-    const t = k / 8, u = 1 - t;
-    pts.push(new THREE.Vector2(u * u * p0.x + 2 * u * t * ctrl.x + t * t * p2.x, u * u * p0.y + 2 * u * t * ctrl.y + t * t * p2.y));
+/** Junction curve from the stop line of `car.edge` to the start of `car.next` (a quadratic Bezier). */
+function buildTurn(w: World, car: AiCar): void {
+  const edges = w.city.roads.edges;
+  const e = edges[car.edge], n = edges[car.next];
+  const a = laneSample(e, stopLine(e), LP), b = laneSample(n, laneStart(n), LP2);
+  const d1x = Math.sin(a.heading), d1z = Math.cos(a.heading), d2x = Math.sin(b.heading), d2z = Math.cos(b.heading);
+  const rx = b.x - a.x, rz = b.z - a.z, gap = Math.hypot(rx, rz);
+  const cross = d1x * d2z - d1z * d2x, dot = d1x * d2x + d1z * d2z;
+  // control point: where the two lane lines meet (the corner); a U-turn bulges forward; straight on: the middle
+  let cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
+  if (dot < -0.5) {
+    cx += d1x * gap * 0.9;
+    cz += d1z * gap * 0.9;
+  } else if (Math.abs(cross) > 0.05) {
+    const t = (rx * d2z - rz * d2x) / cross;
+    if (t > 0 && t < gap * 2) { cx = a.x + d1x * t; cz = a.z + d1z * t; }
   }
-  setPath(car, pts);
+  const P = car.turnPts, C = car.turnCum;
+  for (let k = 0; k <= TURN_SEGS; k++) {
+    const t = k / TURN_SEGS, u = 1 - t;
+    P[k * 2] = u * u * a.x + 2 * u * t * cx + t * t * b.x;
+    P[k * 2 + 1] = u * u * a.z + 2 * u * t * cz + t * t * b.z;
+    C[k] = k === 0 ? 0 : C[k - 1] + Math.hypot(P[k * 2] - P[k * 2 - 2], P[k * 2 + 1] - P[k * 2 - 1]);
+  }
+  car.turnLen = Math.max(0.01, C[TURN_SEGS]);
 }
 
-function pickNext(w: World, car: AiCar, rng: () => number): number {
-  const node = w.city.nodes[car.to];
-  const opts = node.nbrs.filter((id) => id !== car.from);
-  return opts.length ? opts[Math.floor(rng() * opts.length)] : car.from;
-}
-
-function pointAt(car: AiCar, s: number, out: THREE.Vector2): THREE.Vector2 {
-  const c = car.cum;
-  if (s <= 0) return out.copy(car.path[0]);
-  for (let k = 1; k < c.length; k++) {
-    if (s <= c[k]) {
-      const t = (s - c[k - 1]) / Math.max(1e-6, c[k] - c[k - 1]);
-      return out.copy(car.path[k - 1]).lerp(car.path[k], t);
+/** Point at distance s along the junction curve (x and z of `out`). */
+function turnPoint(car: AiCar, s: number, out: LanePoint): void {
+  const P = car.turnPts, C = car.turnCum;
+  if (s <= 0) { out.x = P[0]; out.z = P[1]; return; }
+  for (let k = 1; k <= TURN_SEGS; k++) {
+    if (s <= C[k]) {
+      const t = (s - C[k - 1]) / Math.max(1e-6, C[k] - C[k - 1]);
+      out.x = P[k * 2 - 2] + (P[k * 2] - P[k * 2 - 2]) * t;
+      out.z = P[k * 2 - 1] + (P[k * 2 + 1] - P[k * 2 - 1]) * t;
+      return;
     }
   }
-  return out.copy(car.path[car.path.length - 1]);
+  out.x = P[TURN_SEGS * 2];
+  out.z = P[TURN_SEGS * 2 + 1];
+}
+
+/** Going straight back along the road just driven (its twin, or another lane of the same road). */
+export function isUTurn(e: LaneEdge, n: LaneEdge): boolean {
+  return n.id === e.twin || (n.to === e.from && n.roadId === e.roadId);
+}
+
+/** Random next lane at the end of the car's edge: never back the way it came unless it's a dead end. */
+export function pickNext(w: World, car: AiCar, rng: () => number): number {
+  const { nodes, edges } = w.city.roads;
+  const e = edges[car.edge];
+  const out = nodes[e.to].out;
+  let n = 0;
+  for (let i = 0; i < out.length; i++) if (!isUTurn(e, edges[out[i]])) n++;
+  if (n === 0) return e.twin >= 0 ? e.twin : out.length ? out[Math.floor(rng() * out.length)] : -1;
+  let k = Math.floor(rng() * n);
+  for (let i = 0; i < out.length; i++) {
+    if (isUTurn(e, edges[out[i]])) continue;
+    if (k-- === 0) return out[i];
+  }
+  return -1;
 }
 
 // ---------- creation ----------
-export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeName, paint: THREE.Color, from: number, to: number, s0: number): AiCar {
+export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeName, paint: THREE.Color, edge: number, s0: number): AiCar {
   const R = w.R;
   const spec = TUNING.vehicles.types[type];
   const [hx, , hz] = spec.halfExtents;
@@ -125,28 +155,28 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
   w.scene.add(mesh);
   const car: AiCar = {
     id: kind === 'police' ? w.police?.cars?.length ?? 0 : w.traffic.length, kind, type, body, collider, mesh, meshYOffset: rideY - halfH, halfW: hx, halfL: hz,
-    from, to, next: -1, phase: 'lane', path: [], cum: [], s: 0, speed: 0, heading: 0, waitT: 0, honkCd: 0, blockedT: 0,
-    swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, pz: 0, lastSetHeading: NaN,
+    edge, next: -1, phase: 'lane', s: 0, turnPts: new Float32Array((TURN_SEGS + 1) * 2), turnCum: new Float32Array(TURN_SEGS + 1), turnLen: 0.01,
+    speed: 0, heading: 0, waitT: 0, honkCd: 0, blockedT: 0, swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, pz: 0, lastSetHeading: NaN,
   };
-  placeOnEdge(w, car, from, to, s0);
+  placeOnEdge(w, car, edge, s0);
   return car;
 }
 
-export function placeOnEdge(w: World, car: AiCar, from: number, to: number, s0: number): void {
-  car.from = from;
-  car.to = to;
+/** Put the car on a lane, `s0` metres past the lane's start (the previous junction), at rest. */
+export function placeOnEdge(w: World, car: AiCar, edge: number, s0: number): void {
+  const e = w.city.roads.edges[edge];
+  car.edge = edge;
+  car.next = -1;
   car.phase = 'lane';
-  lanePath(w, car);
-  car.s = Math.min(s0, car.cum[car.cum.length - 1] - 1);
-  const p = pointAt(car, car.s, tmpA);
-  const d = car.path[1].clone().sub(car.path[0]).normalize();
-  car.heading = Math.atan2(d.x, d.y);
-  car.body.setTranslation({ x: p.x, y: 0.62, z: p.y }, true);
+  car.s = Math.max(laneStart(e), Math.min(laneStart(e) + s0, stopLine(e) - 1));
+  const p = laneSample(e, car.s, LP);
+  car.heading = p.heading;
+  car.body.setTranslation({ x: p.x, y: p.y + 0.62, z: p.z }, true);
   car.body.setRotation(yawQuat(car.heading), true);
   car.lastSetHeading = car.heading;
   car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
   car.px = p.x;
-  car.pz = p.y;
+  car.pz = p.z;
   car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   car.speed = 0;
   car.stunT = 0;
@@ -155,25 +185,34 @@ export function placeOnEdge(w: World, car: AiCar, from: number, to: number, s0: 
   syncAi(car);
 }
 
-/** Random edge placement away from the player (used for spawning and recycling). */
+/** Random lane placement away from the player (used for spawning and recycling). */
 export function placeRandom(w: World, car: AiCar, minDist: number, rng: () => number): void {
-  const nodes = w.city.nodes;
+  const { nodes, edges } = w.city.roads;
   const pp = w.player.mesh.position;
   for (let tries = 0; tries < 60; tries++) {
     const a = nodes[Math.floor(rng() * nodes.length)];
-    const b = nodes[a.nbrs[Math.floor(rng() * a.nbrs.length)]];
-    const len = Math.hypot(b.x - a.x, b.z - a.z) - 25;
-    const s0 = 5 + rng() * Math.max(1, len - 10);
-    const mx = a.x + ((b.x - a.x) * (s0 + 12)) / (len + 25), mz = a.z + ((b.z - a.z) * (s0 + 12)) / (len + 25);
+    if (!a.out.length) continue;
+    const e = edges[a.out[Math.floor(rng() * a.out.length)]];
+    const laneLen = stopLine(e) - laneStart(e);
+    if (laneLen < 20) continue; // too short to start on
+    const s0 = 5 + rng() * Math.max(1, laneLen - 15);
+    const p = laneSample(e, laneStart(e) + s0, LP);
+    const mx = p.x, mz = p.z;
     if (Math.hypot(mx - pp.x, mz - pp.z) < minDist) continue;
     // not on top of another AI car
     let clash = false;
     for (const o of w.traffic) if (o !== car && Math.hypot(o.px - mx, o.pz - mz) < 12) clash = true;
     for (const o of w.police?.cars ?? []) if (o !== car && Math.hypot(o.px - mx, o.pz - mz) < 12) clash = true;
     if (clash) continue;
-    placeOnEdge(w, car, a.id, b.id, s0);
+    placeOnEdge(w, car, e.id, s0);
     return;
   }
+}
+
+/** A lane long enough to park a car on before placeRandom moves it (spawning). */
+export function anyLane(w: World): number {
+  const i = w.city.roads.edges.findIndex((e) => stopLine(e) - laneStart(e) > 2);
+  return Math.max(0, i);
 }
 
 export function spawnTraffic(w: World): void {
@@ -181,8 +220,9 @@ export function spawnTraffic(w: World): void {
   const r = () => rng.next();
   const paints = ['#e63946', '#f1faee', '#a8dadc', '#457b9d', '#1d3557', '#2a9d8f', '#e9c46a', '#f4a261', '#8d99ae', '#ffffff', '#3d405b', '#81b29a'];
   const types: CarTypeName[] = ['hatchback', 'sedan', 'sedan', 'pickup'];
+  const first = anyLane(w);
   for (let k = 0; k < TT.count; k++) {
-    const car = createAiCar(w, 'traffic', rng.pick(types), new THREE.Color(rng.pick(paints)), 0, w.city.nodes[0].nbrs[0], 0);
+    const car = createAiCar(w, 'traffic', rng.pick(types), new THREE.Color(rng.pick(paints)), first, 0);
     car.id = k;
     w.traffic.push(car);
     w.colliderOwner.set(car.collider.handle, { kind: 'traffic', id: k });
@@ -192,8 +232,7 @@ export function spawnTraffic(w: World): void {
 
 // ---------- driving ----------
 const fwd = new THREE.Vector2();
-const tgt = new THREE.Vector2();
-const pos2 = new THREE.Vector2();
+const tgt: LanePoint = { x: 0, y: 0, z: 0, heading: 0 };
 
 // reusable scratch objects so the per-step code allocates nothing
 const ROT = { x: 0, y: 0, z: 0, w: 1 };
@@ -276,41 +315,84 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
   return OB;
 }
 
-/** Steers the body along its path at `want` m/s. Handles lane/junction transitions. */
+/** Choose the lane after the coming junction (the chooser if the car has one, else at random). */
+function chooseNext(w: World, car: AiCar, rng: () => number): void {
+  if (car.next >= 0) return;
+  car.next = car.chooser ? car.chooser(car) : pickNext(w, car, rng);
+}
+
+/** Leave the junction curve (or a seamless node) onto `car.next`, carrying over `extra` metres. */
+function enterNext(w: World, car: AiCar, extra: number): void {
+  const n = w.city.roads.edges[car.next];
+  car.edge = car.next;
+  car.next = -1;
+  car.phase = 'lane';
+  car.s = laneStart(n) + Math.max(0, extra);
+}
+
+/**
+ * How long to stop before entering `n` at the end of `e`: -1 = don't stop (police, flowing round a roundabout,
+ * a plain bend), 0 = yield only (joining a roundabout), else the junction wait.
+ */
+function waitBefore(w: World, e: LaneEdge, n: LaneEdge, isTraffic: boolean): number {
+  if (!isTraffic || e.roundabout) return -1;
+  if (n.roundabout) return 0;
+  return w.city.roads.nodes[e.to].junction ? TT.intersectionWait : -1;
+}
+
+/** Steers the body along its lane at `want` m/s. Handles lane/junction transitions. */
 export function driveAlongPath(w: World, car: AiCar, want: number, dt: number, rng: () => number, isTraffic: boolean): void {
+  const edges = w.city.roads.edges;
   const accel = car.kind === 'police' ? TUNING.police.accel : TT.accel;
   if (want > car.speed) car.speed = Math.min(want, car.speed + accel * dt);
   else car.speed = Math.max(want, car.speed - TT.brake * dt);
   car.s += car.speed * dt;
-  const total = car.cum[car.cum.length - 1];
-  if (car.s >= total) {
-    if (car.phase === 'lane') {
-      car.next = car.chooser ? car.chooser(car) : pickNext(w, car, rng);
-      if (isTraffic) {
-        car.phase = 'wait';
-        car.waitT = TT.intersectionWait;
-        car.s = total;
+  let e = edges[car.edge];
+  if (car.phase === 'lane') {
+    const stop = stopLine(e);
+    if (car.s >= stop) {
+      chooseNext(w, car, rng);
+      if (car.next < 0) car.s = stop; // nowhere to go (broken data): stand at the stop line
+      else if (!needsTurn(e, edges[car.next])) {
+        enterNext(w, car, car.s - stop); // the road just continues
+        e = edges[car.edge];
       } else {
-        car.phase = 'turn';
-        turnPath(w, car);
+        const wait = waitBefore(w, e, edges[car.next], isTraffic);
+        if (wait >= 0) {
+          car.phase = 'wait';
+          car.waitT = wait;
+          car.s = stop;
+        } else {
+          car.phase = 'turn';
+          car.s -= stop;
+          buildTurn(w, car);
+        }
       }
-    } else if (car.phase === 'turn') {
-      car.from = car.to;
-      car.to = car.next;
-      car.phase = 'lane';
-      lanePath(w, car);
     }
+  } else if (car.phase === 'turn' && car.s >= car.turnLen) {
+    enterNext(w, car, car.s - car.turnLen);
+    e = edges[car.edge];
   }
   // follow a point a little ahead on the path
-  pos2.set(car.px, car.pz);
-  pointAt(car, Math.min(car.s + 2.5 + car.speed * 0.25, car.cum[car.cum.length - 1] + 0.01), tgt);
+  const look = car.s + 2.5 + car.speed * 0.25;
+  if (car.phase === 'turn') {
+    if (look <= car.turnLen) turnPoint(car, look, tgt);
+    else laneSample(edges[car.next], laneStart(edges[car.next]) + look - car.turnLen, tgt);
+  } else {
+    const stop = stopLine(e);
+    if (look > stop && car.phase === 'lane') chooseNext(w, car, rng);
+    if (look > stop && car.next >= 0 && car.phase === 'lane' && !needsTurn(e, edges[car.next])) {
+      laneSample(edges[car.next], laneStart(edges[car.next]) + look - stop, tgt);
+    } else laneSample(e, Math.min(look, stop + 0.01), tgt);
+  }
+  let tx = tgt.x, tz = tgt.z;
   // swerve offset to the right of the path
   if (car.swerve !== 0) {
-    const dx = tgt.x - pos2.x, dz = tgt.y - pos2.y, dl = Math.hypot(dx, dz) || 1;
-    tgt.x += (-dz / dl) * car.swerve;
-    tgt.y += (dx / dl) * car.swerve;
+    const dx = tx - car.px, dz = tz - car.pz, dl = Math.hypot(dx, dz) || 1;
+    tx += (-dz / dl) * car.swerve;
+    tz += (dx / dl) * car.swerve;
   }
-  fwd.copy(tgt).sub(pos2);
+  fwd.set(tx - car.px, tz - car.pz);
   const dist = fwd.length();
   if (dist > 0.01) fwd.multiplyScalar(1 / dist);
   // if we drifted far from our path (e.g. after being shoved) rejoin more aggressively
@@ -325,6 +407,13 @@ export function driveAlongPath(w: World, car: AiCar, want: number, dt: number, r
     car.lastSetHeading = car.heading;
     car.body.setRotation(yawQuat(car.heading), true);
   }
+}
+
+/** Start the junction curve after waiting at a stop line. */
+function startTurn(w: World, car: AiCar): void {
+  car.phase = 'turn';
+  car.s = 0;
+  buildTurn(w, car);
 }
 
 /** After a collision the car is "stunned": physics moves it freely for a moment. */
@@ -354,6 +443,7 @@ export function updateTraffic(w: World, dt: number): void {
   const rng = Math.random;
   const pv = w.player.vehicle;
   const pp = w.player.mesh.position;
+  const { nodes, edges } = w.city.roads;
   for (const car of w.traffic) {
     car.honkCd -= dt;
     if (stunCheck(car, dt)) {
@@ -363,23 +453,27 @@ export function updateTraffic(w: World, dt: number): void {
       }
       continue;
     }
-    let want = TT.cruiseSpeed;
+    const e = edges[car.edge];
+    let want = e.speed;
     if (car.phase === 'wait') {
       want = 0;
       car.waitT -= dt;
+      // one car at a time through each junction
+      const node = e.to;
       let nodeBusy = false;
-      for (const o of w.traffic) if (o !== car && o.phase === 'turn' && o.to === car.to) nodeBusy = true;
-      for (const o of w.police.cars ?? []) if (o !== car && o.phase === 'turn' && o.to === car.to) nodeBusy = true;
-      if (car.waitT <= 0 && !nodeBusy) {
-        car.phase = 'turn';
-        turnPath(w, car);
-      }
+      for (const o of w.traffic) if (o !== car && o.phase === 'turn' && edges[o.edge].to === node) nodeBusy = true;
+      for (const o of w.police.cars ?? []) if (o !== car && o.phase === 'turn' && edges[o.edge].to === node) nodeBusy = true;
+      if (car.waitT <= 0 && !nodeBusy) startTurn(w, car);
     } else {
-      // slow for turns and when approaching the stop line
+      // slow for turns and when approaching a stop line
       if (car.phase === 'turn') want = Math.min(want, 6.5);
       else {
-        const remaining = car.cum[car.cum.length - 1] - car.s;
-        want = Math.min(want, Math.sqrt(2 * TT.brake * 0.6 * Math.max(0, remaining)) + 1);
+        // (never on a roundabout ring: cars there flow through every node, see waitBefore)
+        const to = nodes[e.to];
+        if (!e.roundabout && (to.junction || to.deadEnd || to.roundabout)) {
+          const remaining = stopLine(e) - car.s;
+          want = Math.min(want, Math.sqrt(2 * TT.brake * 0.6 * Math.max(0, remaining)) + 1);
+        }
       }
     }
     const ob = obstacleAhead(w, car, TT.followGap + car.speed * 1.2);
@@ -411,7 +505,7 @@ export function updateTraffic(w: World, dt: number): void {
 
     driveAlongPath(w, car, want, dt, rng, true);
 
-    // stuck for ages (e.g. gridlocked behind a parked player car): recycle
+    // stuck for ages (e.g. gridlocked behind a parked player car) or nowhere to go: recycle
     if (car.speed < 0.3 && car.phase !== 'wait') car.stuckT += dt;
     else car.stuckT = 0;
     if (car.stuckT > 25) placeRandom(w, car, 90, rng);

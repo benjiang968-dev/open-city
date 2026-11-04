@@ -5,7 +5,8 @@ import { TUNING } from './tuning';
 import { Rng, seedFromUrl } from './rng';
 import type { World } from './world';
 import { createInput, endInputFrame, act } from './systems/input';
-import { generateCity, updateCity } from './systems/cityGen';
+import { loadMap } from './systems/map/loadMap';
+import { validateCityMap, laneSample, projectOnLane, roadRouter, walkRouter } from './systems/map/cityMap';
 import { createDayNight, updateDayNight } from './systems/dayNight';
 import { createCamera, updateCamera } from './systems/camera';
 import { createPlayer, updatePlayer } from './systems/player';
@@ -73,10 +74,11 @@ async function boot() {
   } as unknown as World;
   w.dayNight = createDayNight(scene);
   applyQuality(w, w.settings.quality, true);
-  w.city = generateCity(scene, RAPIER, physics, seed);
+  w.city = loadMap(scene, RAPIER, physics, seed); // ?map= picks the map; the seed never does
   w.weather = createWeather(w);
-  const rank = w.city.taxiRanks[0];
-  w.player = createPlayer(w, rank.x, rank.z);
+  const spawn = w.city.spawn;
+  w.player = createPlayer(w, spawn.x, spawn.z);
+  w.player.facing = spawn.heading;
   // dealership showrooms plan their kerb slots first so random parked cars keep clear of them; the display
   // cars are parked after the starting cars (vehicle ids 0..2 stay the cars at the taxi rank)
   const dealerships = new DealershipJob(w, pickDealershipPois(w.city));
@@ -125,6 +127,7 @@ async function boot() {
   (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
+  (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {
@@ -217,7 +220,7 @@ async function boot() {
     P.begin('fx'); updateHurtFx(w, dt); P.end('fx');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
     P.begin('weather'); updateWeather(w, dt); P.end('weather');
-    if (render) { P.begin('city'); updateCity(w.city, w.time); P.end('city'); }
+    if (render) { P.begin('city'); w.city.update(w.time); P.end('city'); }
     P.begin('camera'); updateCamera(w, dt); P.end('camera');
     P.begin('hud'); updateHud(w, dt); P.end('hud');
     if (render) {

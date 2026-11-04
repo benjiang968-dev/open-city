@@ -18,10 +18,13 @@ import { say } from './bubbles';
 import { LINES, pick } from '../npc/reactionLines';
 import { GROUPS } from '../physicsGroups';
 import { Rng } from '../rng';
+import { walkRouter } from './map/cityMap';
 
 const PT = TUNING.peds;
 const AR = PT.archetypes;
 const DG = TUNING.dogs;
+/** People and dogs stand this far above the ground (no z-fighting with the pavement). */
+const FOOT = 0.02;
 
 export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk' | 'flinch' | 'confront' | 'yell' | 'stumble' | 'follow' | 'phone' | 'look' | 'chase';
 export type Archetype = 'adult' | 'jogger' | 'delivery' | 'tourist' | 'elderly' | 'parent' | 'kid' | 'dogwalker';
@@ -114,7 +117,7 @@ function pickArchetype(rng: Rng): Exclude<Archetype, 'kid' | 'parent'> | 'family
   return 'adult';
 }
 
-function makePed(w: World, id: number, rng: Rng, archetype: Archetype, startX: number, startZ: number): Ped {
+function makePed(w: World, id: number, rng: Rng, archetype: Archetype, startX: number, startZ: number, startY = NaN): Ped {
   const npc = generateNpc(id, rng, w.city);
   npc.archetype = archetype;
   const C = (a: readonly string[]) => new THREE.Color(rng.pick(a as string[]));
@@ -132,11 +135,12 @@ function makePed(w: World, id: number, rng: Rng, archetype: Archetype, startX: n
     default: break;
   }
   const R = w.R;
-  const body = w.physics.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(startX, 0.95 * scale, startZ));
+  const ground = w.city.heightAt(startX, startZ, startY);
+  const body = w.physics.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(startX, ground + 0.95 * scale, startZ));
   const collider = w.physics.createCollider(R.ColliderDesc.capsule(0.55 * scale, 0.3 * scale).setCollisionGroups(GROUPS.ped), body);
   w.colliderOwner.set(collider.handle, { kind: 'ped', id });
   return {
-    id, npc, archetype, active: true, hidden: false, pos: new THREE.Vector3(startX, 0.02, startZ), heading: rng.range(0, 6.28),
+    id, npc, archetype, active: true, hidden: false, pos: new THREE.Vector3(startX, ground + FOOT, startZ), heading: rng.range(0, 6.28),
     state: 'idle', route: [], routeIdx: 0, targetPoi: -1, timer: rng.range(0, 3), vel: new THREE.Vector3(), fleeDir: new THREE.Vector2(),
     walkPhase: rng.range(0, 6), moveAmount: 0, speedingCd: 0, offset: rng.range(-0.9, 0.9), reserved: false,
     health: 100, hitCount: 0, lastHitByPlayer: -100, lastShoved: -100, shoveCount: 0, shoutT: 0,
@@ -147,7 +151,7 @@ function makePed(w: World, id: number, rng: Rng, archetype: Archetype, startX: n
 
 export function spawnPeds(w: World): void {
   const rng = new Rng(w.seed ^ 0x9ed);
-  const nodes = w.city.sideNodes;
+  const nodes = w.city.walk.nodes;
   // every archetype appears near the start of the list, so even the Low budget has one of each
   const guaranteed: ReturnType<typeof pickArchetype>[] = ['dogwalker', 'family', 'tourist', 'jogger', 'delivery', 'elderly', 'dogwalker', 'tourist'];
   while (w.peds.length < PT.maxPopulation) {
@@ -155,18 +159,18 @@ export function spawnPeds(w: World): void {
     const start = rng.pick(nodes);
     if (a === 'family') {
       if (w.peds.length + 2 > PT.maxPopulation) continue;
-      const parent = makePed(w, w.peds.length, rng, 'parent', start.x, start.z);
+      const parent = makePed(w, w.peds.length, rng, 'parent', start.x, start.z, start.y);
       w.peds.push(parent);
-      const kid = makePed(w, w.peds.length, rng, 'kid', start.x + 0.8, start.z);
+      const kid = makePed(w, w.peds.length, rng, 'kid', start.x + 0.8, start.z, start.y);
       kid.followId = parent.id;
       kid.state = 'follow';
       kid.npc.homePoi = parent.npc.homePoi;
       w.peds.push(kid);
     } else {
-      const p = makePed(w, w.peds.length, rng, a, start.x, start.z);
+      const p = makePed(w, w.peds.length, rng, a, start.x, start.z, start.y);
       if (a === 'dogwalker') {
         p.dog = {
-          pos: new THREE.Vector3(start.x + 1.5, 0.02, start.z), heading: 0, phase: 0, scale: rng.range(0.8, 1.2),
+          pos: new THREE.Vector3(start.x + 1.5, w.city.heightAt(start.x + 1.5, start.z, start.y) + FOOT, start.z), heading: 0, phase: 0, scale: rng.range(0.8, 1.2),
           color: new THREE.Color(rng.pick(['#8d5524', '#e0c9a6', '#2b2b2b', '#c68642', '#f5f5f5'])), barkCd: 0, orbit: rng.range(0, 6),
           vel: new THREE.Vector3(), tumbleT: 0, hurtT: 0, lastHit: -100, roll: 0, rollSide: 1, timesHurt: 0,
         };
@@ -191,28 +195,25 @@ export function applyPedBudget(w: World): void {
   }
 }
 
-/** BFS over the pavement graph from the node nearest `from` to the target POI. */
+/** Shortest walk over the walk graph from the node nearest the person to the target POI's node. */
 export function planRoute(w: World, ped: Ped, poiId: number): void {
   const city = w.city;
   const poi = city.pois[poiId];
-  let start = 0, bd = Infinity;
-  for (const s of city.sideNodes) {
-    const d = (s.x - ped.pos.x) ** 2 + (s.z - ped.pos.z) ** 2;
-    if (d < bd) { bd = d; start = s.id; }
+  const nodes = city.walk.nodes;
+  const start = city.nearestWalk(ped.pos.x, ped.pos.z, ped.pos.y);
+  const router = walkRouter(city);
+  const n = router.path(start, poi.walkNode);
+  // reuse this person's waypoint vectors (routes are planned often)
+  const route = ped.route;
+  const count = Math.max(0, n) + 1;
+  while (route.length < count) route.push(new THREE.Vector2());
+  route.length = count;
+  for (let i = 0; i < count; i++) if (!(route[i] instanceof THREE.Vector2)) route[i] = new THREE.Vector2();
+  for (let i = 0; i < n; i++) {
+    const s = nodes[router.nodes[i]];
+    route[i].set(s.x + ped.offset * 0.5, s.z + ped.offset * 0.5);
   }
-  const goal = poi.sideNode;
-  const prev = new Int32Array(city.sideNodes.length).fill(-2);
-  prev[start] = -1;
-  const queue = [start];
-  for (let qi = 0; qi < queue.length; qi++) {
-    const n = queue[qi];
-    if (n === goal) break;
-    for (const m of city.sideNodes[n].nbrs) if (prev[m] === -2) { prev[m] = n; queue.push(m); }
-  }
-  const ids: number[] = [];
-  for (let n = goal; n !== -1 && n !== -2; n = prev[n]) ids.unshift(n);
-  ped.route = ids.map((id) => new THREE.Vector2(city.sideNodes[id].x + ped.offset * 0.5, city.sideNodes[id].z + ped.offset * 0.5));
-  ped.route.push(new THREE.Vector2(poi.x + ped.offset, poi.z + ped.offset * 0.3));
+  route[count - 1].set(poi.x + ped.offset, poi.z + ped.offset * 0.3);
   ped.routeIdx = 0;
   ped.targetPoi = poiId;
   ped.state = 'walk';
@@ -283,6 +284,7 @@ export function updatePeds(w: World, dt: number): void {
     let moveSpeed = 0;
 
     if (ped.hidden || ped.pos.y < -10) continue; // riding in the player's taxi
+    const prevX = ped.pos.x, prevZ = ped.pos.z; // to step back out of walls and water
 
     // ---- reactions to the player's car ----
     if (pv && carPos && carVel && ped.state !== 'down') {
@@ -324,13 +326,15 @@ export function updatePeds(w: World, dt: number): void {
     switch (ped.state) {
       case 'down': {
         ped.timer -= dt;
-        if (ped.pos.y > 0.02 || ped.vel.y > 0) {
+        if (ped.pos.y > w.city.heightAt(ped.pos.x, ped.pos.z, ped.pos.y) + FOOT || ped.vel.y > 0) {
           ped.vel.y -= 22 * dt;
           ped.pos.addScaledVector(ped.vel, dt);
           ped.tilt = Math.max(-Math.PI / 2, ped.tilt - dt * 7);
-          if (ped.pos.y <= 0.02) { ped.pos.y = 0.02; ped.vel.set(ped.vel.x * 0.3, 0, ped.vel.z * 0.3); }
+          const ground = w.city.heightAt(ped.pos.x, ped.pos.z, ped.pos.y) + FOOT;
+          if (ped.pos.y <= ground) { ped.pos.y = ground; ped.vel.set(ped.vel.x * 0.3, 0, ped.vel.z * 0.3); }
         } else {
           ped.pos.addScaledVector(ped.vel, dt);
+          ped.pos.y = w.city.heightAt(ped.pos.x, ped.pos.z, ped.pos.y) + FOOT;
           ped.vel.multiplyScalar(Math.max(0, 1 - dt * 4));
           ped.tilt = -Math.PI / 2;
         }
@@ -465,7 +469,7 @@ export function updatePeds(w: World, dt: number): void {
         const side = 0.9;
         const tx = parent.pos.x + Math.cos(parent.heading) * side, tz = parent.pos.z - Math.sin(parent.heading) * side;
         const dx = tx - ped.pos.x, dz = tz - ped.pos.z, d = Math.hypot(dx, dz);
-        if (d > 8) { ped.pos.set(tx, 0.02, tz); break; }
+        if (d > 8) { ped.pos.set(tx, w.city.heightAt(tx, tz, parent.pos.y) + FOOT, tz); break; }
         if (d > 0.25) {
           const sp = Math.min(PT.walkSpeed * 1.8, d * 2.2);
           ped.pos.x += (dx / d) * sp * dt;
@@ -503,8 +507,10 @@ export function updatePeds(w: World, dt: number): void {
     if (ped.prop === 'cane' && ped.armPose === 'none' && ped.state !== 'down') ped.armPose = 'cane';
     if (ped.reserved && ped.state === 'idle') ped.armPose = 'wave';
 
-    // keep out of buildings and the bay (simple clamp against building rects)
-    if (ped.state === 'flee' || ped.state === 'dodge' || ped.state === 'down' || ped.state === 'confront' || ped.state === 'stumble' || ped.state === 'chase') pushOutOfBuildings(w, ped);
+    // off-route movement keeps out of buildings, water and the map edge (slides along walls)
+    if (ped.state === 'flee' || ped.state === 'dodge' || ped.state === 'down' || ped.state === 'confront' || ped.state === 'stumble' || ped.state === 'chase') keepOutOfBlocked(w, ped, prevX, prevZ);
+    // stand on the ground (hills); a knocked-down person handles their own fall
+    if (ped.state !== 'down') ped.pos.y = w.city.heightAt(ped.pos.x, ped.pos.z, ped.pos.y) + FOOT;
 
     ped.walkPhase += moveSpeed * dt * 3.2 / Math.max(0.6, ped.scale);
     ped.moveAmount = ped.state === 'down' ? 0 : Math.min(1.4, moveSpeed / PT.walkSpeed);
@@ -560,13 +566,14 @@ export function tumbleDog(d: DogState, strength: number, dirX: number, dirZ: num
 function updateDog(w: World, ped: Ped, dt: number, walkerSpeed: number) {
   const d = ped.dog!;
   d.barkCd -= dt;
-  if (d.tumbleT > 0 || d.pos.y > 0.02) {
+  if (d.tumbleT > 0 || d.pos.y > w.city.heightAt(d.pos.x, d.pos.z, d.pos.y) + FOOT) {
     // rolling over after a hit
     d.tumbleT -= dt;
     d.vel.y -= DG.gravity * dt;
     d.pos.addScaledVector(d.vel, dt);
-    if (d.pos.y <= 0.02) {
-      d.pos.y = 0.02;
+    const ground = w.city.heightAt(d.pos.x, d.pos.z, d.pos.y) + FOOT;
+    if (d.pos.y <= ground) {
+      d.pos.y = ground;
       d.vel.y = 0;
       const f = Math.max(0, 1 - dt * DG.groundFriction);
       d.vel.x *= f;
@@ -585,6 +592,7 @@ function updateDog(w: World, ped: Ped, dt: number, walkerSpeed: number) {
       const sp = Math.min(DG.runToOwnerSpeed, dist * 4);
       d.pos.x += (dx / dist) * sp * dt;
       d.pos.z += (dz / dist) * sp * dt;
+      d.pos.y = w.city.heightAt(d.pos.x, d.pos.z, d.pos.y) + FOOT;
       d.heading = Math.atan2(dx, dz);
       d.phase += sp * dt * 6;
     } else d.heading = ped.heading;
@@ -599,11 +607,12 @@ function updateDog(w: World, ped: Ped, dt: number, walkerSpeed: number) {
   // trot around the walker on an imaginary leash
   const tx = ped.pos.x + Math.cos(ped.heading) * 1.1 + Math.sin(d.orbit) * 0.6, tz = ped.pos.z - Math.sin(ped.heading) * 1.1 + Math.sin(ped.heading) * 0.8 + Math.cos(d.orbit) * 0.6;
   const dx = tx - d.pos.x, dz = tz - d.pos.z, dist = Math.hypot(dx, dz);
-  if (dist > 6) d.pos.set(tx, 0.02, tz);
+  if (dist > 6) d.pos.set(tx, w.city.heightAt(tx, tz, ped.pos.y) + FOOT, tz);
   else if (dist > 0.1) {
     const sp = Math.min(Math.max(walkerSpeed * 1.3, 1.2), dist * 3);
     d.pos.x += (dx / dist) * sp * dt;
     d.pos.z += (dz / dist) * sp * dt;
+    d.pos.y = w.city.heightAt(d.pos.x, d.pos.z, d.pos.y) + FOOT;
     d.heading = Math.atan2(dx, dz);
     d.phase += sp * dt * 6;
   }
@@ -640,17 +649,18 @@ function inView(w: World, x: number, z: number): boolean {
 
 function relocateNearPlayer(w: World, p: Ped) {
   const pp = w.player.mesh.position;
-  const nodes = w.city.sideNodes;
+  const nodes = w.city.walk.nodes;
+  const c = w.city;
   for (let tries = 0; tries < 30; tries++) {
     const n = nodes[Math.floor(Math.random() * nodes.length)];
     const d = Math.hypot(n.x - pp.x, n.z - pp.z);
     if (d < PT.respawnMin || d > PT.respawnMax || (w.started && inView(w, n.x, n.z))) continue;
-    p.pos.set(n.x, 0.02, n.z);
+    p.pos.set(n.x, c.heightAt(n.x, n.z, n.y) + FOOT, n.z);
     p.state = 'idle';
     p.timer = Math.random() * 2;
     p.tilt = 0;
-    for (const kid of w.peds) if (kid.followId === p.id) { kid.pos.set(n.x + 0.8, 0.02, n.z); kid.state = 'follow'; }
-    if (p.dog) { p.dog.pos.set(n.x + 1.2, 0.02, n.z); p.dog.tumbleT = 0; p.dog.vel.set(0, 0, 0); }
+    for (const kid of w.peds) if (kid.followId === p.id) { kid.pos.set(n.x + 0.8, c.heightAt(n.x + 0.8, n.z, n.y) + FOOT, n.z); kid.state = 'follow'; }
+    if (p.dog) { p.dog.pos.set(n.x + 1.2, c.heightAt(n.x + 1.2, n.z, n.y) + FOOT, n.z); p.dog.tumbleT = 0; p.dog.vel.set(0, 0, 0); }
     return;
   }
 }
@@ -664,34 +674,31 @@ function crossingBlocked(w: World, ped: Ped, dx: number, dz: number): boolean {
     const fx = Math.sin(car.heading), fz = Math.cos(car.heading);
     const along = rx * fx + rz * fz;
     if (along > 0 && along < 14 && Math.abs(rx * fz - rz * fx) < 2.5) {
-      // are we stepping into the road? (inside a road strip)
-      return isOnRoad(w, px, pz);
+      // are we stepping into the road?
+      return w.city.isRoad(px, pz);
     }
   }
   return false;
 }
 
-function isOnRoad(w: World, x: number, z: number): boolean {
-  const c = w.city;
-  for (let i = 0; i < c.xs.length; i++) if (Math.abs(x - c.xs[i]) < c.roadHalfX[i]) return true;
-  for (let j = 0; j < c.zs.length; j++) if (Math.abs(z - c.zs[j]) < c.roadHalfZ[j]) return true;
-  return false;
+/** A person's body would overlap a building, water or the map edge here (PT.wallClearance around them). */
+function pedBlocked(w: World, x: number, z: number): boolean {
+  const c = w.city, m = PT.wallClearance;
+  return c.isBlocked(x, z) || c.isBlocked(x + m, z) || c.isBlocked(x - m, z) || c.isBlocked(x, z + m) || c.isBlocked(x, z - m);
 }
 
-function pushOutOfBuildings(w: World, ped: Ped) {
-  for (const r of w.city.buildingRects) {
-    const m = 0.4;
-    if (ped.pos.x > r.x0 - m && ped.pos.x < r.x1 + m && ped.pos.z > r.z0 - m && ped.pos.z < r.z1 + m) {
-      const dl = ped.pos.x - (r.x0 - m), dr = r.x1 + m - ped.pos.x, dt = ped.pos.z - (r.z0 - m), db = r.z1 + m - ped.pos.z;
-      const mn = Math.min(dl, dr, dt, db);
-      if (mn === dl) ped.pos.x = r.x0 - m;
-      else if (mn === dr) ped.pos.x = r.x1 + m;
-      else if (mn === dt) ped.pos.z = r.z0 - m;
-      else ped.pos.z = r.z1 + m;
-      if (ped.state === 'flee') { ped.fleeDir.set(ped.fleeDir.y, -ped.fleeDir.x); }
-    }
-  }
-  if (ped.pos.z > w.city.coastZ - 1) ped.pos.z = w.city.coastZ - 1;
+/**
+ * Moving off the pavement network (fleeing, dodging, flung): if the new spot is blocked, slide along the wall
+ * (keep whichever axis of the move is free) or step back; a fleeing person turns away from the wall.
+ */
+function keepOutOfBlocked(w: World, ped: Ped, prevX: number, prevZ: number): void {
+  const x = ped.pos.x, z = ped.pos.z;
+  if ((x === prevX && z === prevZ) || !pedBlocked(w, x, z)) return;
+  if (pedBlocked(w, prevX, prevZ)) return; // already stuck in something: nothing better to step back to
+  if (!pedBlocked(w, prevX, z)) ped.pos.x = prevX;
+  else if (!pedBlocked(w, x, prevZ)) ped.pos.z = prevZ;
+  else { ped.pos.x = prevX; ped.pos.z = prevZ; }
+  if (ped.state === 'flee') ped.fleeDir.set(ped.fleeDir.y, -ped.fleeDir.x);
 }
 
 export function startFlee(ped: Ped, fromX: number, fromZ: number, time = TUNING.peds.fleeTime): void {
@@ -708,13 +715,14 @@ function knockDown(w: World, ped: Ped, carVel: THREE.Vector3, speed: number) {
   ped.state = 'down';
   ped.timer = PT.knockdownTime;
   ped.vel.set(carVel.x * 0.7, Math.min(7, 2 + speed * 0.18), carVel.z * 0.7);
-  ped.pos.y = 0.1;
+  const ground = w.city.heightAt(ped.pos.x, ped.pos.z, ped.pos.y);
+  ped.pos.y = ground + 0.1;
   ped.reserved = false;
   ped.phoneMode = null;
   ped.report = null;
   emit(w, { type: 'pedHit', pedId: ped.id, x: ped.pos.x, z: ped.pos.z, speed });
   w.audio.thud?.(ped.pos.x, ped.pos.z, speed);
-  hurtBurst(w, ped.pos.x, 1.05 * ped.scale, ped.pos.z, speed, carVel.x, carVel.z, 0, true, ped.vel.x, ped.vel.z);
+  hurtBurst(w, ped.pos.x, ground + 1.05 * ped.scale, ped.pos.z, speed, carVel.x, carVel.z, ground, true, ped.vel.x, ped.vel.z);
 }
 
 /** Nearest ped to a point within range that can be talked to. */

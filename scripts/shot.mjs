@@ -1,5 +1,6 @@
 // Headless check: serves dist/, opens the game in Chromium, runs a scenario, saves a screenshot,
 // and fails if the console reports errors.  Usage: node scripts/shot.mjs <name> [scenario] [seed]
+// Env: MAP=<id> loads ?map=<id> (default: the game's default map); THROTTLE=<n> slows the CPU n times.
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)('playwright');
 import { createServer } from 'node:http';
@@ -33,8 +34,11 @@ if (process.env.THROTTLE) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
 }
-await page.goto(`http://localhost:${port}/${seed ? `?seed=${seed}` : ''}`);
+const params = [seed ? `seed=${seed}` : '', process.env.MAP ? `map=${encodeURIComponent(process.env.MAP)}` : ''].filter(Boolean).join('&');
+await page.goto(`http://localhost:${port}/${params ? `?${params}` : ''}`);
 await page.waitForFunction(() => window.__oc && window.__oc.time > 1, null, { timeout: 60000 });
+const mod = await import(`./scenarios.mjs`);
+await page.evaluate(mod.installMapHelpers);
 
 const S = {
   async title() { await page.waitForTimeout(1500); },
@@ -43,7 +47,6 @@ const S = {
     await page.waitForTimeout(1500);
   },
 };
-const mod = await import(`./scenarios.mjs`);
 const run = mod[scenario] ?? S[scenario];
 if (!run) throw new Error(`unknown scenario ${scenario}`);
 const result = await run(page, S);

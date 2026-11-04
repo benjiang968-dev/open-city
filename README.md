@@ -10,7 +10,8 @@ npm install
 npm run dev        # opens http://localhost:5173
 ```
 
-`?seed=123` in the URL picks a different city.
+`?seed=123` in the URL picks a different city (people, cars; on the grid map also buildings, shops and street names). `?map=grid` picks the map;
+the seed never changes which map loads. Every system reads the map through one interface, `src/systems/map/cityMap.ts`.
 
 ## Controls
 
@@ -44,6 +45,7 @@ node scripts/shot.mjs 06-taxi taxi       # runs a scenario, saves screenshots/06
 ```
 
 Scenarios live in `scripts/scenarios.mjs` (handling, life, taxi, chat, police, bust, night, perf …).
+`MAP=<id> node scripts/shot.mjs x mapcheck` checks a map's integrity (graph, 30 lane choices by a traffic car, 20 walks).
 
 ## Map data
 

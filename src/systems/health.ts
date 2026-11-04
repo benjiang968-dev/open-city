@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
-import type { Poi } from './cityGen';
+import type { Poi } from './map/cityMap';
 import { exitVehicle } from './player';
 import { toast } from './hud';
 import { closeChat } from './chat';
@@ -53,11 +53,11 @@ export function hurtPlayer(w: World, amount: number, dirX = 0, dirZ = 0): void {
     const [hx, hy] = v.spec.halfExtents;
     burstAt.set(hx + 0.05, hy + 0.35, 0.2).applyMatrix4(v.mesh.matrixWorld);
     burstDir.set(1, 0, 0).transformDirection(v.mesh.matrixWorld);
-    hurtBurst(w, burstAt.x, burstAt.y, burstAt.z, strength, burstDir.x + dirX, burstDir.z + dirZ, 0, false);
+    hurtBurst(w, burstAt.x, burstAt.y, burstAt.z, strength, burstDir.x + dirX, burstDir.z + dirZ, w.city.heightAt(burstAt.x, burstAt.z, burstAt.y), false);
   } else {
     const m = p.mesh.position;
     const flung = p.knockT > 0; // thrown by a car: the dots go with you
-    hurtBurst(w, m.x, m.y + 1.2, m.z, strength, dirX, dirZ, Math.max(0, m.y), true, flung ? p.knockX : 0, flung ? p.knockZ : 0);
+    hurtBurst(w, m.x, m.y + 1.2, m.z, strength, dirX, dirZ, Math.max(w.city.heightAt(m.x, m.z, m.y), m.y), true, flung ? p.knockX : 0, flung ? p.knockZ : 0);
   }
   if (p.health <= 0) die(w);
 }
@@ -80,7 +80,7 @@ function wakeUp(w: World) {
   p.dead = false;
   p.knockT = 0;
   p.mesh.rotation.x = 0;
-  p.body.setTranslation({ x: clinic.x, y: 1.2, z: clinic.z }, true);
+  p.body.setTranslation({ x: clinic.x, y: w.city.heightAt(clinic.x, clinic.z) + 1.2, z: clinic.z }, true);
   p.facing = Math.atan2(clinic.curbX - clinic.x, clinic.curbZ - clinic.z);
   // the world moved on while you were out
   w.dayNight.hour = (w.dayNight.hour + (H.deathTimeSkip * 24) / TUNING.time.realSecondsPerGameDay) % 24;
