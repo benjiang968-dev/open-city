@@ -22,8 +22,9 @@ const V = TUNING.vehicles;
 const G = TUNING.geo;
 
 // ------------------------------------------------------------------------------------------- layout (map data)
-/** Player start: on the M St pavement this far east of the Key Bridge junction, facing east. */
-const SPAWN = { street: 'M St NW', cross: 'Francis Scott Key Bridge', along: 30, heading: Math.PI / 2 };
+/** Player start: on the M St pavement a block east of the Key Bridge landing (past 35th St, where your car is parked on
+ * M St itself rather than up a steep side street), facing east. */
+const SPAWN = { street: 'M St NW', cross: '35th St NW', along: 45, heading: Math.PI / 2 };
 /**
  * Taxi ranks: on `street`, `along` metres from its junction with `cross` (the direction is whichever way along
  * `street` that is possible), at the kerb of the lane leaving the junction (lane: 1) or arriving at it (-1).
@@ -605,7 +606,7 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
       const n = Math.max(1, Math.round((sB - sA) / step));
       let prev = -1, first = -1, last = -1;
       for (let k = 0; k <= n; k++) {
-        const s = n === 0 ? sA : sA + ((sB - sA) * k) / n;
+        const s = sA + ((sB - sA) * k) / n;
         sampleAt(line, S, s, tmp);
         const x = tmp[0], z = tmp[2];
         const cy = sampleAt(centre, S, s, tmp)[1];
@@ -615,7 +616,6 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
         if (first < 0 && k === 0) first = id;
         prev = id;
         if (k === n) last = id;
-        if (n === 0) last = id;
       }
       ends[endIdx(pi, side, 0)] = first;
       ends[endIdx(pi, side, 1)] = last;

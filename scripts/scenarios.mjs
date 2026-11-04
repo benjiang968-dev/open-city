@@ -1775,7 +1775,33 @@ export async function geoplay(page, S) {
     return { ...window.__ocMinimap, streetLabels: w.city.streets.length };
   });
   await frozenShot(page, 'screenshots/27-geo-play-minimap.png', null);
-  // ---- 7) pause menu: attribution and the quality switch ----
+  // ---- 7) a police chase on M St: 2 stars while you sit in your car, then lose them on the far side of town ----
+  out.chase = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, c = w.city;
+    const P = w.police;
+    const spot = window.__mh.place('M St at Wisconsin Ave');
+    window.__drive(spot, 60, 0);
+    run(0.5);
+    const v = w.player.vehicle;
+    P.heat = 2 * 40 - 1; // two stars (police.heatPerStar = 40)
+    P.trackUntil = w.time + 4; P.lastSeenX = v.px; P.lastSeenZ = v.pz; P.lastSeenY = v.py;
+    const samples = [];
+    let firstSeen = null;
+    for (let k = 0; k < 30; k++) {
+      run(1);
+      const near = P.cars.length ? Math.min(...P.cars.map((pc) => Math.hypot(pc.px - v.px, pc.pz - v.pz))) : null;
+      if (P.seen && firstSeen === null) firstSeen = Math.round(w.time);
+      if (k % 3 === 0) samples.push({ t: Math.round(w.time), stars: P.stars, cars: P.cars.length, seen: P.seen, nearest: near && Math.round(near), onRoad: P.cars.every((pc) => c.nearestLane(pc.px, pc.pz, 8, { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 }, pc.py)) });
+      if (P.seen && near !== null && near < 25) break;
+    }
+    // get away: far side of town behind buildings, a new car of your own
+    const far = window.__mh.place('29th St between N and P');
+    window.__drive(far, 0, 0);
+    const lose = [];
+    for (let k = 0; k < 25 && P.stars > 0; k++) { run(2); lose.push([Math.round(w.time), P.stars, P.cars.length, P.seen ? 'seen' : '-']); }
+    return { firstSeenAt: firstSeen, samples, lose, starsAtEnd: P.stars };
+  });
+  // ---- 8) pause menu: attribution and the quality switch ----
   out.pause = await page.evaluate(() => {
     const w = window.__oc;
     document.getElementById('minimap').style.transform = '';

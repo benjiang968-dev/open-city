@@ -34,7 +34,7 @@ const RAW = {
     parkingLaneWidth: 2.4, // metres along each kerb kept for parked cars before the first traffic lane (grid)
     stopLineGap: 3.2, // metres from a crossing road's edge to the stop line (grid junction boxes)
     kerbStopGap: 1.6, // metres from the kerb to where a car stops at the kerb (taxi pick-ups and drop-offs)
-    kerbSearchRange: 120, // metres: kerbPoint looks for a kerbside lane this far
+    kerbSearchRange: 200, // metres: kerbPoint looks for a kerbside lane this far (Georgetown: the boardwalk is ~150 m from K St)
     laneHashCell: 32, // metres per cell of the nearest-lane spatial hash (lookup speed only)
     walkHashCell: 32, // metres per cell of the walk-node spatial hash (lookup speed only)
     buildingHashCell: 32, // metres per cell of the building spatial hash (lookup speed only)
