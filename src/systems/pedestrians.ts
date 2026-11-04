@@ -20,7 +20,7 @@ import { LINES, pick } from '../npc/reactionLines';
 import { GROUPS } from '../physicsGroups';
 import { Rng } from '../rng';
 import { walkRouter } from './map/cityMap';
-import { updatePedDensity, pickSpawn, inCameraView } from './pedDensity';
+import { updatePedDensity, pickSpawn, pickViewTarget, inCameraView } from './pedDensity';
 
 const PT = TUNING.peds;
 const AR = PT.archetypes;
@@ -251,6 +251,7 @@ function activateOne(w: World): boolean {
     setActive(p, true);
     placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z, SPAWN.dx, SPAWN.dz);
     for (const kid of w.peds) if (kid.followId === p.id) setActive(kid, true);
+    headIntoView(w, p);
     w.pedDensity.added++;
     return true;
   }
@@ -779,9 +780,21 @@ function recycleFarPeds(w: World) {
     if (S.active > S.target + PT.density.slack) { deactivate(w, p); S.active--; continue; }
     if (pickSpawn(w, p.archetype === 'jogger' || p.archetype === 'dogwalker', SPAWN)) {
       placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z, SPAWN.dx, SPAWN.dz);
+      headIntoView(w, p);
       S.relocated++;
     }
   }
+}
+
+/**
+ * Someone who has just appeared out of view usually sets off towards a busy spot you can see (density.intoViewChance),
+ * so the crowd you look at fills up from behind and the sides; everyone appearing out of view and staying there left
+ * the street ahead of you nearly empty while the people near you stood behind the camera.
+ */
+function headIntoView(w: World, p: Ped): void {
+  if (!w.started || Math.random() >= PT.density.intoViewChance) return;
+  const node = pickViewTarget(w, p.archetype === 'jogger' || p.archetype === 'dogwalker');
+  if (node >= 0) planRoute(w, p, -1, node);
 }
 
 /**

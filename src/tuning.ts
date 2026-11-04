@@ -331,6 +331,7 @@ const RAW = {
       slack: 1, // the crowd may be this many people off the target before anyone is added or removed
       spawnMinDist: 28, // metres: new people appear at least this far from you, and out of view
       despawnMinDist: 40, // metres: people leave only this far from you, and out of view
+      intoViewChance: 0.8, // chance someone who appears (out of view) walks towards a busy spot in view, so the street you look at fills up
       outdoorBoost: { towpath: 8, waterfront: 5, path: 3, plaza: 2 }, // dog walkers and joggers: spawn weight on these path kinds
       outdoorRouteCost: 0.5, // dog walkers and joggers: towpath, waterfront and park paths cost this share of their length (routes prefer them)
       outdoorTripChance: 0.6, // chance a dog walker or jogger heads for a towpath / waterfront spot rather than a park or pier

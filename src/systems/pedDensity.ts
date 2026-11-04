@@ -18,6 +18,7 @@ const CELL = 32; // metres per cell of the link grid (lookup speed only)
 
 export interface PedDensityState {
   n: number; // walk links
+  na: Int32Array; nb: Int32Array; // the walk nodes at each end
   ax: Float32Array; az: Float32Array; bx: Float32Array; bz: Float32Array; ly: Float32Array; // ends, mean height
   len: Float32Array;
   base: Float32Array; // people per metre at the peak of the link's zone curve
@@ -35,6 +36,8 @@ export interface PedDensityState {
   minX: number; minZ: number; cols: number; rows: number; start: Int32Array; items: Int32Array;
   // spawn candidates from the last update (links in range, out of view), with cumulative weights
   cand: Int32Array; cumAll: Float32Array; cumOut: Float32Array; nCand: number;
+  // where new people head for: links in range that ARE in view (not crossings), with cumulative weights
+  view: Int32Array; viewAll: Float32Array; viewOut: Float32Array; nView: number;
   curve: Float32Array; // this hour's factor per zone
   timer: number;
   // results (F3 overlay, tests)
@@ -61,6 +64,7 @@ export function createPedDensity(w: World): PedDensityState {
   // ---- links (each undirected walk link once) ----
   let n = 0;
   for (const a of W) for (const j of a.nbrs) if (j > a.id) n++;
+  const na = new Int32Array(n), nb = new Int32Array(n);
   const ax = new Float32Array(n), az = new Float32Array(n), bx = new Float32Array(n), bz = new Float32Array(n), ly = new Float32Array(n);
   const len = new Float32Array(n), base = new Float32Array(n), shop = new Float32Array(n), zone = new Uint8Array(n), outdoor = new Float32Array(n);
   const shops = new Uint8Array(n), spawnable = new Uint8Array(n);
@@ -92,6 +96,7 @@ export function createPedDensity(w: World): PedDensityState {
   for (const a of W) for (const j of a.nbrs) {
     if (j <= a.id) continue;
     const b = W[j];
+    na[i] = a.id; nb[i] = b.id;
     ax[i] = a.x; az[i] = a.z; bx[i] = b.x; bz[i] = b.z; ly[i] = (a.y + b.y) / 2;
     len[i] = Math.hypot(b.x - a.x, b.z - a.z);
     const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
@@ -142,9 +147,10 @@ export function createPedDensity(w: World): PedDensityState {
   for (let k = 0; k < n; k++) items[fill[cellOf((ax[k] + bx[k]) / 2, (az[k] + bz[k]) / 2)]++] = k;
 
   return {
-    n, ax, az, bx, bz, ly, len, base, shop, shops, zone, spawnable, outdoor, routeCost, outdoorNodes: Int32Array.from(out),
+    n, na, nb, ax, az, bx, bz, ly, len, base, shop, shops, zone, spawnable, outdoor, routeCost, outdoorNodes: Int32Array.from(out),
     minX, minZ, cols, rows, start, items,
     cand: new Int32Array(n), cumAll: new Float32Array(n), cumOut: new Float32Array(n), nCand: 0,
+    view: new Int32Array(n), viewAll: new Float32Array(n), viewOut: new Float32Array(n), nView: 0,
     curve: new Float32Array(ZONES.length), timer: 0,
     hour: 0, real: 0, target: 0, active: 0, near: 0, added: 0, removed: 0, relocated: 0,
   };
@@ -185,7 +191,7 @@ export function updatePedDensity(w: World, dt: number, force = false): void {
   const R = D.radius, R2 = R * R, m2 = D.spawnMinDist * D.spawnMinDist;
   const c0 = Math.max(0, Math.floor((pp.x - R - S.minX) / CELL)), c1 = Math.min(S.cols - 1, Math.floor((pp.x + R - S.minX) / CELL));
   const r0 = Math.max(0, Math.floor((pp.z - R - S.minZ) / CELL)), r1 = Math.min(S.rows - 1, Math.floor((pp.z + R - S.minZ) / CELL));
-  let real = 0, nc = 0, cumA = 0, cumO = 0;
+  let real = 0, nc = 0, cumA = 0, cumO = 0, nv = 0, vA = 0, vO = 0;
   for (let r = r0; r <= r1; r++) for (let cc = c0; cc <= c1; cc++) {
     const ci = r * S.cols + cc;
     for (let q = S.start[ci]; q < S.start[ci + 1]; q++) {
@@ -195,7 +201,18 @@ export function updatePedDensity(w: World, dt: number, force = false): void {
       if (d2 > R2) continue;
       const people = rho(S, k) * S.len[k];
       real += people;
-      if (!S.spawnable[k] || d2 < m2 || (w.started && inCameraView(w, mx, mz))) continue;
+      if (!S.spawnable[k]) continue;
+      if (w.started && inCameraView(w, mx, mz)) {
+        // in view: somewhere new people walk to (so the crowd you look at fills up, not only the one behind you)
+        vA += people;
+        vO += people * S.outdoor[k];
+        S.view[nv] = k;
+        S.viewAll[nv] = vA;
+        S.viewOut[nv] = vO;
+        nv++;
+        continue;
+      }
+      if (d2 < m2) continue;
       cumA += people;
       cumO += people * S.outdoor[k];
       S.cand[nc] = k;
@@ -205,6 +222,7 @@ export function updatePedDensity(w: World, dt: number, force = false): void {
     }
   }
   S.nCand = nc;
+  S.nView = nv;
   S.real = real;
   const budget = w.settings.pedBudget;
   const full = D.fullBudgetAt[w.city.id] ?? D.fullBudgetAt.georgetown;
@@ -244,6 +262,27 @@ export function pickSpawn(w: World, outdoor: boolean, out: { x: number; y: numbe
     return true;
   }
   return false;
+}
+
+/**
+ * Where someone who has just appeared (out of view) walks to: a walk node on a link in view within the density
+ * radius, picked by the links' head counts (dog walkers and joggers: `outdoor`). -1 if nothing in view qualifies.
+ */
+export function pickViewTarget(w: World, outdoor: boolean): number {
+  const S = w.pedDensity;
+  if (!S.nView) return -1;
+  const cum = outdoor ? S.viewOut : S.viewAll;
+  const total = cum[S.nView - 1];
+  if (!(total > 0)) return -1;
+  const r = Math.random() * total;
+  let lo = 0, hi = S.nView - 1;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (cum[mid] < r) lo = mid + 1;
+    else hi = mid;
+  }
+  const k = S.view[lo];
+  return Math.random() < 0.5 ? S.na[k] : S.nb[k];
 }
 
 /** People per metre on the walk links within `r` of (x, z) right now, and the shops counted there (tests, F3). */
