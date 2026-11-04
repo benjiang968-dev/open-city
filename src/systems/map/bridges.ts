@@ -86,7 +86,8 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         for (let s = s0 + 8 + off; s < s1 - 6; s += spacing) {
           if (e.freeway && side < 0) continue;
           const q = pointAtS(e, s);
-          const o = outer - PARAPET_T - 0.35;
+          // on a sidewalk, or on top of the freeway's parapet (inside it they stood in the kerbside lane)
+          const o = e.freeway ? outer - PARAPET_T / 2 : outer - PARAPET_T - 0.35;
           lamps.push({ x: q.x - q.uz * o * side, y: net.profAt(e, s) + base, z: q.z + q.ux * o * side, ax: q.uz * side, az: -q.ux * side });
         }
       }

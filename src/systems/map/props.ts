@@ -32,7 +32,8 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
 
   // ------------------------------------------------------------------------------------- lamps
   const lamps: { x: number; y: number; z: number }[] = [];
-  for (const p of doc.props) if (p[2] === 'lamp') lamps.push({ x: p[0], y: ras.heightAt(p[0], p[1]), z: p[1] });
+  // (not where the road now runs: Washington Circle is snapped to a true circle, which put a few data lamps in its lanes)
+  for (const p of doc.props) if (p[2] === 'lamp' && roadDist(p[0], p[1]) > 0.3) lamps.push({ x: p[0], y: ras.heightAt(p[0], p[1]), z: p[1] });
   for (const l of extraLamps) lamps.push({ x: l.x, y: l.y, z: l.z });
   const lampPositions = new Float32Array(lamps.length * 3);
   lamps.forEach((l, i) => { lampPositions[i * 3] = l.x; lampPositions[i * 3 + 1] = l.y; lampPositions[i * 3 + 2] = l.z; });

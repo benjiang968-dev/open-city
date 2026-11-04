@@ -91,9 +91,30 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   const J = geo.junctions;
 
   // ------------------------------------------------------------------ road graph
+  // a node where two pieces meet is a corner between two streets (cars slow and turn: a junction with its trims)
+  // unless it is the same street carrying on roughly straight (a pass-through: no trim, lanes run on seamlessly)
+  const cornerAt = new Uint8Array(J.length);
+  {
+    const ends: { name: string; ux: number; uz: number }[][] = J.map(() => []);
+    for (const P of polys) {
+      const c = P.centre, n = c.length / 3;
+      const dir = (atStart: boolean) => {
+        const i0 = atStart ? 0 : n - 1, i1 = atStart ? Math.min(n - 1, 2) : Math.max(0, n - 3);
+        const ux = c[i1 * 3] - c[i0 * 3], uz = c[i1 * 3 + 2] - c[i0 * 3 + 2], l = Math.hypot(ux, uz) || 1;
+        return { name: P.name, ux: ux / l, uz: uz / l };
+      };
+      ends[P.nodeA].push(dir(true));
+      ends[P.nodeB].push(dir(false));
+    }
+    ends.forEach((e, i) => {
+      if (e.length !== 2) return;
+      const straightness = -(e[0].ux * e[1].ux + e[0].uz * e[1].uz); // 1 = straight on, 0 = a right angle
+      if (e[0].name !== e[1].name || straightness < Math.cos(M.passThroughMaxBend)) cornerAt[i] = 1;
+    });
+  }
   const nodes: RoadNode[] = J.map((j) => ({
     id: j.id, x: j.x, y: j.y, z: j.z, out: [], in: [], roundabout: j.roundabout, signals: j.signals,
-    deadEnd: j.degree <= 1, junction: j.degree >= 3 || ((j.signals || j.stop) && j.degree >= 2),
+    deadEnd: j.degree <= 1, junction: j.degree >= 3 || ((j.signals || j.stop) && j.degree >= 2) || cornerAt[j.id] === 1,
   }));
   const passThrough = (id: number) => !nodes[id].junction && !nodes[id].deadEnd;
   const edges: LaneEdge[] = [];
