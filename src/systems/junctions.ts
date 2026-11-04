@@ -1,7 +1,9 @@
 // Junction control for AI traffic: the moves each lane may make at the junction ahead (lane discipline), which of
 // those moves cross or merge (conflicts), traffic signal phases, and the rule a car follows before it enters:
-//  - signals: green / amber / all-red by approach; cars stop on red and on amber when they can; left turns on green
-//    give way to oncoming traffic;
+//  - signals: phases of approaches (head-on approaches share one), green / amber / all-red, actuated by detectors at
+//    the stop lines (AI cars and your car): a phase is called when someone waits on it and held green while traffic
+//    keeps coming, up to its longest green; cars stop on red and on amber when they can; left turns on green give way
+//    to oncoming traffic (and clear on amber);
 //  - stop signs (all-way): a full stop, then first come, first served;
 //  - uncontrolled: the lower road class gives way; between equal roads a short pause and first come, first served;
 //  - roundabout (Washington Circle): entering cars yield to cars circulating toward their entry; circulating cars never

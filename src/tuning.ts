@@ -263,12 +263,11 @@ const RAW = {
   },
 
   traffic: {
-    count: 26, // AI cars on the road graph
     cruiseSpeed: 11, // m/s (~40 km/h): the grid city's speed limit (real maps use maxspeed or map.classSpeed)
     accel: 4, // m/s²
     brake: 9, // m/s²
     followGap: 9, // metres kept to the car ahead
-    intersectionWait: 0.9, // seconds stopped at each junction
+    intersectionWait: 0.9, // seconds a car pauses at an uncontrolled junction of equal roads before going (first come, first served)
     laneOffset: 3.1, // metres right of the centre line: the grid city's (innermost) lane centre
     honkDistance: 10, // player within this in front of a stopped AI car = honk
     honkCooldown: 3, // seconds between honks per car
