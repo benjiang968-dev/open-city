@@ -53,6 +53,8 @@ export function createMinimap(w: World): void {
 const badgeX: number[] = [];
 const badgeZ: number[] = [];
 const badgeKind: number[] = [];
+const DEALER_FONT = `bold ${Math.round(H.minimapDealerBadgePx * 1.35)}px system-ui, sans-serif`; // built once, not per frame
+const RANK_FONT = `bold ${Math.round(H.minimapRankBadgePx * 1.35)}px system-ui, sans-serif`;
 /** Badges within the minimap circle, upright, at a size you can read (`k`: px per metre; (r, r) the centre). */
 function drawBadges(px: number, pz: number, yaw: number, k: number, r: number): void {
   const cy = Math.cos(yaw), sy = Math.sin(yaw), lim = (r - 10) * (r - 10);
@@ -72,7 +74,7 @@ function drawBadges(px: number, pz: number, yaw: number, k: number, r: number): 
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = dealer ? '#ffffff' : '#3d2c00';
-    ctx.font = `bold ${Math.round(rad * 1.35)}px system-ui, sans-serif`;
+    ctx.font = dealer ? DEALER_FONT : RANK_FONT;
     ctx.fillText(dealer ? '$' : 'T', r + sx, r + sz + 0.5);
   }
 }

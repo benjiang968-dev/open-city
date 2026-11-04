@@ -178,7 +178,8 @@ function carTaken(w: World, v: Vehicle, forced: boolean): void {
   v.stolen = true;
   theftStats.thefts++;
   const alarm = v.alarmUntil > w.time;
-  if (v.ownerLocal && v.owner === 'nobody') localOwnerShowsUp(w, v);
+  const local = v.ownerLocal && v.owner === 'nobody'; // a local's car (not abandoned), owner not one of the people
+  if (local) localOwnerShowsUp(w, v);
   const ownerId = typeof v.owner === 'number' ? v.owner : -1;
   const owner = ownerId >= 0 ? w.peds[ownerId] : null;
   let ownerSaw = false;
@@ -199,7 +200,7 @@ function carTaken(w: World, v: Vehicle, forced: boolean): void {
   }
   emit(w, { type: 'carTheft', x: v.px, z: v.pz, carId: v.id, ownerId, ownerSaw, alarm, forced });
   const who = ownerName(w, v);
-  toast(w, `<span style="font-size:20px">🚗 You stole ${who ? `${who}'s` : 'an abandoned'} ${v.spec.label}</span>`, 2);
+  toast(w, `<span style="font-size:20px">🚗 You stole ${who ? `${who}'s` : local ? "a local's" : 'an abandoned'} ${v.spec.label}</span>`, 2);
 }
 
 /**
