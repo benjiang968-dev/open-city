@@ -25,7 +25,7 @@ export function hitPed(w: World, ped: Ped, cause: HitCause, damage: number, heav
   ped.hitCount = repeat ? ped.hitCount + 1 : 1;
   ped.lastHitByPlayer = w.time;
   ped.health -= damage;
-  hurtBurst(w, ped.pos.x, ped.pos.y + 1.2 * ped.scale, ped.pos.z, damage * TUNING.hurtFx.strengthPerDamage, ped.pos.x - fromX, ped.pos.z - fromZ, 0);
+  hurtBurst(w, ped.pos.x, ped.pos.y + 1.2 * ped.scale, ped.pos.z, damage * TUNING.hurtFx.strengthPerDamage, ped.pos.x - fromX, ped.pos.z - fromZ, w.city.heightAt(ped.pos.x, ped.pos.z));
   const assault = heavy || cause === 'melee' || ped.hitCount >= 2;
   const hour = w.dayNight.hour, day = w.dayNight.day;
   remember(ped.npc, 'assaulted', cause === 'melee' ? `hit me with a ${what.toLowerCase()}` : `threw a ${what.toLowerCase()} at me`, hour, day);
@@ -39,7 +39,7 @@ export function hitPed(w: World, ped: Ped, cause: HitCause, damage: number, heav
     ped.timer = RX.knockoutTime;
     const dx = ped.pos.x - fromX, dz = ped.pos.z - fromZ, l = Math.hypot(dx, dz) || 1;
     ped.vel.set((dx / l) * 2.5, 2.5, (dz / l) * 2.5);
-    ped.pos.y = 0.1;
+    ped.pos.y = w.city.heightAt(ped.pos.x, ped.pos.z) + 0.1;
     say(w, ped, pick(LINES.hitHeavy), 1.6, `ped${ped.id}`);
     return;
   }
@@ -97,7 +97,7 @@ export function hurtDog(w: World, owner: Ped, cause: 'car' | 'thrown' | 'melee',
   tumbleDog(d, strength, dirX, dirZ);
   w.audio.yelp?.(d.pos.x, d.pos.z);
   say(w, d, pick(LINES.yelp), 1.6, `dog${owner.id}`);
-  hurtBurst(w, d.pos.x, d.pos.y + 0.42 * d.scale, d.pos.z, strength, dirX, dirZ, 0, true, d.vel.x, d.vel.z);
+  hurtBurst(w, d.pos.x, d.pos.y + 0.42 * d.scale, d.pos.z, strength, dirX, dirZ, w.city.heightAt(d.pos.x, d.pos.z), true, d.vel.x, d.vel.z);
   ownerScreams(w, owner);
   emit(w, { type: 'dogHurt', pedId: owner.id, x: d.pos.x, z: d.pos.z, cause, weapon: what });
   return true;

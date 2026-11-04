@@ -6,11 +6,16 @@ import type { World } from '../../world';
 import { emit } from '../../world';
 import type { JobMarker, JobSystem } from './jobManager';
 import type { Ped } from '../pedestrians';
-import type { Poi } from '../cityGen';
+import { roadRouter, type KerbHit, type LaneHit, type Poi } from '../map/cityMap';
 import { toast } from '../hud';
 import { adjustRelationship, remember } from '../../npc/npc';
 
 const TX = TUNING.economy.taxi;
+const FOOT = 0.02; // people stand this far above the ground
+const KERB: KerbHit = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
+const HA: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+const HB: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+const boardTo = new THREE.Vector3();
 
 type Phase = 'none' | 'waiting' | 'boarding' | 'riding' | 'cooldown';
 
@@ -64,7 +69,8 @@ export class TaxiJob implements JobSystem {
     const candidates = w.peds.filter((p) => p.active && !p.hidden && p.followId < 0 && !p.dog && p.archetype !== 'parent' && p.phoneMode === null && !p.reserved && p.state !== 'down' && p.state !== 'talk' && p.pos.distanceTo(cam) > 60);
     const ped = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : w.peds.find((p) => !p.reserved && p.state !== 'talk');
     if (!ped) return;
-    ped.pos.set(rank.x + (Math.random() - 0.5) * 2, 0.02, rank.z + (Math.random() - 0.5) * 2);
+    const px = rank.x + (Math.random() - 0.5) * 2, pz = rank.z + (Math.random() - 0.5) * 2;
+    ped.pos.set(px, w.city.heightAt(px, pz) + FOOT, pz);
     this.waitWith(ped, rank.curbX, rank.curbZ, rank.name);
   }
 
@@ -72,20 +78,9 @@ export class TaxiJob implements JobSystem {
   startFromPed(w: World, ped: Ped): boolean {
     if (this.phase === 'riding' || this.phase === 'boarding') return false;
     if (this.ped && this.ped !== ped) this.release();
-    // nearest kerb point on the closest road
-    const c = w.city;
-    let bx = ped.pos.x, bz = ped.pos.z, bd = Infinity;
-    for (let i = 0; i < c.xs.length; i++) {
-      const kx = c.xs[i] + Math.sign(ped.pos.x - c.xs[i]) * (c.roadHalfX[i] - 1.6);
-      const d = Math.abs(ped.pos.x - kx);
-      if (d < bd) { bd = d; bx = kx; bz = ped.pos.z; }
-    }
-    for (let j = 0; j < c.zs.length; j++) {
-      const kz = c.zs[j] + Math.sign(ped.pos.z - c.zs[j]) * (c.roadHalfZ[j] - 1.6);
-      const d = Math.abs(ped.pos.z - kz);
-      if (d < bd) { bd = d; bx = ped.pos.x; bz = kz; }
-    }
-    this.waitWith(ped, bx, bz, `${ped.npc.name.split(' ')[0]} (here)`);
+    // the kerb stopping point nearest to where they stand
+    const k = w.city.kerbPoint(ped.pos.x, ped.pos.z, KERB);
+    this.waitWith(ped, k ? KERB.x : ped.pos.x, k ? KERB.z : ped.pos.z, `${ped.npc.name.split(' ')[0]} (here)`);
     return true;
   }
 
@@ -115,7 +110,7 @@ export class TaxiJob implements JobSystem {
   cancel(w: World): void {
     if (this.ped && this.phase === 'riding') {
       const p = w.player.mesh.position;
-      this.ped.pos.set(p.x + 2, 0.02, p.z);
+      this.ped.pos.set(p.x + 2, w.city.heightAt(p.x + 2, p.z) + FOOT, p.z);
     }
     this.release();
     this.dest = null;
@@ -157,7 +152,7 @@ export class TaxiJob implements JobSystem {
         }
         // wave at passing cars
         ped.heading = Math.atan2(this.pickup.x - ped.pos.x, this.pickup.y - ped.pos.z);
-        this.showBeacon(this.pickup.x, this.pickup.y, 0xffd23f, t);
+        this.showBeacon(w, this.pickup.x, this.pickup.y, 0xffd23f, t);
         if (pv && !pv.wrecked) {
           const p = pv.body.translation();
           const d = Math.hypot(p.x - this.pickup.x, p.z - this.pickup.y);
@@ -174,7 +169,7 @@ export class TaxiJob implements JobSystem {
         this.timer -= dt;
         const v = w.vehicles[this.vehicleId];
         const p = v.body.translation();
-        ped.pos.lerp(new THREE.Vector3(p.x, 0.02, p.z), Math.min(1, dt * 3));
+        ped.pos.lerp(boardTo.set(p.x, w.city.heightAt(p.x, p.z) + FOOT, p.z), Math.min(1, dt * 3));
         ped.heading = Math.atan2(p.x - ped.pos.x, p.z - ped.pos.z);
         if (w.player.vehicle !== v) { this.phase = 'waiting'; break; }
         if (this.timer <= 0) {
@@ -194,10 +189,10 @@ export class TaxiJob implements JobSystem {
         const p = v.body.translation();
         ped.pos.set(p.x, -50, p.z); // carried along (hidden)
         this.tripTime += dt;
-        this.showBeacon(this.dest!.curbX, this.dest!.curbZ, 0x3ddc84, t);
+        this.showBeacon(w, this.dest!.curbX, this.dest!.curbZ, 0x3ddc84, t);
         if (w.player.vehicle !== v || v.wrecked) {
           // passenger bails out
-          ped.pos.set(p.x + 2, 0.02, p.z);
+          ped.pos.set(p.x + 2, w.city.heightAt(p.x + 2, p.z) + FOOT, p.z);
           ped.hidden = false;
           ped.body.setEnabled(true);
           adjustRelationship(ped.npc, -15);
@@ -224,9 +219,8 @@ export class TaxiJob implements JobSystem {
     const list = options.length ? options : w.city.pois.filter((p) => p.kind !== 'taxiRank');
     this.dest = list[Math.floor(Math.random() * list.length)];
     this.tripDist = Math.hypot(this.dest.curbX - x, this.dest.curbZ - z);
-    // allowance uses Manhattan distance since the city is a grid
-    const manhattan = Math.abs(this.dest.curbX - x) + Math.abs(this.dest.curbZ - z);
-    this.allowance = manhattan / TX.expectedSpeed + 10;
+    // time allowance from the driving distance along the roads (one-way streets and all)
+    this.allowance = routeDistance(w, x, z, this.dest.curbX, this.dest.curbZ) / TX.expectedSpeed + 10;
   }
 
   private complete(w: World, x: number, z: number, health: number) {
@@ -250,7 +244,7 @@ export class TaxiJob implements JobSystem {
     parts.push(crashed ? 'no tip (you crashed)' : late ? 'no tip (late)' : `tip $${Math.round(tip)}`);
     toast(w, `<span style="color:#9be564">+$${total}</span><br><span style="font-size:16px">${parts.join(' · ')}</span>`, 3.5);
     // passenger steps out and goes about their day
-    ped.pos.set(this.dest!.x, 0.02, this.dest!.z);
+    ped.pos.set(this.dest!.x, w.city.heightAt(this.dest!.x, this.dest!.z) + FOOT, this.dest!.z);
     ped.hidden = false;
     ped.body.setEnabled(true);
     adjustRelationship(ped.npc, crashed ? -5 : 12);
@@ -260,9 +254,9 @@ export class TaxiJob implements JobSystem {
     this.timer = TX.nextFareDelay;
   }
 
-  private showBeacon(x: number, z: number, color: number, t: number) {
+  private showBeacon(w: World, x: number, z: number, color: number, t: number) {
     this.beacon.visible = true;
-    this.beacon.position.set(x, 0, z);
+    this.beacon.position.set(x, w.city.heightAt(x, z), z);
     this.beaconMat.color.setHex(color);
     this.ringMat.color.setHex(color);
     // fade the column when the camera is close so it never washes out the screen
@@ -306,4 +300,19 @@ export class TaxiJob implements JobSystem {
   debug(): string {
     return `${this.phase} done=${this.completed} earned=$${this.earned}${this.dest ? ` → ${this.dest.name}` : ''}`;
   }
+}
+
+/**
+ * Driving distance from (ax, az) to (bx, bz) along the lanes: from the nearest lane at the start, through the
+ * road graph, to the nearest lane at the end. Falls back to 1.4 x the straight line if either end is off-road.
+ */
+export function routeDistance(w: World, ax: number, az: number, bx: number, bz: number): number {
+  const c = w.city;
+  const straight = Math.hypot(bx - ax, bz - az);
+  if (!c.nearestLane(ax, az, 60, HA) || !c.nearestLane(bx, bz, 60, HB)) return straight * 1.4;
+  const ea = c.roads.edges[HA.edge], eb = c.roads.edges[HB.edge];
+  if (ea.id === eb.id && HB.s >= HA.s) return HB.s - HA.s;
+  const r = roadRouter(c);
+  if (r.path(ea.to, eb.from) < 0) return straight * 1.4;
+  return ea.len - HA.s + r.length + HB.s;
 }

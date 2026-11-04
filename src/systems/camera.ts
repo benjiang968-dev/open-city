@@ -37,8 +37,8 @@ export function updateCamera(w: World, dt: number): void {
     // slow orbit over the live city behind the title text
     c.titleAngle += dt * 0.05;
     const p = w.player.mesh.position;
-    cam.position.set(p.x + Math.sin(c.titleAngle) * 150, 95, p.z + Math.cos(c.titleAngle) * 150);
-    cam.lookAt(p.x, 0, p.z);
+    cam.position.set(p.x + Math.sin(c.titleAngle) * 150, p.y + 95, p.z + Math.cos(c.titleAngle) * 150);
+    cam.lookAt(p.x, p.y, p.z);
     return;
   }
   const inp = w.input;
@@ -85,7 +85,8 @@ export function updateCamera(w: World, dt: number): void {
   const hit = w.physics.castRay(ray, dist, true, R.QueryFilterFlags.EXCLUDE_DYNAMIC | R.QueryFilterFlags.EXCLUDE_KINEMATIC);
   if (hit) dist = Math.max(1.2, hit.timeOfImpact - 0.3);
   cam.position.copy(c.focus).addScaledVector(tmp, dist);
-  if (cam.position.y < 0.4) cam.position.y = 0.4;
+  const floor = w.city.heightAt(cam.position.x, cam.position.z) + 0.4;
+  if (cam.position.y < floor) cam.position.y = floor;
   cam.lookAt(c.focus);
   const sway = injurySway(w);
   if (sway) cam.rotateZ(sway);

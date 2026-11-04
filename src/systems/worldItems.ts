@@ -65,27 +65,28 @@ export function createItems(w: World): ItemsState {
   return { items: [], art, meshes, material, byCollider: new Map(), target: null, marker, eventQueue: new w.R.EventQueue(true) };
 }
 
-/** Create an item at rest at (x, z) on the ground (or at y if given). */
-export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: number, y?: number): WorldItem | null {
+/** Create an item at rest on the ground at (x, z) (or `lift` metres above the ground, e.g. stacked, if given). */
+export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: number, lift?: number): WorldItem | null {
   const S = w.itemsState;
   const im = S.meshes[type];
   if (im.count >= CAPACITY) return null;
   const R = w.R;
   const a = S.art[type];
   const def = IT.defs[type];
+  const y = w.city.heightAt(x, z) + (lift ?? 0.02);
   q4.setFromEuler(new THREE.Euler(0, yaw, a.restRotZ, 'YXZ'));
   const body = w.physics.createRigidBody(
     R.RigidBodyDesc.dynamic()
-      .setTranslation(x, (y ?? 0.02) + a.restY, z)
+      .setTranslation(x, y + a.restY, z)
       .setRotation({ x: q4.x, y: q4.y, z: q4.z, w: q4.w })
       .setLinearDamping(0.2)
       .setAngularDamping(0.4)
-      .setSleeping(y === undefined),
+      .setSleeping(lift === undefined),
   );
   const cd = a.collider.kind === 'box' ? R.ColliderDesc.cuboid(a.collider.hx, a.collider.hy, a.collider.hz) : R.ColliderDesc.cylinder(a.collider.hh, a.collider.r);
   const collider = w.physics.createCollider(cd.setMass(def.mass).setFriction(0.75).setRestitution(0.2).setCollisionGroups(GROUPS.item), body);
   const item: WorldItem = {
-    id: S.items.length, type, body, collider, inWorld: true, inst: im.count, px: x, py: (y ?? 0.02) + a.restY, pz: z,
+    id: S.items.length, type, body, collider, inWorld: true, inst: im.count, px: x, py: y + a.restY, pz: z,
     thrown: false, thrownAt: -10, speed: 0, stolen: false, illegal: false,
   };
   im.count++;
@@ -192,8 +193,8 @@ export function scatterItems(w: World): void {
   // litter along pavements
   const litter: ItemId[] = ['bottle', 'can', 'can', 'bottle', 'bag'];
   for (let k = 0; k < IT.litterCount; k++) {
-    const a = rng.pick(c.sideNodes);
-    const b = c.sideNodes[rng.pick(a.nbrs)];
+    const a = rng.pick(c.walk.nodes);
+    const b = c.walk.nodes[rng.pick(a.nbrs)];
     if (!b) continue;
     const t = rng.range(0.15, 0.85);
     const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
@@ -223,10 +224,11 @@ export function scatterItems(w: World): void {
     for (let i = 0; i < IT.conesPerCluster; i++) spawnItem(w, 'cone', s.x + fx * (i * 2.4 - 3.6), s.z + fz * (i * 2.4 - 3.6), 0);
     k++;
   }
-  // brick piles next to a few buildings
+  // brick piles against the south side of a few buildings (skipped where that spot is inside something)
   for (let k = 0; k < IT.brickPiles; k++) {
-    const b = rng.pick(c.buildingRects);
-    const x = (b.x0 + b.x1) / 2 + rng.range(-3, 3), z = b.z1 + 0.9;
+    const b = rng.pick(c.buildings);
+    const x = (b.minX + b.maxX) / 2 + rng.range(-3, 3), z = b.maxZ + 0.9;
+    if (c.isBlocked(x, z)) continue;
     for (let i = 0; i < IT.bricksPerPile; i++) spawnItem(w, 'brick', x + (i % 3) * 0.24 - 0.24, z, 0, 0.02 + Math.floor(i / 3) * 0.072);
   }
   // bats by the gym, wrenches at the garage (fallbacks keep every seed stocked)

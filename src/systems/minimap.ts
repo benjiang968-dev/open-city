@@ -1,5 +1,5 @@
-// Minimap: pre-rendered city canvas, rotated around the player, with job markers, police, your own cars,
-// car dealerships and the player arrow.
+// Minimap: pre-rendered map image (the map paints its own base layer), rotated around the player, with street
+// names along the roads, job markers, police, your own cars, car dealerships and the player arrow.
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import type { DealershipJob } from './economy/dealership';
@@ -25,33 +25,16 @@ export function createMinimap(w: World): void {
 
   const c = w.city;
   const b = c.bounds;
-  scale = 1.2;
+  scale = H.minimapBaseScale;
   ox = b.minX - 20;
   oz = b.minZ - 20;
   base = document.createElement('canvas');
   base.width = Math.ceil((b.maxX - b.minX + 40) * scale);
-  base.height = Math.ceil((c.coastZ + 300 - oz) * scale);
+  base.height = Math.ceil((b.maxZ - b.minZ + 40) * scale);
   const g = base.getContext('2d')!;
   const X = (x: number) => (x - ox) * scale, Z = (z: number) => (z - oz) * scale;
-  g.fillStyle = '#7da35a';
-  g.fillRect(0, 0, base.width, base.height);
-  g.fillStyle = '#2f7fb3';
-  g.fillRect(0, Z(c.coastZ), base.width, base.height);
-  g.fillStyle = '#cfc9bf';
-  g.fillRect(X(c.xs[0] - 10), Z(c.zs[0] - 10), (c.xs[c.xs.length - 1] - c.xs[0] + 20) * scale, (c.zs[c.zs.length - 1] - c.zs[0] + 18) * scale);
-  g.fillStyle = '#e9d8a6';
-  g.fillRect(0, Z(c.zs[c.zs.length - 1] + 10), base.width, (c.coastZ - c.zs[c.zs.length - 1] - 10) * scale);
-  g.fillStyle = '#6fa84f';
-  for (const r of c.parkRects) g.fillRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * scale, (r.z1 - r.z0) * scale);
-  g.fillStyle = '#9a9aa3';
-  for (const r of c.buildingRects) g.fillRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * scale, (r.z1 - r.z0) * scale);
-  g.fillStyle = '#3b3e45';
-  for (let i = 0; i < c.xs.length; i++) g.fillRect(X(c.xs[i] - c.roadHalfX[i]), Z(c.zs[0] - c.roadHalfZ[0]), c.roadHalfX[i] * 2 * scale, (c.zs[c.zs.length - 1] - c.zs[0] + c.roadHalfZ[0] + c.roadHalfZ[c.zs.length - 1]) * scale);
-  for (let j = 0; j < c.zs.length; j++) g.fillRect(X(c.xs[0] - c.roadHalfX[0]), Z(c.zs[j] - c.roadHalfZ[j]), (c.xs[c.xs.length - 1] - c.xs[0] + c.roadHalfX[0] * 2) * scale, c.roadHalfZ[j] * 2 * scale);
-  g.fillStyle = '#a0754f';
-  const pr = c.pierRect;
-  g.fillRect(X(pr.x0), Z(pr.z0), (pr.x1 - pr.x0) * scale, (pr.z1 - pr.z0) * scale);
-  for (const r of c.marinaRects) g.fillRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * scale, (r.z1 - r.z0) * scale);
+  c.drawMinimapBase(g, { scale, ox, oz, width: base.width, height: base.height });
+  buildLabels(w);
   g.fillStyle = '#f4c430';
   for (const r of c.taxiRanks) { g.beginPath(); g.arc(X(r.curbX), Z(r.curbZ), 3, 0, Math.PI * 2); g.fill(); }
   // car dealerships: a blue badge with a dollar sign
@@ -72,6 +55,72 @@ export function createMinimap(w: World): void {
     g.fillText('$', x, z + 0.5);
     minimapStats.dealerships++;
   }
+}
+
+// ---------- street-name labels (drawn upright along the road, on top of the rotating map) ----------
+const labelText: string[] = [];
+let labelX = new Float32Array(0);
+let labelZ = new Float32Array(0);
+let labelAng = new Float32Array(0);
+const LABEL_FONT = `600 ${H.minimapLabelPx}px system-ui, sans-serif`;
+
+/** Anchor points for every named street: its middle if short, else one every minimapLabelSpacing metres. */
+function buildLabels(w: World): void {
+  const ax: number[] = [], az: number[] = [], angs: number[] = [];
+  labelText.length = 0;
+  for (const st of w.city.streets) {
+    if (!st.name) continue;
+    const p = st.pts;
+    let total = 0;
+    for (let k = 2; k < p.length; k += 2) total += Math.hypot(p[k] - p[k - 2], p[k + 1] - p[k - 1]);
+    if (total < H.minimapLabelMinLength) continue;
+    const step = H.minimapLabelSpacing;
+    const first = total < step ? total / 2 : step / 2;
+    for (let at = first; at < total; at += step) {
+      // walk to the segment holding `at`
+      let run = 0;
+      for (let k = 2; k < p.length; k += 2) {
+        const sl = Math.hypot(p[k] - p[k - 2], p[k + 1] - p[k - 1]);
+        if (run + sl >= at || k === p.length - 2) {
+          const t = sl > 0 ? Math.min(1, (at - run) / sl) : 0;
+          ax.push(p[k - 2] + (p[k] - p[k - 2]) * t);
+          az.push(p[k - 1] + (p[k + 1] - p[k - 1]) * t);
+          angs.push(Math.atan2(p[k + 1] - p[k - 1], p[k] - p[k - 2]));
+          labelText.push(st.name);
+          break;
+        }
+        run += sl;
+      }
+    }
+  }
+  labelX = Float32Array.from(ax);
+  labelZ = Float32Array.from(az);
+  labelAng = Float32Array.from(angs);
+}
+
+/** Street names near the player, upright and along their road. `k`: px per metre; (r, r) the centre. */
+function drawLabels(px: number, pz: number, yaw: number, k: number, r: number): void {
+  ctx.font = LABEL_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(16,20,28,0.85)';
+  ctx.fillStyle = '#f4f1e8';
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), lim = (r - 14) * (r - 14);
+  for (let i = 0; i < labelText.length; i++) {
+    const dx = (labelX[i] - px) * k, dz = (labelZ[i] - pz) * k;
+    const sx = dx * cy - dz * sy, sz = dx * sy + dz * cy;
+    if (sx * sx + sz * sz > lim) continue;
+    let a = labelAng[i] + yaw;
+    a = Math.atan2(Math.sin(a), Math.cos(a));
+    if (a > Math.PI / 2) a -= Math.PI;
+    else if (a <= -Math.PI / 2) a += Math.PI;
+    ctx.setTransform(1, 0, 0, 1, r + sx, r + sz);
+    ctx.rotate(a);
+    ctx.strokeText(labelText[i], 0, 0);
+    ctx.fillText(labelText[i], 0, 0);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
 export function showMinimap(): void {
@@ -104,6 +153,13 @@ export function updateMinimap(w: World): void {
     ctx.arc((t.x - p.x) * k, (t.z - p.z) * k, 4, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.restore();
+  // street names (clipped to the round map)
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(r, r, r, 0, Math.PI * 2);
+  ctx.clip();
+  drawLabels(p.x, p.z, yaw, k, r);
   ctx.restore();
   // job markers (clamped to the edge when far away)
   for (const mk of w.jobs.markers()) {

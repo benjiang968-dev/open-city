@@ -179,8 +179,9 @@ export function updateWeather(w: World, dt: number): void {
 
   // particles follow the camera
   const c = w.camera.position;
-  updateParticles(s.rainPts, c, L.rain, dt, 26, true);
-  updateParticles(s.snowPts, c, L.snow, dt, 2.2, false);
+  const ground = w.city.heightAt(c.x, c.z);
+  updateParticles(s.rainPts, c, L.rain, dt, 26, true, ground);
+  updateParticles(s.snowPts, c, L.snow, dt, 2.2, false, ground);
   (s.rainPts.material as THREE.LineBasicMaterial).opacity = 0.25 + 0.35 * L.rain;
 
   // stars and moon at night when the sky is clear enough
@@ -195,7 +196,7 @@ export function updateWeather(w: World, dt: number): void {
   w.audio.setRain?.(L.rain);
 }
 
-function updateParticles(obj: THREE.Points | THREE.LineSegments, cam: THREE.Vector3, amount: number, dt: number, speed: number, isRain: boolean) {
+function updateParticles(obj: THREE.Points | THREE.LineSegments, cam: THREE.Vector3, amount: number, dt: number, speed: number, isRain: boolean, ground: number) {
   obj.visible = amount > 0.03;
   if (!obj.visible) return;
   const g = obj.geometry;
@@ -222,5 +223,5 @@ function updateParticles(obj: THREE.Points | THREE.LineSegments, cam: THREE.Vect
     }
   }
   pos.needsUpdate = true;
-  obj.position.set(cam.x, Math.max(0, cam.y - 20), cam.z);
+  obj.position.set(cam.x, Math.max(ground, cam.y - 20), cam.z);
 }

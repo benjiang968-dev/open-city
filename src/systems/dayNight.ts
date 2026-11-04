@@ -93,13 +93,13 @@ export function updateDayNight(w: World, dt: number): void {
   if (up > 0) {
     s.sun.color.set(0xfff2dd).lerp(ca.set(0xffa060), 1 - Math.min(1, up * 2.5));
     s.sun.intensity = sunI;
-    s.sun.position.set(p.x - Math.cos(ang) * 150, Math.max(20, up * 200), p.z + 60);
+    s.sun.position.set(p.x - Math.cos(ang) * 150, p.y + Math.max(20, up * 200), p.z + 60);
   } else {
     s.sun.color.set(0x8fa8ff);
     s.sun.intensity = 0.35;
-    s.sun.position.set(p.x + 60, 160, p.z - 40);
+    s.sun.position.set(p.x + 60, p.y + 160, p.z - 40);
   }
-  s.sun.target.position.set(p.x, 0, p.z);
+  s.sun.target.position.set(p.x, p.y, p.z); // the shadow box follows you up hills
   s.hemi.intensity = hemiI;
   s.hemi.color.copy(s.skyTop).lerp(ca.set(0xffffff), 0.5);
   s.sky.position.copy(w.camera.position);

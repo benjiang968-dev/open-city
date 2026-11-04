@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { TUNING, type CarTypeName } from '../../tuning';
 import type { World } from '../../world';
-import type { CityData, Poi } from '../cityGen';
+import type { CityMap, Poi } from '../map/cityMap';
 import type { JobSystem, JobMarker } from './jobManager';
 import { spawnVehicle, type Vehicle } from '../vehicles';
 import { toast } from '../hud';
@@ -35,7 +35,7 @@ export interface Dealership {
 }
 
 /** Grid city: two garage POIs far apart (shops if there aren't enough garages). */
-export function pickDealershipPois(city: CityData): number[] {
+export function pickDealershipPois(city: CityMap): number[] {
   const out: Poi[] = [];
   for (const kind of ['garage', 'shop']) {
     for (const p of city.pois) {
@@ -61,11 +61,11 @@ export class DealershipJob implements JobSystem {
     this.rng = new Rng(w.seed ^ 0xdea1);
     poiIds.forEach((poiId, k) => {
       const poi = w.city.pois[poiId];
-      // n: from the pavement out into the road; the kerb runs along f, and parked cars face along f
-      const nx0 = poi.curbX - poi.x, nz0 = poi.curbZ - poi.z, nl = Math.hypot(nx0, nz0) || 1;
-      const nx = nx0 / nl, nz = nz0 / nl;
-      const fx = -nz, fz = nx;
-      const heading = Math.atan2(fx, fz);
+      // f: along the kerb, the way traffic in the kerbside lane drives (parked cars face that way);
+      // n: from the pavement out into the road (the pavement is on the lane's right-hand side)
+      const heading = poi.kerbHeading;
+      const fx = Math.sin(heading), fz = Math.cos(heading);
+      const nx = Math.cos(heading), nz = -Math.sin(heading);
       const stock = D.stock[k % D.stock.length];
       const slots: DisplaySlot[] = [];
       stock.forEach((type, i) => {
@@ -177,7 +177,7 @@ function buildSign(w: World, name: string, x: number, z: number, facing: number)
     group.add(post);
   }
   group.add(front, back);
-  group.position.set(x, 0, z);
+  group.position.set(x, w.city.heightAt(x, z), z);
   group.rotation.y = facing; // the board faces the road
   w.scene.add(group);
 }

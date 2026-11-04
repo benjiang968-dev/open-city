@@ -4,11 +4,17 @@ import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
-import { createAiCar, driveAlongPath, stunCheck, syncAi, placeOnEdge, yawQuat, velXZ, type AiCar } from './traffic';
+import { createAiCar, driveAlongPath, stunCheck, syncAi, placeOnEdge, yawQuat, velXZ, pickNext, anyLane, laneStart, stopLine, type AiCar } from './traffic';
 import { exitVehicle } from './player';
 import { toast } from './hud';
+import { roadRouter, projectOnLane, type LaneHit } from './map/cityMap';
 
 const P = TUNING.police;
+
+// scratch for the road lookups (allocation-free)
+const HIT: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+const ON: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+const camLook = new THREE.Vector3();
 
 export interface PoliceState {
   heat: number;
@@ -33,7 +39,7 @@ export function createPolice(): PoliceState {
 
 export function spawnPolicePool(w: World): void {
   for (let k = 0; k < P.maxCars; k++) {
-    const car = createAiCar(w, 'police', 'sedan', new THREE.Color('#f8f9fa'), 0, w.city.nodes[0].nbrs[0], 0);
+    const car = createAiCar(w, 'police', 'sedan', new THREE.Color('#f8f9fa'), anyLane(w), 0);
     car.id = k;
     w.colliderOwner.set(car.collider.handle, { kind: 'police', id: k });
     park(car);
@@ -67,7 +73,8 @@ export function policeCanSee(w: World, x: number, z: number): boolean {
     const dx = x - c.px, dz = z - c.pz, d = Math.hypot(dx, dz);
     if (d > P.sightRange) continue;
     if (d < 2) return true;
-    const ray = new R.Ray({ x: c.px, y: 1.4, z: c.pz }, { x: dx / d, y: -0.4 / d, z: dz / d });
+    const y0 = w.city.heightAt(c.px, c.pz) + 1.4, y1 = w.city.heightAt(x, z) + 1.0;
+    const ray = new R.Ray({ x: c.px, y: y0, z: c.pz }, { x: dx / d, y: (y1 - y0) / d, z: dz / d });
     if (!w.physics.castRay(ray, d - 1, true, R.QueryFilterFlags.ONLY_FIXED)) return true;
   }
   return false;
@@ -83,32 +90,26 @@ export function addHeat(w: World, amount: number): void {
   pol.lastSeenZ = pp.z;
 }
 
-function nearestNode(w: World, x: number, z: number): number {
-  let best = 0, bd = Infinity;
-  for (const n of w.city.nodes) {
-    const d = (n.x - x) ** 2 + (n.z - z) ** 2;
-    if (d < bd) { bd = d; best = n.id; }
-  }
-  return best;
+/** The lane nearest the last known position of the player (-1 if none near). */
+function goalLane(w: World): number {
+  return w.city.nearestLane(w.police.lastSeenX, w.police.lastSeenZ, P.goalLaneRange, HIT) ? HIT.edge : -1;
 }
 
-/** Next node from `from`(arriving at `at`) on the shortest path toward `goal`. */
-function bfsNext(w: World, at: number, cameFrom: number, goal: number): number {
-  const nodes = w.city.nodes;
-  if (at === goal) {
-    const o = nodes[at].nbrs.filter((n) => n !== cameFrom);
-    return o[Math.floor(Math.random() * o.length)] ?? cameFrom;
+/**
+ * Junction choice for a police car: the next lane on the shortest directed route to the lane where the player
+ * was last seen (then round the block past them again); at random if there is no route.
+ */
+function chaseNext(w: World, car: AiCar): number {
+  const { nodes, edges } = w.city.roads;
+  const at = edges[car.edge].to;
+  const goal = goalLane(w);
+  if (goal >= 0) {
+    const out = nodes[at].out;
+    for (let i = 0; i < out.length; i++) if (out[i] === goal) return goal;
+    const first = roadRouter(w.city).firstEdge(at, edges[goal].from);
+    if (first >= 0) return first;
   }
-  const prev = new Map<number, number>([[at, -1]]);
-  const q = [at];
-  for (let i = 0; i < q.length; i++) {
-    const n = q[i];
-    if (n === goal) break;
-    for (const m of nodes[n].nbrs) if (!prev.has(m)) { prev.set(m, n); q.push(m); }
-  }
-  let n = goal;
-  while (prev.get(n) !== at && prev.get(n) !== undefined && prev.get(n) !== -1) n = prev.get(n)!;
-  return n === at ? nodes[at].nbrs[0] : n;
+  return pickNext(w, car, Math.random);
 }
 
 function spawnCar(w: World): void {
@@ -116,24 +117,27 @@ function spawnCar(w: World): void {
   if (!car) return;
   const pp = w.player.mesh.position;
   const cam = w.camera;
+  const { nodes } = w.city.roads;
+  cam.getWorldDirection(camLook);
+  camLook.y = 0;
+  camLook.normalize();
   // pick a road edge roughly spawnDistance away, preferably behind the camera
-  let best: [number, number] | null = null, bestScore = -Infinity;
-  for (const a of w.city.nodes) {
+  let best = -1, bestScore = -Infinity;
+  for (const a of nodes) {
+    if (!a.out.length) continue;
     const d = Math.hypot(a.x - pp.x, a.z - pp.z);
     if (d < P.spawnDistance * 0.6 || d > P.spawnDistance * 1.6) continue;
-    const toN = new THREE.Vector3(a.x - cam.position.x, 0, a.z - cam.position.z).normalize();
-    const look = new THREE.Vector3();
-    cam.getWorldDirection(look);
-    const behind = -toN.dot(look.setY(0).normalize());
+    const tx = a.x - cam.position.x, tz = a.z - cam.position.z, tl = Math.hypot(tx, tz) || 1;
+    const behind = -(tx * camLook.x + tz * camLook.z) / tl;
     const score = behind - Math.abs(d - P.spawnDistance) / 100 + Math.random() * 0.3;
-    if (score > bestScore) { bestScore = score; best = [a.id, a.nbrs[Math.floor(Math.random() * a.nbrs.length)]]; }
+    if (score > bestScore) { bestScore = score; best = a.out[Math.floor(Math.random() * a.out.length)]; }
   }
-  if (!best) best = [0, w.city.nodes[0].nbrs[0]];
+  if (best < 0) best = anyLane(w);
   car.body.setGravityScale(1, true);
   car.body.wakeUp();
   car.mesh.visible = true;
-  placeOnEdge(w, car, best[0], best[1], 5);
-  car.chooser = (c) => bfsNext(w, c.to, c.from, nearestNode(w, w.police.lastSeenX, w.police.lastSeenZ));
+  placeOnEdge(w, car, best, 5);
+  car.chooser = (c) => chaseNext(w, c);
   w.police.cars.push(car);
 }
 
@@ -232,18 +236,19 @@ export function drivePolice(w: World, dt: number): void {
         car.lastSetHeading = car.heading;
         car.body.setRotation(yawQuat(car.heading), true);
       }
+      if (car.phase === 'turn' && car.next >= 0) {
+        // was crossing a junction: carry on from the lane it was turning into
+        car.edge = car.next;
+        car.s = laneStart(w.city.roads.edges[car.edge]);
+      }
+      car.next = -1;
       car.phase = 'lane';
       car.stuckT = 0;
     } else {
       // rejoin the road network if we left it while chasing
       if (car.stuckT === 0 && car.phase === 'lane') {
-        const a = w.city.nodes[car.from], b = w.city.nodes[car.to];
-        const off = distToSegment(t.x, t.z, a.x, a.z, b.x, b.z);
-        if (off > 10) {
-          const n = nearestNode(w, t.x, t.z);
-          const next = bfsNext(w, n, -1, nearestNode(w, pol.lastSeenX, pol.lastSeenZ));
-          placeOnEdgeQuiet(w, car, n, next);
-        }
+        const off = projectOnLane(w.city.roads.edges[car.edge], t.x, t.z, ON).dist;
+        if (off > P.offRoadRejoin) rejoinRoad(w, car, t.x, t.z);
       }
       car.stuckT += dt;
       if (car.stuckT > 4) car.stuckT = 0;
@@ -268,24 +273,26 @@ function bustCheck(w: World, dt: number): void {
   } else pol.bustTimer = Math.max(0, pol.bustTimer - dt);
 }
 
-function distToSegment(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
-  const vx = bx - ax, vz = bz - az;
-  const t = THREE.MathUtils.clamp(((px - ax) * vx + (pz - az) * vz) / (vx * vx + vz * vz), 0, 1);
-  return Math.hypot(px - (ax + vx * t), pz - (az + vz * t));
-}
-
-/** Rejoin a lane without teleporting: just re-target the path from the current position. */
-function placeOnEdgeQuiet(w: World, car: AiCar, from: number, to: number) {
-  const t = car.body.translation();
-  const h = car.heading, sp = car.speed;
-  placeOnEdge(w, car, from, to, 0);
-  // keep the car where it is; the path follower will steer it onto the lane
-  car.body.setTranslation(t, true);
-  car.heading = h;
-  car.speed = sp;
-  const p0 = car.path[0], p1 = car.path[car.path.length - 1];
-  const dx = p1.x - p0.x, dz = p1.y - p0.y, L = Math.hypot(dx, dz);
-  car.s = THREE.MathUtils.clamp(((t.x - p0.x) * dx + (t.z - p0.y) * dz) / L, 0, L - 1);
+/**
+ * Rejoin the nearest lane without teleporting: re-target the path from where the car is (the path follower
+ * steers it back on). Takes the direction whose far end is nearer the player's last known position.
+ */
+function rejoinRoad(w: World, car: AiCar, x: number, z: number): void {
+  if (!w.city.nearestLane(x, z, P.rejoinSearch, HIT)) return;
+  const { nodes, edges } = w.city.roads;
+  let e = edges[HIT.edge], s = HIT.s;
+  if (e.twin >= 0) {
+    const t = edges[e.twin], pol = w.police;
+    const a = nodes[e.to], b = nodes[t.to];
+    if (Math.hypot(b.x - pol.lastSeenX, b.z - pol.lastSeenZ) < Math.hypot(a.x - pol.lastSeenX, a.z - pol.lastSeenZ)) {
+      e = t;
+      s = projectOnLane(t, x, z, ON).s;
+    }
+  }
+  car.edge = e.id;
+  car.next = -1;
+  car.phase = 'lane';
+  car.s = Math.max(laneStart(e), Math.min(s, stopLine(e) - 1));
 }
 
 function bust(w: World): void {
@@ -301,7 +308,7 @@ function bust(w: World): void {
   pol.loseTimer = 0;
   // released outside the precinct (or the first taxi rank)
   const station = w.city.pois.find((p) => p.kind === 'police') ?? w.city.taxiRanks[0];
-  w.player.body.setTranslation({ x: station.x, y: 1.2, z: station.z }, true);
+  w.player.body.setTranslation({ x: station.x, y: w.city.heightAt(station.x, station.z) + 1.2, z: station.z }, true);
   toast(w, `<span style="color:#ef476f">BUSTED</span><br><span style="font-size:18px">Fined $${fine}</span>`, 3.5);
 }
 
