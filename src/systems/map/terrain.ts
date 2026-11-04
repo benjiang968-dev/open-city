@@ -271,6 +271,26 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
       vb[v] = b;
       vy[v] = hq[o] * 0.01 - (b === B.ROAD || b === B.FLAT || b === B.BUILDING ? BAND_DIP : 0);
     }
+  // A natural vertex next to a road / sidewalk vertex may not stand above that band's surface: in a cutting (the
+  // Parkway under the Rock Creek banks) the 5 m triangle between them otherwise pokes up to 0.8 m through the
+  // carriageway (a ridge cars hit). The bank then starts rising one mesh step further out.
+  {
+    const cap = new Float32Array(n).fill(Infinity);
+    for (let j = 0; j < nz; j++)
+      for (let i = 0; i < nx; i++) {
+        const v = j * nx + i;
+        if (vb[v] !== B.ROAD && vb[v] !== B.FLAT) continue;
+        const top = hq[at(i, j)] * 0.01;
+        for (let dj = -1; dj <= 1; dj++)
+          for (let di = -1; di <= 1; di++) {
+            const ii = i + di, jj = j + dj;
+            if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
+            const u = jj * nx + ii;
+            if (vb[u] === B.NONE && top < cap[u]) cap[u] = top;
+          }
+      }
+    for (let v = 0; v < n; v++) if (vy[v] > cap[v]) vy[v] = cap[v];
+  }
   // colours: park/cemetery/yard grass, earth on steep slopes, mud and sand near water
   for (let j = 0; j < nz; j++)
     for (let i = 0; i < nx; i++) {

@@ -96,7 +96,7 @@ const report = await page.evaluate(() => {
       else {
         // no ground under it: inside a building / shelter box (raster edge, harmless) or a real hole
         castDownShape(x, h + 1.2, z, o2);
-        rec(o2[1] === 1 && o2[0] > h - 0.01 ? name + ':inBox' : name + ':HOLE', x, z, NaN);
+        rec((o2[1] === 1 || o2[1] === 9) && o2[0] > h - 0.01 ? name + ':inBox' : name + ':HOLE', x, z, NaN);
       }
       // anything else standing here (boxes = buildings / shelters, cylinders = posts / trunks)
       castDownShape(x, h + 40, z, o2);
