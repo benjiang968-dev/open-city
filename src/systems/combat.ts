@@ -1,18 +1,19 @@
 // Throwing and melee. Left click (or F) with a throwable: hold to charge, an arc shows where it will land,
 // release to throw (aimed where the camera looks). With a bat or wrench: click to swing. Thrown items are real
-// physics objects; hitting people makes them react, heavy hits dent cars.
+// physics objects; hitting people makes them react, heavy hits dent cars. Dogs can be hit too (a serious crime).
 import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
 import { selectedItem, takeSelected } from './inventory';
 import { placeInWorld, type WorldItem } from './worldItems';
-import { hitPed } from './npcReactions';
+import { hitPed, hurtDog } from './npcReactions';
 import { dentAt } from './carDamage';
 import type { Vehicle } from './vehicles';
 
 const CB = TUNING.combat;
 const IT = TUNING.items;
+const DG = TUNING.dogs;
 
 export interface CombatState {
   charging: boolean;
@@ -26,7 +27,7 @@ export interface CombatState {
   arc: THREE.Line;
   arcPts: Float32Array;
   ring: THREE.Mesh;
-  /** Thrown items still flying and which people they already hit. */
+  /** Thrown items still flying and which people (ped id) and dogs (~owner id) they already hit. */
   flying: { item: WorldItem; hit: Set<number> }[];
 }
 
@@ -145,7 +146,23 @@ export function updateCombat(w: World, dt: number): void {
     if (!item.thrown || !item.inWorld) { c.flying.splice(i, 1); continue; }
     if (item.speed < CB.minHitSpeed) continue;
     for (const ped of w.peds) {
-      if (f.hit.has(ped.id) || ped.state === 'down' || !ped.active || ped.hidden || ped.protectedTarget) continue;
+      if (!ped.active || ped.hidden) continue;
+      const dog = ped.dog;
+      if (dog && !f.hit.has(~ped.id)) {
+        // a dog: small and low, so its own hit box
+        const dx = item.px - dog.pos.x, dz = item.pz - dog.pos.z, r = DG.hitRadius * dog.scale, y = item.py - dog.pos.y;
+        if (dx * dx + dz * dz < r * r && y > 0 && y < DG.hitHeight * dog.scale) {
+          f.hit.add(~ped.id);
+          const d = IT.defs[item.type];
+          const dmg = d.hitDamage * THREE.MathUtils.clamp(item.speed / CB.throwMaxSpeed, 0.3, 1);
+          const lv = item.body.linvel();
+          if (hurtDog(w, ped, 'thrown', dmg * TUNING.hurtFx.strengthPerDamage, lv.x, lv.z, d.name)) {
+            item.body.setLinvel({ x: -lv.x * 0.25, y: Math.abs(lv.y) * 0.3, z: -lv.z * 0.25 }, true);
+            w.audio.thud?.(item.px, item.pz, 3);
+          }
+        }
+      }
+      if (f.hit.has(ped.id) || ped.state === 'down' || ped.protectedTarget) continue;
       const dx = item.px - ped.pos.x, dz = item.pz - ped.pos.z;
       if (Math.abs(dx) > 0.7 || Math.abs(dz) > 0.7) continue;
       const y = item.py - ped.pos.y;
@@ -226,6 +243,15 @@ function meleeHit(w: World, item: WorldItem, m: { damage: number; reach: number;
     if ((dx * fx + dz * fz) / d < CB.swingArcDot) continue;
     hitPed(w, ped, 'melee', m.damage, true, pos.x, pos.z, name);
     hitSomething = true;
+  }
+  // dogs in the swing arc
+  for (const ped of w.peds) {
+    const dog = ped.dog;
+    if (!dog || !ped.active || ped.hidden) continue;
+    const dx = dog.pos.x - pos.x, dz = dog.pos.z - pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d > m.reach + DG.meleeReachExtra || d < 0.01 || (dx * fx + dz * fz) / d < CB.swingArcDot) continue;
+    if (hurtDog(w, ped, 'melee', m.damage * TUNING.hurtFx.strengthPerDamage, dx, dz, name)) hitSomething = true;
   }
   // cars in front: sample the swing point against each car's box
   const hx0 = pos.x + fx * m.reach * 0.8, hz0 = pos.z + fz * m.reach * 0.8;

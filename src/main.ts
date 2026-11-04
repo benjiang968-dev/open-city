@@ -34,6 +34,7 @@ import { updateWitnesses, witnessStats } from './systems/witness';
 import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
+import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtFx';
 
 async function boot() {
   await RAPIER.init();
@@ -81,6 +82,7 @@ async function boot() {
   spawnPolicePool(w);
   spawnPeds(w);
   w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
+  w.hurtFx = createHurtFx(w);
   w.hud = createHud();
   w.chat = createChat(w);
   w.jobs.bind(w);
@@ -102,7 +104,9 @@ async function boot() {
     pool[0].mesh.material = wreckMaterial;
     const crack = w.vehicles[0].dmg.crack;
     crack.visible = true;
+    showHurtFxForWarmup(w.hurtFx, true);
     renderer.compile(scene, camera);
+    showHurtFxForWarmup(w.hurtFx, false);
     crack.visible = false;
     pool[0].mesh.material = keep;
     for (const c of pool) c.mesh.visible = false;
@@ -199,6 +203,7 @@ async function boot() {
     w.events.length = 0;
 
     P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); if (w.started) updateCombat(w, dt); updateInventory(w); updateBubbles(w); P.end('sync');
+    P.begin('fx'); updateHurtFx(w, dt); P.end('fx');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
     P.begin('weather'); updateWeather(w, dt); P.end('weather');
     if (render) { P.begin('city'); updateCity(w.city, w.time); P.end('city'); }

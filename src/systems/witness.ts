@@ -3,6 +3,8 @@
 // call 999 (phone at the ear for a visible 2–3 s, then heat rises and police are sent to the spot), film it,
 // run, or come over and confront you. Police who see it themselves react instantly.
 // Hitting or knocking down a caller before they finish stops the call; that's the fair window.
+// Hurting a dog (M3) is a serious crime: the owner always calls (unless knocked down), and people nearby react
+// strongly; even without line of sight they hear the yelp.
 import { TUNING } from '../tuning';
 import type { World, GameEvent } from '../world';
 import type { Ped } from './pedestrians';
@@ -24,6 +26,7 @@ interface Crime {
   z: number;
   heat: number;
   reported: boolean; // first completed call sets the full heat; later callers add a little
+  victim: number; // ped id of the victim (for a dog: its owner), or -1
 }
 
 let nextCrime = 1;
@@ -34,8 +37,11 @@ export interface WitnessStats {
   callsCompleted: number;
   callsInterrupted: number;
   filming: number;
+  /** Completed calls per crime kind, and who made the last one (tests). */
+  completedByKind: Record<string, number>;
+  lastCaller: number;
 }
-export const witnessStats: WitnessStats = { callsStarted: 0, callsCompleted: 0, callsInterrupted: 0, filming: 0 };
+export const witnessStats: WitnessStats = { callsStarted: 0, callsCompleted: 0, callsInterrupted: 0, filming: 0, completedByKind: {}, lastCaller: -1 };
 
 function crimeFromEvent(e: GameEvent): { kind: CrimeKind; x: number; z: number; victim: number } | null {
   switch (e.type) {
@@ -44,6 +50,7 @@ function crimeFromEvent(e: GameEvent): { kind: CrimeKind; x: number; z: number; 
     case 'harassment': return { kind: 'harassment', x: e.x, z: e.z, victim: e.pedId };
     case 'vandalism': return { kind: 'vandalism', x: e.x, z: e.z, victim: -1 };
     case 'menace': return { kind: 'menace', x: e.x, z: e.z, victim: -1 };
+    case 'dogHurt': return { kind: 'dogAttack', x: e.x, z: e.z, victim: e.pedId };
     case 'carHit':
       if (e.speed < 6 || e.targetKind === 'parked') return null;
       return { kind: e.targetKind === 'police' ? 'ramPolice' : 'ramming', x: e.x, z: e.z, victim: -1 };
@@ -55,11 +62,13 @@ function pickReaction(ped: Ped, kind: CrimeKind): Reaction {
   if (ped.archetype === 'kid') return 'flee';
   const base = WT.byArchetype[ped.archetype as keyof typeof WT.byArchetype] ?? WT.byArchetype.adult;
   const mod = WT.personality[ped.npc.personality];
+  const dog = kind === 'dogAttack';
+  const DA = WT.dogAttackReaction;
   const weights: [Reaction, number][] = [
-    ['call', base.call * mod.call * (kind === 'menace' || kind === 'harassment' ? 0.6 : 1)],
-    ['film', base.film * mod.film],
-    ['flee', base.flee * mod.flee],
-    ['confront', base.confront * mod.confront * (kind === 'pedHit' || kind === 'menace' ? 0.3 : 1)],
+    ['call', base.call * mod.call * (kind === 'menace' || kind === 'harassment' ? 0.6 : 1) * (dog ? DA.call : 1)],
+    ['film', base.film * mod.film * (dog ? DA.film : 1)],
+    ['flee', base.flee * mod.flee * (dog ? DA.flee : 1)],
+    ['confront', base.confront * mod.confront * (kind === 'pedHit' || kind === 'menace' ? 0.3 : 1) * (dog ? DA.confront : 1)],
   ];
   let r = Math.random() * weights.reduce((a, [, v]) => a + v, 0);
   for (const [k, v] of weights) {
@@ -87,7 +96,10 @@ export function startCall(w: World, ped: Ped, crime: { x: number; z: number; hea
   ped.phoneT = WT.callTimeMin + Math.random() * (WT.callTimeMax - WT.callTimeMin);
   ped.report = { x: crime.x, z: crime.z, heat: crime.heat, kind: crime.id !== undefined ? String(crime.id) : crime.kind };
   const total = ped.phoneT;
-  say(w, ped, pick(LINES.calling), total + 0.2, `ped${ped.id}`, () => 1 - ped.phoneT / total);
+  const cr = crime.id !== undefined ? crimes.get(crime.id) : undefined;
+  const kind = cr ? cr.kind : crime.kind;
+  const lines = kind === 'dogAttack' ? (cr && cr.victim === ped.id ? LINES.callingMyDog : LINES.callingDog) : LINES.calling;
+  say(w, ped, pick(lines), total + 0.2, `ped${ped.id}`, () => 1 - ped.phoneT / total);
   witnessStats.callsStarted++;
 }
 
@@ -112,7 +124,7 @@ export function updateWitnesses(w: World, dt: number): void {
     }
     const c = crimeFromEvent(e);
     if (!c) continue;
-    const crime: Crime = { id: nextCrime++, kind: c.kind, x: c.x, z: c.z, heat: WT.heat[c.kind], reported: false };
+    const crime: Crime = { id: nextCrime++, kind: c.kind, x: c.x, z: c.z, heat: WT.heat[c.kind], reported: false, victim: c.victim };
     crimes.set(crime.id, crime);
     // police who saw it react at once
     if (policeCanSee(w, c.x, c.z)) {
@@ -122,7 +134,8 @@ export function updateWitnesses(w: World, dt: number): void {
     // the victim (if any) decides whether to call once the flinch is over
     if (c.victim >= 0) {
       const v = w.peds[c.victim];
-      if (v && v.archetype !== 'kid' && Math.random() < WT.victimCall[v.npc.personality]) v.report = { x: c.x, z: c.z, heat: crime.heat, kind: String(crime.id) };
+      if (c.kind === 'dogAttack') { if (v) ownerCalls(w, v, crime); }
+      else if (v && v.archetype !== 'kid' && Math.random() < WT.victimCall[v.npc.personality]) v.report = { x: c.x, z: c.z, heat: crime.heat, kind: String(crime.id) };
     }
     // bystanders with line of sight
     const radius = WT.radius[c.kind];
@@ -132,13 +145,16 @@ export function updateWitnesses(w: World, dt: number): void {
       .filter((o) => o.d < radius)
       .sort((a, b) => a.d - b.d)
       .slice(0, WT.maxWitnesses);
-    for (const { p } of nearby) {
-      if (!canSee(w, p, c.x, c.z)) continue;
+    for (const { p, d } of nearby) {
+      const heard = c.kind === 'dogAttack' && d < TUNING.dogs.yelpHearRadius; // a yelp carries round corners
+      if (!heard && !canSee(w, p, c.x, c.z)) continue;
       const r = pickReaction(p, c.kind);
       if (r === 'call') startCall(w, p, { x: c.x, z: c.z, heat: crime.heat, kind: c.kind, id: crime.id });
       else if (r === 'film') startFilming(w, p);
       else if (r === 'confront' && p.followId < 0) { p.state = 'confront'; p.timer = TUNING.reactions.confrontTime; p.shoutT = 0; }
       else startFlee(p, c.x, c.z);
+      // shocked out loud (callers and filmers already show their phone bubble)
+      if (c.kind === 'dogAttack' && (r === 'flee' || r === 'confront')) say(w, p, pick(LINES.dogWitness), 2.4, `ped${p.id}`);
     }
   }
   // calls and filming in progress
@@ -170,11 +186,30 @@ function completeCall(w: World, ped: Ped) {
   }
   dispatchTo(w, r.x, r.z, heat);
   witnessStats.callsCompleted++;
+  const kind = crime ? crime.kind : r.kind;
+  witnessStats.completedByKind[kind] = (witnessStats.completedByKind[kind] ?? 0) + 1;
+  witnessStats.lastCaller = ped.id;
   say(w, ped, "📞 They're on their way!", 2, `ped${ped.id}`);
   toast(w, '<span style="font-size:18px">📞 Someone reported you to the police</span>', 2.2);
 }
 
-/** Called by the victim's flinch handler: if they decided to call, they start now. */
+/**
+ * A dog's owner always reports it unless knocked down: after their scream ('yell', see hurtDog) or a flinch,
+ * or straight away. Already on the phone? Then this is what they report.
+ */
+function ownerCalls(w: World, owner: Ped, crime: Crime) {
+  if (owner.state === 'down' || owner.hidden || !owner.active) return;
+  const report = { x: crime.x, z: crime.z, heat: crime.heat, kind: String(crime.id) };
+  if ((owner.state === 'phone' && owner.phoneMode === 'call') || owner.state === 'yell' || owner.state === 'flinch') {
+    // stopped filming to scream: drop the film here, or the phone loop below would wipe this report with it
+    if (owner.state !== 'phone' && owner.phoneMode === 'film') owner.phoneMode = null;
+    owner.report = report;
+    return;
+  }
+  startCall(w, owner, { ...report, kind: crime.kind, id: crime.id });
+}
+
+/** Called by the victim's flinch handler (and a dog owner's scream): if they decided to call, they start now. */
 export function victimMaybeCalls(w: World, ped: Ped): boolean {
   if (!ped.report) return false;
   const r = ped.report;

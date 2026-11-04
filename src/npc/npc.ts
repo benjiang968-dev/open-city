@@ -20,7 +20,9 @@ export type MemoryKind =
   | 'busted' // I saw the police catch you
   | 'assaulted' // you hit me with something
   | 'sawAssault' // I saw you attack someone
-  | 'vandalism'; // I saw you smash up a car
+  | 'vandalism' // I saw you smash up a car
+  | 'hurtMyDog' // you hurt my dog
+  | 'sawDogHurt'; // I saw you hurt someone's dog
 
 export interface MemoryEntry {
   kind: MemoryKind;

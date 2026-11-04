@@ -23,6 +23,7 @@ import type { ItemsState } from './systems/worldItems';
 import type { InventoryState } from './systems/inventory';
 import type { CombatState } from './systems/combat';
 import type { CrowdRender } from './systems/crowdRender';
+import type { HurtFxState } from './systems/hurtFx';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -37,6 +38,8 @@ export type GameEvent =
   | { type: 'harassment'; pedId: number; x: number; z: number; weapon: string }
   | { type: 'vandalism'; x: number; z: number; what: string }
   | { type: 'menace'; x: number; z: number }
+  /** The player hurt a dog; `pedId` is its owner (dog walker). */
+  | { type: 'dogHurt'; pedId: number; x: number; z: number; cause: 'car' | 'thrown' | 'melee'; weapon: string }
   | { type: 'policeCalled'; x: number; z: number; byPed: number };
 
 export interface World {
@@ -57,6 +60,7 @@ export interface World {
   inventory: InventoryState;
   combat: CombatState;
   crowd: CrowdRender;
+  hurtFx: HurtFxState;
   city: CityData;
   player: PlayerState;
   vehicles: Vehicle[];
