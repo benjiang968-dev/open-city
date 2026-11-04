@@ -175,7 +175,7 @@ export class TaxiJob implements JobSystem {
         if (this.timer <= 0) {
           ped.hidden = true;
           ped.body.setEnabled(false);
-          this.chooseDestination(w, p.x, p.z);
+          this.chooseDestination(w, p.x, p.z, p.y);
           this.phase = 'riding';
           this.tripTime = 0;
           this.startHealth = v.health;
@@ -210,7 +210,7 @@ export class TaxiJob implements JobSystem {
     }
   }
 
-  private chooseDestination(w: World, x: number, z: number) {
+  private chooseDestination(w: World, x: number, z: number, y: number) {
     const options = w.city.pois.filter((p) => {
       if (p.kind === 'taxiRank') return false;
       const d = Math.hypot(p.curbX - x, p.curbZ - z);
@@ -220,7 +220,7 @@ export class TaxiJob implements JobSystem {
     this.dest = list[Math.floor(Math.random() * list.length)];
     this.tripDist = Math.hypot(this.dest.curbX - x, this.dest.curbZ - z);
     // time allowance from the driving distance along the roads (one-way streets and all)
-    this.allowance = routeDistance(w, x, z, this.dest.curbX, this.dest.curbZ) / TX.expectedSpeed + 10;
+    this.allowance = routeDistance(w, x, z, this.dest.curbX, this.dest.curbZ, y) / TX.expectedSpeed + 10;
   }
 
   private complete(w: World, x: number, z: number, health: number) {
@@ -305,13 +305,14 @@ export class TaxiJob implements JobSystem {
 /**
  * Driving distance from (ax, az) to (bx, bz) along the lanes: from the nearest lane at the start, through the
  * road graph, to the nearest lane at the end, taking either direction of the road at each end (the driver can turn
- * round; the stop can be on either kerb). Falls back to TX.offRoadDetour x the straight line if either end is
- * off-road or there is no route.
+ * round; the stop can be on either kerb). `ay`: the car's height at the start (on a bridge deck the deck's lanes win
+ * over the road below); the drop-off is a kerb at ground level. Falls back to TX.offRoadDetour x the straight line
+ * if either end is off-road or there is no route.
  */
-export function routeDistance(w: World, ax: number, az: number, bx: number, bz: number): number {
+export function routeDistance(w: World, ax: number, az: number, bx: number, bz: number, ay = NaN): number {
   const c = w.city;
   const straight = Math.hypot(bx - ax, bz - az);
-  if (!c.nearestLane(ax, az, TX.routeLaneSearch, HA) || !c.nearestLane(bx, bz, TX.routeLaneSearch, HB)) return straight * TX.offRoadDetour;
+  if (!c.nearestLane(ax, az, TX.routeLaneSearch, HA, ay) || !c.nearestLane(bx, bz, TX.routeLaneSearch, HB, c.heightAt(bx, bz))) return straight * TX.offRoadDetour;
   const E = c.roads.edges, ea = E[HA.edge], eb = E[HB.edge];
   let best = Infinity;
   for (let i = 0; i < 2; i++) {

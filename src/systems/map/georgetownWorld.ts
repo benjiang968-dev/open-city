@@ -133,6 +133,8 @@ export interface GeoWorld {
   omitted: { roadId: string; name: string; reason: string }[];
   /** Review data (optional): footprints cut back from streets / dropped, stoop bottoms (x, y, z, 0 per stoop). */
   audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array };
+  /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
+  droppedBuildings: ReadonlySet<string>;
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number };
   root: THREE.Group;
 }
@@ -340,6 +342,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     update, setQuality, quality,
     omitted,
     audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops },
+    droppedBuildings: dropped,
     stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris },
     root,
   };

@@ -51,8 +51,73 @@ export function installMapHelpers() {
     const e = best.e;
     return { x: e.pts[0], z: e.pts[2], heading: dir(e), length: best.len };
   };
-  /** Tall, wide buildings (crash walls), in map order. */
-  H.walls = () => c.buildings.filter((b) => b.h > 10 && b.maxX - b.minX > 12);
+  /**
+   * Tall, wide buildings (crash walls), in map order, with open road 8-16 m south of their middle (the crash run-up;
+   * on the grid that is every such building).
+   */
+  H.walls = () => c.buildings.filter((b) => {
+    if (!(b.h > 10 && b.maxX - b.minX > 12)) return false;
+    const x = (b.minX + b.maxX) / 2;
+    for (const d of [8, 12, 16]) if (!c.isRoad(x, b.maxZ + d) || c.isBlocked(x, b.maxZ + d)) return false;
+    return true;
+  });
+  /** Ground height at (x, z) (0 everywhere on the grid; terrain, roads and pavements on a real map). */
+  H.gy = (x, z) => c.heightAt(x, z);
+  /** Put a body `lift` metres above the ground at (x, z). */
+  H.put = (body, x, z, lift) => body.setTranslation({ x, y: c.heightAt(x, z) + lift, z }, true);
+  // ---- named places: real names on Georgetown, sensible spots on any other map (offsets snapped to roads) ----
+  const E = c.roads.edges, N = c.roads.nodes;
+  const namesAt = (n) => new Set([...n.in, ...n.out].map((i) => E[i].name));
+  const junction = (a, b) => N.find((n) => { const s = namesAt(n); return s.has(a) && s.has(b); }) ?? null;
+  /** The traffic lane (not a parking lane) of street `name` nearest (x, z), as a road spot. */
+  const laneOf = (name, x, z) => {
+    let best = null;
+    for (const e of E) {
+      if (e.name !== name || e.parking) continue;
+      const h = window.__ocMap.projectOnLane(e, x, z, { ...hit });
+      if (!best || h.dist < best.dist) best = { ...h };
+    }
+    return best && { x: best.x, z: best.z, y: best.y, heading: best.heading, edge: best.edge };
+  };
+  const PLACES = {
+    'M St at Wisconsin Ave': { at: ['M St NW', 'Wisconsin Ave NW'], grid: [0, 0] },
+    'Key Bridge north end': { at: ['Francis Scott Key Bridge', 'M St NW'], street: 'M St NW', grid: [-240, 0] },
+    '29th St between N and P': { between: ['29th St NW', 'N St NW', 'P St NW'], grid: [120, -80] },
+    'Washington Circle': { ring: true, grid: [240, -160] },
+    'waterfront': { walkKind: 'waterfront', near: [-120, 470], grid: [0, 400] },
+  };
+  /**
+   * A named place as a road spot { x, z, y, heading, edge } (a traffic lane there; the waterfront: a promenade walk
+   * node, edge -1). Unknown on this map: the grid offset from the centre snapped to the nearest lane.
+   */
+  H.place = (name) => {
+    const P = PLACES[name];
+    if (!P) throw new Error(`unknown place ${name}`);
+    if (P.at) {
+      const j = junction(P.at[0], P.at[1]);
+      if (j) return laneOf(P.street ?? P.at[0], j.x, j.z);
+    }
+    if (P.between) {
+      const a = junction(P.between[0], P.between[1]), b = junction(P.between[0], P.between[2]);
+      if (a && b) return laneOf(P.between[0], (a.x + b.x) / 2, (a.z + b.z) / 2);
+    }
+    if (P.ring) {
+      const ring = N.filter((n) => n.roundabout);
+      if (ring.length) {
+        const cx = ring.reduce((s, n) => s + n.x, 0) / ring.length, cz = ring.reduce((s, n) => s + n.z, 0) / ring.length;
+        const e = E.find((q) => q.roundabout && q.lane === 0);
+        const h = window.__ocMap.projectOnLane(e, cx, cz - 1000, { ...hit }); // the north side of the ring
+        return { x: h.x, z: h.z, y: h.y, heading: h.heading, edge: h.edge, centre: { x: cx, z: cz } };
+      }
+    }
+    if (P.walkKind) {
+      let best = null;
+      for (const n of c.walk.nodes) if (n.kind === P.walkKind && (!best || Math.hypot(n.x - P.near[0], n.z - P.near[1]) < Math.hypot(best.x - P.near[0], best.z - P.near[1]))) best = n;
+      if (best) return { x: best.x, z: best.z, y: best.y, heading: 0, edge: -1 };
+    }
+    const r = H.road(P.grid[0], P.grid[1]);
+    return { ...r, y: c.heightAt(r.x, r.z) };
+  };
   window.__mh = H;
 }
 
@@ -62,17 +127,26 @@ export async function world(page, S) {
   return state(page);
 }
 
+// Real key presses, but time runs in game seconds (window.__ocRun) rather than wall-clock waits, so the result is
+// the same on a slow software-GL machine (a real map renders a frame every few seconds there) as on a fast one.
+const holdSim = async (page, key, seconds) => {
+  await page.keyboard.down(key);
+  await page.evaluate((s) => window.__ocRun(s, 60), seconds);
+  await page.keyboard.up(key);
+};
+const runSim = (page, seconds) => page.evaluate((s) => window.__ocRun(s, 60), seconds);
+
 export async function walk(page, S) {
   await S.start(page);
   const a = await state(page);
-  await hold(page, 'KeyW', 1500);
-  await page.keyboard.down('ShiftLeft'); await hold(page, 'KeyW', 1000); await page.keyboard.up('ShiftLeft');
+  await holdSim(page, 'KeyW', 1.5);
+  await page.keyboard.down('ShiftLeft'); await holdSim(page, 'KeyW', 1.0); await page.keyboard.up('ShiftLeft');
   await page.keyboard.press('Space');
-  await page.waitForTimeout(150);
+  await runSim(page, 0.15);
   const air = await state(page);
-  await page.waitForTimeout(800);
+  await runSim(page, 0.8);
   const b = await state(page);
-  return { a, air, b };
+  return { a, air, b, walkedM: +Math.hypot(b.x - a.x, b.z - a.z).toFixed(1), climbedM: +(b.y - a.y).toFixed(2), jumpedM: +(air.y - b.y).toFixed(2) };
 }
 
 // teleport next to the nearest car, enter, and drive
@@ -80,17 +154,17 @@ export async function drive(page, S) {
   await S.start(page);
   await page.evaluate(() => {
     const w = window.__oc; const v = w.vehicles[0]; const t = v.body.translation();
-    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.2, y: 1.2, z: t.z - Math.sin(v.heading) * 2.2 }, true);
+    window.__mh.put(w.player.body, t.x + Math.cos(v.heading) * 2.2, t.z - Math.sin(v.heading) * 2.2, 1.2);
   });
-  await page.waitForTimeout(400);
+  await runSim(page, 0.4);
   await page.keyboard.press('KeyE');
-  await page.waitForTimeout(500);
+  await runSim(page, 0.5);
   const out = { start: await state(page) };
-  await hold(page, 'KeyW', 3000);
+  await holdSim(page, 'KeyW', 3);
   out.accel3s = await state(page);
-  await page.keyboard.down('KeyW'); await hold(page, 'KeyA', 1200); await page.keyboard.up('KeyW');
+  await page.keyboard.down('KeyW'); await holdSim(page, 'KeyA', 1.2); await page.keyboard.up('KeyW');
   out.afterLeft = await state(page);
-  await hold(page, 'KeyS', 1500);
+  await holdSim(page, 'KeyS', 1.5);
   out.braked = await state(page);
   return out;
 }
@@ -190,11 +264,11 @@ export async function taxi(page, S) {
     const taxi = w.jobs.get('taxi');
     const v = w.vehicles.find((c) => c.type === 'sedan');
     const t = v.body.translation();
-    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__mh.put(w.player.body, t.x + Math.cos(v.heading) * 2.4, t.z - Math.sin(v.heading) * 2.4, 1.2);
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
     const out = { inCar: !!w.player.vehicle, fares: [] };
     const tp = (x, z) => {
-      v.body.setTranslation({ x, y: 1.0, z }, true); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      window.__mh.put(v.body, x, z, 1.0); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       v.prevVel.set(0, 0, 0);
     };
     for (let k = 0; k < 3; k++) {
@@ -291,16 +365,19 @@ export async function police(page, S) {
     const v = w.vehicles.find((c) => c.type === 'pickup');
     v.owned = true; // (M3) heat here should come from the hits only, not from taking the car
     const t = v.body.translation();
-    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.6, y: 1.2, z: t.z - Math.sin(v.heading) * 2.6 }, true);
+    window.__mh.put(w.player.body, t.x + Math.cos(v.heading) * 2.6, t.z - Math.sin(v.heading) * 2.6, 1.2);
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
     // run over two pedestrians
     const hits = [];
     for (const i of [20, 21]) {
       const p = w.peds[i]; p.state = 'idle'; p.timer = 30;
-      const h = Math.PI / 2;
-      v.body.setTranslation({ x: p.pos.x - 12, y: 1.0, z: p.pos.z }, true);
+      // run-up from the west (the grid's pavements run east-west); else the first open direction
+      const clear = (h) => { for (let k = 2; k <= 12; k += 2) if (w.city.isBlocked(p.pos.x - Math.sin(h) * k, p.pos.z - Math.cos(h) * k)) return false; return true; };
+      const h = [Math.PI / 2, -Math.PI / 2, 0, Math.PI].find(clear) ?? Math.PI / 2;
+      const ux = Math.sin(h), uz = Math.cos(h);
+      window.__mh.put(v.body, p.pos.x - ux * 12, p.pos.z - uz * 12, 1.0);
       v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
-      v.body.setLinvel({ x: 13, y: 0, z: 0 }, true); v.prevVel.set(13, 0, 0);
+      v.body.setLinvel({ x: ux * 13, y: 0, z: uz * 13 }, true); v.prevVel.set(ux * 13, 0, uz * 13);
       run(1.2);
       hits.push(p.state);
     }
@@ -331,8 +408,8 @@ export async function police(page, S) {
     v2.owned = true; // (M3) switching to a car of your own (stealing one is the theft scenario)
     w.input.pressed.add('KeyE'); run(0.1); // get out
     const far = window.__mh.road(306, -237); // grid: the north-east corner, behind buildings
-    v2.body.setTranslation({ x: far.x, y: 1, z: far.z }, true); v2.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v2.prevVel.set(0, 0, 0);
-    w.player.body.setTranslation({ x: far.x + 2.2, y: 1.2, z: far.z }, true);
+    window.__mh.put(v2.body, far.x, far.z, 1); v2.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v2.prevVel.set(0, 0, 0);
+    window.__mh.put(w.player.body, far.x + 2.2, far.z, 1.2);
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
     const samples = [];
     for (let k = 0; k < 20; k++) {
@@ -503,7 +580,7 @@ export async function crashspikes(page, S) {
   return page.evaluate(() => {
     const w = window.__oc;
     const v = w.vehicles.find((c) => c.type === 'sedan'); const t = v.body.translation();
-    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    window.__mh.put(w.player.body, t.x + Math.cos(v.heading) * 2.4, t.z - Math.sin(v.heading) * 2.4, 1.2);
     window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
     const R = (n) => window.__ocFrames(n, false);
     R(60);
@@ -511,7 +588,7 @@ export async function crashspikes(page, S) {
     const all = [];
     const bs = window.__mh.walls();
     const launch = (x, z, h, kmh) => {
-      v.body.setTranslation({ x, y: 0.9, z }, true);
+      window.__mh.put(v.body, x, z, 0.9);
       v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
       v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
       const vx = Math.sin(h) * kmh / 3.6, vz = Math.cos(h) * kmh / 3.6;
@@ -860,11 +937,11 @@ export async function witness(page, S) {
   const setup = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun;
     const bottle = w.itemsState.items.find((i) => i.type === 'bottle' && i.inWorld);
-    w.player.body.setTranslation({ x: bottle.px, y: 1.2, z: bottle.pz - 1.0 }, true); w.player.facing = 0;
+    window.__mh.put(w.player.body, bottle.px, bottle.pz - 1.0, 1.2); w.player.facing = 0;
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
     const pp = w.player.mesh.position;
     const victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly'));
-    victim.pos.set(pp.x, 0.02, pp.z + 5); victim.state = 'idle'; victim.timer = 30; victim.route = [];
+    victim.pos.set(pp.x, window.__mh.gy(pp.x, pp.z + 5) + 0.02, pp.z + 5); victim.state = 'idle'; victim.timer = 30; victim.route = [];
     w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
     w.input.keys.add('KeyF'); run(0.36); w.input.keys.delete('KeyF');
     const states = [];
@@ -872,7 +949,7 @@ export async function witness(page, S) {
     window.__victim = victim.id;
     return { victim: victim.id, personality: victim.npc.personality, states, phoneMode: victim.phoneMode, stars: w.police.stars };
   });
-  await page.evaluate(() => { const w = window.__oc; const v = w.peds[window.__victim]; w.cam.override = { px: v.pos.x + 2.2, py: 2.2, pz: v.pos.z - 2.6, lx: v.pos.x, ly: 1.3, lz: v.pos.z }; });
+  await page.evaluate(() => { const w = window.__oc; const v = w.peds[window.__victim]; const g = v.pos.y; w.cam.override = { px: v.pos.x + 2.2, py: g + 2.2, pz: v.pos.z - 2.6, lx: v.pos.x, ly: g + 1.3, lz: v.pos.z }; });
   await page.waitForTimeout(1500);
   await page.screenshot({ path: 'screenshots/19-calling-999.png' });
   const after = await page.evaluate(() => {
@@ -1302,7 +1379,12 @@ export async function hurtfx(page, S) {
 
 /** Freeze the world (no menu), draw it from a fixed camera, screenshot, then carry on where it was. */
 async function frozenShot(page, path, cam) {
-  await page.evaluate((c) => { const w = window.__oc; w.cam.override = c; window.__ocFrames(3, true); window.__frozenAt = w.time; w.paused = true; }, cam);
+  await page.evaluate((c) => {
+    const w = window.__oc;
+    // py / ly are heights above the ground under the camera and the target (the grid is flat: unchanged)
+    if (c) c = { ...c, py: c.py + w.city.heightAt(c.px, c.pz), ly: c.ly + w.city.heightAt(c.lx, c.lz) };
+    w.cam.override = c; window.__ocFrames(3, true); window.__frozenAt = w.time; w.paused = true;
+  }, cam);
   await page.waitForTimeout(400);
   await page.screenshot({ path });
   await page.evaluate(() => { const w = window.__oc; w.paused = false; w.time = window.__frozenAt; w.cam.override = null; });
@@ -1322,11 +1404,11 @@ export async function theft(page, S) {
     for (const p of w.peds) {
       if (!p.active || Math.hypot(p.pos.x - v.px, p.pos.z - v.pz) > 120) continue;
       const n = far[(p.id * 7) % far.length];
-      p.pos.set(n.x, 0.02, n.z); p.state = 'idle'; p.timer = 40; p.route = []; moved++;
-      if (p.dog) p.dog.pos.set(n.x + 1, 0.02, n.z);
+      p.pos.set(n.x, window.__mh.gy(n.x, n.z) + 0.02, n.z); p.state = 'idle'; p.timer = 40; p.route = []; moved++;
+      if (p.dog) p.dog.pos.set(n.x + 1, window.__mh.gy(n.x + 1, n.z) + 0.02, n.z);
     }
     const ch = Math.cos(v.heading), sh = Math.sin(v.heading);
-    w.player.body.setTranslation({ x: v.px - ch * 2.0, y: 1.2, z: v.pz + sh * 2.0 }, true);
+    window.__mh.put(w.player.body, v.px - ch * 2.0, v.pz + sh * 2.0, 1.2);
     w.player.facing = Math.atan2(ch, -sh); w.cam.yaw = w.player.facing + Math.PI;
     run(0.4);
     window.__A = { car: v.id, moved };
@@ -1369,12 +1451,12 @@ export async function theft(page, S) {
       .sort((a, b) => rank(a) - rank(b)).slice(0, 4);
     [-11, -6, 7, 12].forEach((off, i) => {
       const p = wit[i];
-      p.pos.set(v.px + kx * 3.0 + fx * off, 0.02, v.pz + kz * 3.0 + fz * off);
+      p.pos.set(v.px + kx * 3.0 + fx * off, window.__mh.gy(v.px + kx * 3.0 + fx * off, v.pz + kz * 3.0 + fz * off) + 0.02, v.pz + kz * 3.0 + fz * off);
       p.state = 'idle'; p.timer = 40; p.route = [];
     });
-    owner.pos.set(v.px + kx * 3.0 - fx * 23, 0.02, v.pz + kz * 3.0 - fz * 23);
+    owner.pos.set(v.px + kx * 3.0 - fx * 23, window.__mh.gy(v.px + kx * 3.0 - fx * 23, v.pz + kz * 3.0 - fz * 23) + 0.02, v.pz + kz * 3.0 - fz * 23);
     owner.state = 'idle'; owner.timer = 40; owner.route = [];
-    w.player.body.setTranslation({ x: v.px + kx * 1.95, y: 1.2, z: v.pz + kz * 1.95 }, true);
+    window.__mh.put(w.player.body, v.px + kx * 1.95, v.pz + kz * 1.95, 1.2);
     w.player.facing = Math.atan2(-kx, -kz);
     run(0.4);
     window.__B = { car: v.id, owner: owner.id, wit: wit.map((p) => p.id), calls0: window.__ocWitness.callsStarted, done0: window.__ocWitness.callsCompleted, stars0: w.police.stars };
@@ -1450,7 +1532,7 @@ export async function dealership(page, S) {
     const slot = site.slots.find((s) => s.car && s.type === 'hatchback') ?? site.slots.find((s) => s.car);
     const v = slot.car;
     const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh;
-    w.player.body.setTranslation({ x: v.px + kx * 2.0, y: 1.2, z: v.pz + kz * 2.0 }, true);
+    window.__mh.put(w.player.body, v.px + kx * 2.0, v.pz + kz * 2.0, 1.2);
     w.player.facing = Math.atan2(-kx, -kz);
     w.cash = 300;
     run(0.4);
@@ -1492,7 +1574,7 @@ export async function dealership(page, S) {
     const w = window.__oc; const v = w.player.vehicle;
     if (v) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); window.__ocRun(0.5); w.input.pressed.add('KeyE'); window.__ocRun(0.3); }
     const car = w.vehicles[window.__D.car], fx = Math.sin(car.heading), fz = Math.cos(car.heading), kx = -Math.cos(car.heading), kz = Math.sin(car.heading);
-    w.player.body.setTranslation({ x: car.px + kx * 2.2 - fx * 30, y: 1.2, z: car.pz + kz * 2.2 - fz * 30 }, true);
+    window.__mh.put(w.player.body, car.px + kx * 2.2 - fx * 30, car.pz + kz * 2.2 - fz * 30, 1.2);
     w.player.facing = car.heading; w.cam.yaw = car.heading + Math.PI;
     window.__ocRun(0.5); window.__ocFrames(3, true);
   });
@@ -1564,4 +1646,176 @@ export async function mapcheck(page, S) {
     const pass = report.ok && drive.choices >= 30 && drive.uTurnsNotAtDeadEnds === 0 && drive.maxOffLaneM < 3 && walks.fail === 0 && walks.badLink === 0 && noKerb === 0;
     return { map: c.id, pass, validateMs, report: { ok: report.ok, errors: report.errors, warnings: report.warnings.slice(0, 8), warningCount: report.warnings.length, stats: report.stats }, drive, walks, places };
   });
+}
+
+// Real-map play check and screenshots (MAP=georgetown node scripts/shot.mjs x geoplay): the spawn, driving along
+// M St, Key Bridge, Washington Circle with traffic, the F3 overlay, the minimap; the pause menu's attribution and the
+// quality switch. Places come from window.__mh.place, so on the grid it runs too (at the fallback spots).
+export async function geoplay(page, S) {
+  await S.start(page);
+  const out = {};
+  // ---- 1) the spawn (afternoon light) ----
+  out.spawn = await page.evaluate(() => {
+    const w = window.__oc;
+    w.dayNight.hour = 15.2;
+    w.cam.yaw = w.player.facing + Math.PI;
+    window.__ocRun(0.6);
+    const p = w.player.mesh.position;
+    return { map: w.city.id, x: +p.x.toFixed(1), y: +p.y.toFixed(2), z: +p.z.toFixed(1), facing: +w.player.facing.toFixed(2), street: w.city.walk.nodes[w.city.nearestWalk(p.x, p.z, p.y)].street, prompt: w.player.prompt.replace(/<[^>]+>/g, '') };
+  });
+  await frozenShot(page, 'screenshots/27-geo-play-spawn.png', null);
+  // helpers in the page: get into your own car; put it on a lane spot moving at `speed`
+  await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, c = w.city;
+    window.__drive = (spot, back, speed) => {
+      let v = w.player.vehicle;
+      if (!v) {
+        v = w.vehicles.find((q) => q.owned) ?? w.vehicles[0];
+        window.__mh.put(w.player.body, v.px - Math.cos(v.heading) * 2.2, v.pz + Math.sin(v.heading) * 2.2, 1.2);
+        run(0.2); w.input.pressed.add('KeyE'); run(0.2);
+      }
+      const hit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+      // `back` metres behind the spot along its lane, on the same lane (its level)
+      const bx = spot.x - Math.sin(spot.heading) * back, bz = spot.z - Math.cos(spot.heading) * back;
+      c.nearestLane(bx, bz, 40, hit, spot.y);
+      const h = hit.heading;
+      v.body.setTranslation({ x: hit.x, y: hit.y + 0.9, z: hit.z }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.body.setLinvel({ x: Math.sin(h) * speed, y: 0, z: Math.cos(h) * speed }, true);
+      v.prevVel.set(Math.sin(h) * speed, 0, Math.cos(h) * speed);
+      w.cam.yaw = h + Math.PI;
+      return { inCar: w.player.vehicle === v, edge: c.roads.edges[hit.edge].name, x: Math.round(hit.x), y: +hit.y.toFixed(1), z: Math.round(hit.z) };
+    };
+    window.__car = () => { const v = w.player.vehicle, p = v.body.translation(); return { kmh: Math.round(v.speed * 3.6), x: Math.round(p.x), y: +p.y.toFixed(1), z: Math.round(p.z), hp: Math.round(v.health), lane: c.nearestLane(p.x, p.z, 20, { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 }, p.y) }; };
+    window.__nearTraffic = (r) => { const p = w.player.mesh.position; return w.traffic.filter((t) => Math.hypot(t.px - p.x, t.pz - p.z) < r).length; };
+  });
+  // ---- 2) driving east along M St from west of Wisconsin Ave ----
+  out.mst = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const spot = window.__mh.place('M St at Wisconsin Ave');
+    const put = window.__drive(spot, 90, 9);
+    w.input.keys.add('KeyW'); run(1.8); w.input.keys.delete('KeyW'); run(0.3);
+    return { put, after: window.__car(), trafficWithin150m: window.__nearTraffic(150), parkedWithin60m: w.vehicles.filter((v) => !v.driven && Math.hypot(v.px - w.player.mesh.position.x, v.pz - w.player.mesh.position.z) < 60).length };
+  });
+  await frozenShot(page, 'screenshots/27-geo-play-mst-drive.png', null);
+  // ---- 3) Key Bridge: northbound on the deck, toward Georgetown ----
+  out.keybridge = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, c = w.city;
+    const lanes = c.roads.edges.filter((e) => e.bridge && /Key Bridge/.test(e.name ?? ''));
+    // northbound = travelling toward -z
+    const nb = lanes.filter((e) => e.pts[e.pts.length - 1] < e.pts[2]).sort((a, b) => b.lane - a.lane)[0];
+    if (!nb) return { skipped: 'no Key Bridge on this map' };
+    const lp = { x: 0, y: 0, z: 0, heading: 0 };
+    window.__ocMap.laneSample(nb, nb.len * 0.55, lp);
+    const put = window.__drive({ x: lp.x, z: lp.z, y: lp.y, heading: lp.heading }, 0, 12);
+    w.input.keys.add('KeyW'); run(1.2); w.input.keys.delete('KeyW'); run(0.2);
+    const car = window.__car();
+    return { put, after: car, deck: car.y > c.heightAt(car.x, car.z) + 3, ground: +c.heightAt(car.x, car.z).toFixed(1), onLane: car.lane };
+  });
+  await frozenShot(page, 'screenshots/27-geo-play-keybridge.png', null);
+  // ---- 4) Washington Circle: a few cars on the ring, you waiting on 23rd St at the yield line ----
+  out.circle = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, c = w.city, E = c.roads.edges, N = c.roads.nodes;
+    const ring = E.filter((e) => e.roundabout);
+    if (!ring.length) return { skipped: 'no roundabout on this map' };
+    const lp = { x: 0, y: 0, z: 0, heading: 0 };
+    // six traffic cars onto the ring (as traffic.placeOnEdge does)
+    w.traffic.slice(0, 6).forEach((car, k) => {
+      const e = ring[(k * 5) % ring.length];
+      car.edge = e.id; car.next = -1; car.phase = 'lane'; car.s = Math.min(e.len - e.trimEnd - 1, e.trimStart + 2);
+      window.__ocMap.laneSample(e, car.s, lp);
+      car.heading = lp.heading; car.lastSetHeading = NaN; car.speed = 4; car.stunT = 0; car.stuckT = 0;
+      car.body.setTranslation({ x: lp.x, y: lp.y + 0.62, z: lp.z }, true);
+      car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+      car.px = lp.x; car.pz = lp.z;
+    });
+    // you: on 23rd St north of the circle, heading south toward it
+    const cen = window.__mh.place('Washington Circle').centre;
+    const spoke = E.filter((e) => !e.roundabout && !e.parking && N[e.to].roundabout && e.name === '23rd St NW').sort((a, b) => N[a.to].z - N[b.to].z)[0];
+    if (spoke) {
+      window.__ocMap.laneSample(spoke, Math.max(0, spoke.len - spoke.trimEnd - 14), lp);
+      window.__drive({ x: lp.x, z: lp.z, y: lp.y, heading: lp.heading }, 0, 0);
+    }
+    run(2.5);
+    const onRing = w.traffic.filter((t) => E[t.edge].roundabout).length;
+    return { centre: cen, ringCars: onRing, spoke: spoke?.name ?? null, flowing: w.traffic.slice(0, 6).map((t) => Math.round(t.speed * 3.6)) };
+  });
+  {
+    const cam = await page.evaluate(() => { const cen = window.__mh.place('Washington Circle').centre; return cen ? { px: cen.x - 6, py: 38, pz: cen.z + 84, lx: cen.x, ly: 0, lz: cen.z } : null; });
+    await frozenShot(page, 'screenshots/27-geo-play-circle.png', cam);
+  }
+  // ---- 5) F3 overlay while driving on M St ----
+  out.f3 = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const spot = window.__mh.place('M St at Wisconsin Ave');
+    window.__drive(spot, 150, 10);
+    w.input.keys.add('KeyW'); run(1.0); w.input.keys.delete('KeyW');
+    w.input.pressed.add('F3'); window.__ocFrames(1, true);
+    window.__ocFrames(14, true);
+    const el = document.getElementById('debug');
+    return { visible: w.debugVisible && el.style.display !== 'none', text: el.textContent.split('\n').slice(0, 13) };
+  });
+  await frozenShot(page, 'screenshots/27-geo-play-f3.png', null);
+  // ---- 6) minimap (shown 2x so the street names can be read), on foot at the waterfront ----
+  out.minimap = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    w.input.pressed.add('F3'); window.__ocFrames(1, true); // overlay off again
+    const v = w.player.vehicle;
+    if (v) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.4); w.input.pressed.add('KeyE'); run(0.3); }
+    const p = window.__mh.place('M St at Wisconsin Ave');
+    const k = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
+    w.city.kerbPoint(p.x + 30, p.z + 20, k, p.y);
+    window.__mh.put(w.player.body, k.x - Math.cos(k.heading) * 3.4, k.z + Math.sin(k.heading) * 3.4, 1.2);
+    w.player.facing = k.heading; w.cam.yaw = k.heading + Math.PI;
+    run(0.5);
+    const mm = document.getElementById('minimap');
+    mm.style.transformOrigin = 'left bottom';
+    mm.style.transform = 'scale(2)';
+    return { ...window.__ocMinimap, streetLabels: w.city.streets.length };
+  });
+  await frozenShot(page, 'screenshots/27-geo-play-minimap.png', null);
+  // ---- 7) a police chase on M St: 2 stars while you sit in your car, then lose them on the far side of town ----
+  out.chase = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, c = w.city;
+    const P = w.police;
+    const spot = window.__mh.place('M St at Wisconsin Ave');
+    window.__drive(spot, 60, 0);
+    run(0.5);
+    const v = w.player.vehicle;
+    P.heat = 2 * 40 - 1; // two stars (police.heatPerStar = 40)
+    P.trackUntil = w.time + 4; P.lastSeenX = v.px; P.lastSeenZ = v.pz; P.lastSeenY = v.py;
+    const samples = [];
+    let firstSeen = null;
+    for (let k = 0; k < 30; k++) {
+      run(1);
+      const near = P.cars.length ? Math.min(...P.cars.map((pc) => Math.hypot(pc.px - v.px, pc.pz - v.pz))) : null;
+      if (P.seen && firstSeen === null) firstSeen = Math.round(w.time);
+      if (k % 3 === 0) samples.push({ t: Math.round(w.time), stars: P.stars, cars: P.cars.length, seen: P.seen, nearest: near && Math.round(near), onRoad: P.cars.every((pc) => c.nearestLane(pc.px, pc.pz, 8, { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 }, pc.py)) });
+      if (P.seen && near !== null && near < 25) break;
+    }
+    // get away: far side of town behind buildings, a new car of your own
+    const far = window.__mh.place('29th St between N and P');
+    window.__drive(far, 0, 0);
+    const lose = [];
+    for (let k = 0; k < 25 && P.stars > 0; k++) { run(2); lose.push([Math.round(w.time), P.stars, P.cars.length, P.seen ? 'seen' : '-']); }
+    return { firstSeenAt: firstSeen, samples, lose, starsAtEnd: P.stars };
+  });
+  // ---- 8) pause menu: attribution and the quality switch ----
+  out.pause = await page.evaluate(() => {
+    const w = window.__oc;
+    document.getElementById('minimap').style.transform = '';
+    w.input.pressed.add('Escape'); window.__ocFrames(1, true);
+    const attrib = document.querySelector('#pause .attrib')?.textContent ?? null;
+    const geo = w.city.geo;
+    const q = [];
+    for (const k of ['low', 'high', 'medium']) {
+      document.getElementById(`q-${k}`).click();
+      q.push({ clicked: k, settings: w.settings.quality, map: geo ? geo.quality : 'n/a', peds: w.settings.pedBudget });
+    }
+    const paused = w.paused;
+    w.input.pressed.add('Escape'); window.__ocFrames(1, true);
+    return { paused, attrib, attribMatchesData: geo ? attrib === w.city.attribution : null, quality: q, resumed: !w.paused };
+  });
+  return out;
 }

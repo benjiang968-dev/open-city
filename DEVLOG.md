@@ -226,3 +226,125 @@ Format: date · what changed · what to test · known issues.
     - The sidewalk is missing around parts of Washington Circle's outer edge.
     - `heightAt` still smears the plaza quay wall and the Exorcist Steps edges.
     - Boot is over the 2.5 s budget, and the fixes made it slower. Building the world takes 9.06–9.17 s at 4× CPU throttle after the review, against 7.09–8.60 s before (3 interleaved runs each); unthrottled here it is about 2.3–2.5 s against 2.1 s. The Milestone 2 game reaches its first frame in 5.8–8.1 s at 4× (4.0 s unthrottled), so the Georgetown world alone already takes longer than the whole M2 boot. Moving the building and raster work into a worker, or caching the built geometry, is the next step.
+
+- **M3 Georgetown is playable (branch `m3-geo-citymap`, step C0):** `?map=georgetown` loads the hand-authored Georgetown map as a full `CityMap` (`src/systems/map/georgetownMap.ts`, built on the world generator v2). The default map and `?map=grid` are unchanged. The Georgetown code and data are separate chunks, fetched only when that map is picked (`loadMap` is now async).
+  - **Road graph:** one lane edge per lane of every road piece the world draws: 166 nodes, 645 lane edges, 23 dead ends, 37 bridge lanes, 94 lane-km. The K St underpass is left out.
+    - Junction plateaus are the lane trims. A node where two different streets meet, or where a street bends more than `map.passThroughMaxBend`, counts as a corner junction. Only a street running on fairly straight is a pass-through with no trim.
+    - Roads leaving the map get `map.deadEndTurnRoom` to turn round in.
+    - Lane points inside a junction sit at the junction's height.
+    - Every one-way lane (62) runs the way the data says.
+    - Washington Circle is a one-way ring of 24 lanes, all counter-clockwise seen from above, with 8 spokes.
+    - The whole graph is one strongly connected component.
+  - **Parking:** the data's carriageways are lanes x 3.3 m with no parking lane, so parked cars and traffic don't both fit on most streets.
+    - On roads with two or more lanes each way the kerbside lane is now the parking lane (`LaneEdge.parking`): traffic keeps out of it and routes avoid it (`map.parkingLaneCost`).
+    - Narrow two-way streets park on one kerb and both traffic lanes move over.
+    - Cars only park beside a pavement, never on bridges, the freeway, the parkway, the ring, junction boxes, crossings, taxi ranks or bus stops.
+    - That gives 2,307 spots: 1,514 at the kerb plus 793 car park bays.
+    - Georgetown has its own coarse densities (`vehicles.parkingByMap.georgetown`), which put 42 cars on the map. They are held low on purpose because of draw calls (see Performance).
+  - **Walk graph:** 6,835 nodes in one connected network: sidewalks along every kerb with a pavement, corners round each junction, the data's zebras plus crossings where an arm had none, paths, steps, footbridges, the towpath, the promenade, the boardwalk and the harbour plaza. Two boathouse piers that touch nothing were left out.
+  - **Places (888):**
+    - the data's 711 POIs, named with the same invented name as their shop sign, so a fare to "Brick & Basil" stops at the "Brick & Basil" sign. Dealerships keep those names (`Poi.signed`).
+    - 160 homes on rowhouse streets, 9 parks and 3 waterfront spots.
+    - 5 taxi ranks: M St at Wisconsin Ave, Key Bridge, the waterfront (K St), Pennsylvania Ave by Washington Circle and upper Wisconsin Ave.
+    - The two dealerships are the data's car dealer and a garage.
+    - You start on the M St pavement a block east of the Key Bridge landing, facing east, with your car at the kerb.
+  - **Minimap, attribution, quality:** the minimap is painted from the data (11 ms). The pause menu shows `meta.attribution`. The quality switch changes the world's draw distance, detail and trees.
+  - **Map core gaps closed:** `validateCityMap` checks lane points, walk nodes and parking spots against `heightAt(x, z, y)`. Georgetown has 0 mismatches, also with the art review branch merged in. Parked cars spawn at their spot's height. The taxi route start, police sight and witness sight use heights.
+  - **Traffic on hills:** AI car bodies now have rounded edges. Their pitch is locked, so sharp boxes dug into slopes and kerbs and got shoved off their lanes: 185 times in two minutes before the change, about 6 after. A car only counts as "in my lane" if the two bodies actually overlap sideways.
+  - **World fixes:**
+    - Lamp posts no longer stand in lanes. Washington Circle had been snapped onto a few data lamps, and the Whitehurst Freeway's lamps stood in its kerbside lane; they now sit on the parapet.
+    - `Poi.signed` needed `facades.SIGN_CATS` exported.
+  - **Fix: the simulation froze after a slow start.** The first animation frame after a long boot could carry an older timestamp, which wound the step clock back and froze the game for as long as the boot took. It showed under 4x CPU throttle on Georgetown and would also bite on a slow laptop.
+  - **Scenarios:** they ask for real places through `__mh.place('M St at Wisconsin Ave' | 'Key Bridge north end' | '29th St between N and P' | 'Washington Circle' | 'waterfront')`, which falls back to spots near the centre on the grid. Bodies and cameras are placed above the ground. `walk` and `drive` press real keys but count game seconds. The new `geoplay` scenario takes the screenshots, checks the pause menu and the quality switch, and runs a police chase. `shot.mjs` waits up to 180 s, because software GL renders a Georgetown frame in about 3 s.
+  - **Test:** `npm run build`, then `MAP=georgetown node scripts/shot.mjs x <scenario>`.
+    - On Georgetown, world, walk, drive, taxi, police, witness, theft, dealership, crashspikes and geoplay pass with a clean console. Final runs: mapcheck passed 3 of 4 (validate ok, 0 height mismatches, 30 lane choices with 1-2 recycles, 0.6-1.2 m max off lane, 20/20 walks, every place has a kerb); the fourth also made 30 choices, but one car swung 3.13 m off its lane coming out of a tight junction (the limit is 3 m; the grid's worst is 0.4 m); taxi 3 of 3 fares; witness: call, 1 star, lost; theft: unseen 0 stars, in front of people 1-2 stars with 4 callers and the owner chasing; dealership: bought, no crime; crashspikes: 930 frames, 0 over 33 ms, median 1.4 ms, worst 9.8 ms; geoplay: Key Bridge deck 14.6 m over the river, 7 cars flowing round Washington Circle, police see you after 16 s and you shake two stars 20 s after getting away.
+    - On the grid (`node scripts/shot.mjs x <scenario>`), world, mapcheck, taxi, police, witness, gate2, handling, theft, dealership, hurtfx and crashspikes pass with a clean console. Handling numbers are identical to main's.
+    - Screenshots: `27-geo-play-spawn`, `-mst-drive`, `-keybridge`, `-circle`, `-f3`, `-minimap`.
+  - **Performance (4x CPU throttle, Medium, 3 interleaved runs, on foot at the spawn):**
+    - CPU per frame without rendering: Georgetown 7.0–7.7 ms against 5.3–5.9 ms for the M2 build (529a13c) and 4.6–5.0 ms for this branch's grid. The gap is physics (4.1–4.4 ms against 2.3 ms): the world has 10,800 static colliders.
+    - Frames over 33 ms: 0 on Georgetown; garbage 69 KB a frame (M2: 72 KB).
+    - Draw calls and triangles: Georgetown ~648 calls and 926k triangles at the spawn view, against 137 and 189k for M2. About 490 of those calls are the 42 drivable cars (15 meshes each, plus shadows); the world itself is about 85 calls and 850k triangles.
+    - Boot to first frame: 9.7–11.8 s on Georgetown (map build 7.7–9.2 s), 2.4–2.8 s on the grid. Unthrottled it is 2.8–3.9 s.
+    - JS heap: 154–182 MB on Georgetown against 70 MB for M2.
+    - Software GL can't measure GPU frame time, so I couldn't measure fps directly. With roughly 5x the draw calls and triangles of M2, Georgetown will very likely run below the M2 build on the same laptop and quality.
+  - **Known issues:**
+    - **Performance:** Georgetown misses the "never below M2 fps" bar. The two biggest levers are one merged mesh per parked car, as AI cars already have (about 450 fewer calls at the spawn), and a triangle budget for the world at Medium.
+    - **Parking:**
+      - Parking costs traffic a lane on M St, Wisconsin Ave and the other multi-lane roads.
+      - On narrow two-way streets the moved lanes run over the painted centre line.
+      - One-way single-lane streets (29th, 30th, 33rd, 34th St) have no kerbside parking at all.
+      - The real fix is parking lanes in the world's carriageway widths.
+    - **Lane obstructions:** some static geometry still sits in lanes and recycles the odd traffic car:
+      - the K St and M St bridge decks over the parkway's kerbside lane at (375..385, 416..455) and (485..490, 103..128)
+      - a Whitehurst column in Water St at (-249, 391)
+      - Pennsylvania Ave's deck end at (473, 232)
+      - something low on 30th St at (165, 276..286) that stops cars there
+    - **mapcheck:** it follows one random car for 900 s, so these obstructions make it fail now and then (2 of 4 runs failed before the corner and lamp fixes, 1 of 4 after). Cars also swing up to ~3 m wide coming out of Georgetown's tight, skewed junctions.
+    - **Traffic:**
+      - Traffic ignores signals.
+      - A roundabout yield only waits for cars turning at that node.
+      - There are no lane changes, so traffic never passes a parked or broken-down car.
+    - **Your car on hills:** a car with no throttle rolls back on Georgetown's hills (no hill hold).
+    - **K St bridge:** the world drops the north sidewalk where the freeway runs beside the bridge, but the export doesn't say so, so a few walk nodes stand there.
+    - **Taxi:** about a third of fares go to homes (160 of the 888 places).
+    - **Police scenario:** its hit-and-run only gets stars if a witness calls, which sometimes doesn't happen. `geoplay` sets two stars directly for its chase.
+
+- **M3 Georgetown CityMap review (step C0 review, branch `m3-geo-citymap`):** an independent audit of the map the entry above describes, with fixes. The checks are my own: every one-way lane against the data's `oneway` tag on every segment; Washington Circle's direction; sinks, sources and U-turn traps; level joins; every lane point against `roadSurfaceAt` and against the physics colliders; a car-sized box swept along every lane and every junction movement; a person-sized capsule swept along every walk link; parking spots against junctions, crossings, each other, traffic lanes and colliders; POI names; seed invariance; driving and walking with real key presses.
+  - **What held up:**
+    - All 62 one-way lanes run the data's way on every segment. The K St underpass has no lanes.
+    - The 24 ring lanes run counter-clockwise on all 354 segments, and all 8 ring nodes are flagged roundabout.
+    - There are no sinks, sources or U-turn traps, and no node joins a deck lane to the road below (the largest height spread at a node is under 0.6 m).
+    - None of the 24,949 lane points is more than 0.3 m off `roadSurfaceAt`.
+    - No parking spot is in a junction, within 3.5 m of a crossing, on top of another spot or on a deck.
+    - Lanes, walk nodes, footprints, parking spots, POI positions and all 10,181 static colliders hash the same for seeds 1, 123 and 456. Only the shop names differ, plus the sign boards and awnings sized and coloured from them.
+    - There is no real business or brand name in the in-game names, the data or the bundle.
+  - **Fixed, traffic:**
+    - **Levels:** the car-ahead test ignored height, so a car on the Whitehurst Freeway stopped for good behind one parked on K St 9 m below. Anything more than `traffic.levelGap` (+ `levelGrade` per metre ahead) above or below now counts as another level.
+    - **Turning deadlock:** a turning car looked straight along its heading, across the junction. It waited for a car queuing at another approach, which in turn waited for the junction to clear: a 25 s deadlock until a recycle. Turning cars now measure the gap to their own curve and the lane after it.
+    - **Narrow streets:** these flag their single lane each way `parking` (cars park along it), though its points keep clear of the parked cars. Traffic, spawning and routes avoided those lanes, so cars hardly ever drove that way along N, O, P or Prospect St. A parking lane is now avoided only when another lane goes the same way, as the contract says.
+    - **Dealership in a lane:** the repair garage on 30th St (one-way, one lane) was a dealership, and its display pickup stood in the only lane. This was the "something low on 30th St" in the entry above. Dealerships now use POIs whose display slots keep out of the traffic lanes, and drop any slot that doesn't.
+    - **Column in a lane:** a Whitehurst column stood in Water St's westbound lane at (-249, 391). Columns now keep `geo.columnRoadClear` from any carriageway below.
+  - **Fixed, map:**
+    - **Dropped buildings:** the CityMap listed 23 buildings that the world drops under decks (in the minimap, homes, POIs and MapIndex). They are now left out (`GeoWorld.droppedBuildings`), along with the 11 POIs that stood in them.
+    - **Paths through buildings:** ground paths by the west waterfront ran through synthesized buildings, and path ends were then joined straight through them. Paths now stop at buildings, and joins skip links that cross one. Three piers whose only way in ran through a building are dropped.
+    - **Parking spots:** 13 spots had a tree, a lamp or a slope where the car would stand. Every spot is now tested against the world's colliders (`map.parkingCheckClearance`). The test costs about 18 ms, and it moves the first physics step (the collider tree build) into the map build.
+  - **Fixed, towpath:** the side walls of the canal steps started on the towpath's centre line, so they blocked the towpath under the 33rd St, Wisconsin Ave, 31st St, Thomas Jefferson St, 30th St and 29th St bridges. They now start once the stair has risen `geo.stairWallFrom`.
+  - **Test:** `npm run build`, then `MAP=georgetown node scripts/shot.mjs x <scenario>`.
+    - **Georgetown, final code:** world, walk, drive, taxi (3 of 3 fares), police (2 stars, lost), witness, theft (unseen 0 stars; in front of people 2 stars, 4 calls), dealership (K St and Pennsylvania Ave), crashspikes (0 of 930 frames over 33 ms, median 1.8 ms) and geoplay all exit 0 with a clean console.
+    - **mapcheck:** 2 of 4 runs passed. One reached 25 choices before the 900 s limit after a recycle; the other made 30 choices with 0 recycles, but a car swung 3.94 m off its lane leaving a junction.
+    - **Recycles:** same seeds, 900 s each, 26 cars: 21 and 18 on the code before this review (25 of them cars stuck, 14 crashes into static things), 9 and 11 now (3 stuck, 17 crashes, 1 of them car into car during a turn).
+    - **Grid:** all 37 scenarios (every one but `perf`) exit 0 with a clean console. `chat` failed once (the known flake) and passed on the rerun. mapcheck: 30 choices, 0 recycles, 0.42 m off lane. The dealership sites are unchanged.
+    - **Keyboard drive:** with real key presses I drove from the south end of Key Bridge, over it, onto M St and east to 31st St. All four wheels stayed on the ground the whole way, with no damage. The colliders under the car were within 0.006 m of `roadSurfaceAt`, and the car stayed at most 3.1 m from the route line (at the landing turn).
+    - **Keyboard walk:** the towpath from (-552, 234) to (-341, 241) now gets through; before the fix it stopped at the 33rd St steps. Screenshots `28-c0review-*`.
+  - **Performance against the M2 build (529a13c):** 4x CPU throttle, Medium, 3 interleaved rounds of M2 / Georgetown / this branch's grid.
+    - **CPU per frame, no render (median):**
+
+      | | M2 | Georgetown | this branch, grid |
+      |---|---|---|---|
+      | on foot at the spawn | 5.1–5.9 ms | 7.5–8.3 ms | 4.5–4.8 ms |
+      | driving | 5.1–6.3 ms | 8.4–10.6 ms | 4.5–5.0 ms |
+      | physics on foot | 2.1–2.5 ms | 4.5–4.9 ms | |
+
+    - **Frames over 33 ms, no render:** 0–2 for M2, 0–2 for Georgetown.
+    - **Garbage per frame:** 69–97 KB for M2, 65–79 KB for Georgetown.
+    - **Draw calls:** 135–149 for M2, 637–645 for Georgetown.
+    - **Triangles:** 188–192k for M2, about 1.0M for Georgetown.
+    - **Heap:** 53–56 MB for M2, 162–181 MB for Georgetown.
+    - **First frame:** 11.2–11.8 s on Georgetown, 2.3–2.8 s on the grid.
+    - Georgetown still very likely runs below the M2 build at the same quality.
+  - **Known issues:**
+    - **Traffic engineer:**
+      - **Corner lamps:** 35 of 2,204 junction movements sweep into a lamp or wall at 13 junctions, for example (-153.8, 394.9) at K St / Wisconsin Ave, (-749.4, 142) at the Key Bridge landing, (-717.6, -702.1) at 35th / R St, and New Hampshire Ave at L St and at 22nd St. 98 movements put a wheel 3 m or more off the carriageway. Most remaining recycles come from these.
+      - **Parkway:** the Rock Creek Parkway bank stands 0.4 m into its kerbside lane under the K St, M St and Pennsylvania Ave bridges.
+      - **Canal Rd:** its bank rises within 1 m of the westbound lane's centre.
+      - **Lane changes at junctions:** cars change lane while crossing a junction, which takes them past other cars waiting side by side (33 movements).
+      - **Turn collisions:** the turning test can now let a car clip one waiting at a narrow junction (once in 30 minutes).
+      - **Narrow streets:** only 0.025 m spare between a pickup and a parked pickup.
+      - **mapcheck:** it fails on any single recycle or a 3 m swing.
+    - **Art engineer (also on the art review branch, merged and tested):**
+      - **Footbridge entrances:** the canal's north retaining wall stands 0.6–1.0 m tall across each footbridge's north entrance ((-564, 216), (-330, 216)), so the footbridges can't be entered from the north.
+      - **Footbridge rails:** this branch's single rail box runs down each footbridge's centre line and blocks the towpath at (-564, 233) and (-330, 241). The art review branch moves the rails to the sides, but its rail slabs reach the towpath where the bridges land, and still block it (`28-c0review-towpath-footbridge-rails-merged`).
+      - **Lock step:** the towpath has a 0.8 m step at the lock near x 36, so you can't walk it westward.
+      - **Trees on footpaths:** trees and lamps stand on the footpath centre lines on Dumbarton St and Potomac St, blocking 114 walk links for a person.
+      - **Low bridges:** the camera goes inside the deck of the low canal bridges when you walk under them.
+    - **Merge note:** merging `m3-geo-art-review` conflicts in `georgetownWorld.ts` (keep both `droppedBuildings` and `audit`; that branch already adds its street-clipped drops to the same set) and in DEVLOG.md.

@@ -27,7 +27,7 @@ const MODERN = [0xd8cdb6, 0xc8c2b5, 0xb8b4ab, 0xe0d8c4, 0x9ea4a6];
 const ROOF_FLAT = [0x8d8a84, 0x9a958c, 0x7e7b76, 0xa39c90, 0x8f5a4a, 0x6f7f72, 0xa6aaae];
 const ROOF_PITCH = [0x4a4f57, 0x55504b, 0x3f4a52, 0x6b4a3c];
 const AWNINGS = [0x1f5c45, 0x7a2430, 0x23395b, 0x1c1c1f, 0xd8cfb8, 0xb5552e, 0xc79a2e, 0x4f6d3a];
-const SIGN_CATS = /^(amenity=(cafe|restaurant|fast_food|bar|pub|ice_cream|bank|pharmacy|cinema|nightclub)|shop=|tourism=hotel)/;
+export const SIGN_CATS = /^(amenity=(cafe|restaurant|fast_food|bar|pub|ice_cream|bank|pharmacy|cinema|nightclub)|shop=|tourism=hotel)/;
 const AWNING_CATS = /^(amenity=(cafe|restaurant|bar|pub|ice_cream)|shop=(bakery|deli|florist|wine|clothes|shoes|antiques|art|gift|books))/;
 
 /** Landmarks from data/georgetown-spec.json "landmarks" (lat/lon), matched to the nearest footprint of the type. */
