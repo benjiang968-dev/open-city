@@ -198,7 +198,12 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   /** A place on the pavement at (x, z) whose door is at (dx, dz): curb point, street and walk node from the map. */
   const addPoi = (name: string, kind: string, x: number, z: number, door: { x: number; z: number }, street?: string): Poi | null => {
     const y = geo.walkSurfaceAt(x, z, geo.heightAt(x, z));
-    if (!kerbPoint(x, z, KH, y)) return null;
+    if (!kerbPoint(x, z, KH, y)) {
+      // far from any road (the boardwalk, a pier): the kerb nearest the closest pavement
+      let best: WalkNode | null = null, bd = Infinity;
+      for (const n of walk) if (n.kind === 'sidewalk') { const d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = n; } }
+      if (!best || !kerbPoint(best.x, best.z, KH, best.y)) return null;
+    }
     const e = edges[KH.edge];
     const p: Poi = {
       id: pois.length, name, kind, x, z, curbX: KH.x, curbZ: KH.z, kerbHeading: KH.heading, door,
@@ -793,7 +798,7 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
     let bestA = -1, bestB = -1, bd = Infinity;
     for (const a of members[c]) {
       const n = W.nodes[a];
-      const j = grid.nearest(W.nodes, n.x, n.z, M.walkBridgeRange, (o) => inMain[o.id] === 1 && Math.abs(o.y - n.y) <= gap);
+      const j = grid.nearest(W.nodes, n.x, n.z, M.walkBridgeRange, (o) => inMain[o.id] === 1 && Math.abs(o.y - n.y) <= M.walkBridgeLevelGap);
       if (j >= 0) { const d = Math.hypot(W.nodes[j].x - n.x, W.nodes[j].z - n.z); if (d < bd) { bd = d; bestA = a; bestB = j; } }
     }
     if (bestA < 0) {

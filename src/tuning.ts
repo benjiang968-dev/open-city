@@ -58,6 +58,7 @@ const RAW = {
     walkJoinRange: 10, // metres: a path end joins the nearest walk node this close on its own level
     walkBridgeRange: 30, // metres: a cut-off piece of the walk graph is joined to the main network if this close, else dropped
     walkLevelGap: 1.5, // metres: walk nodes further apart in height than this are on different levels (never joined)
+    walkBridgeLevelGap: 3, // metres: a cut-off piece (a pier, a stair foot) may still join the network this far up or down
     homePois: 160, // homes (rowhouses and flats) picked on the Georgetown map for people to live in
   },
 
@@ -223,13 +224,16 @@ const RAW = {
     ownedAtStart: 1, // the first N cars at the starting taxi rank are yours; the others belong to locals
     // drivable parked cars per 100 m of kerb, by the kerbside parking spot's road class (both kerbs counted; each
     // spot stands for kerbSlotSpacing metres). On the grid city the bay boulevard is 'secondary' and every other
-    // street 'residential' (keep those two values: the grid is unchanged). Georgetown: M St, Wisconsin, K St,
-    // Pennsylvania are 'primary'/'secondary', P/Q/R St and Water St 'tertiary', the rowhouse streets 'residential';
-    // the parkway and the freeway never have parking. Keep 'secondary' before 'residential': the order is the order
-    // cars are placed in.
-    // (Georgetown numbers are coarse until the density pass: every parked car costs draw calls like a driven one)
-    parkedCarsPer100m: { primary: 0.3, secondary: 0.6, tertiary: 0.12, residential: 0.07, service: 0, parkway: 0 },
-    lotFill: 0.03, // share of car park bays with a parked car (lots fill after the kerbs)
+    // street 'residential'. Keep 'secondary' before 'residential': the order is the order cars are placed in.
+    parkedCarsPer100m: { primary: 0.6, secondary: 0.6, tertiary: 0.3, residential: 0.07, service: 0, parkway: 0 },
+    lotFill: 0, // share of car park bays with a parked car (lots fill after the kerbs; the grid has none)
+    // per map (by CityMap id), replacing the two above. Georgetown: M St, Wisconsin Ave, K St, Pennsylvania Ave and
+    // Canal Rd are 'primary'; 23rd St, New Hampshire Ave, Reservoir Rd 'secondary'; P/Q/R St, Water St, 37th St
+    // 'tertiary'; the rowhouse streets 'residential'; the parkway and the freeway never have parking. Coarse until
+    // the density pass, and held low on purpose: a parked car costs ~15 draw calls (+ shadows) like a driven one.
+    parkingByMap: {
+      georgetown: { perKerb100m: { primary: 0.35, secondary: 0.15, tertiary: 0.06, residential: 0.05, service: 0, parkway: 0 }, lotFill: 0.01 },
+    } as Record<string, { perKerb100m: Record<'primary' | 'secondary' | 'tertiary' | 'residential' | 'service' | 'parkway', number>; lotFill: number }>,
     kerbSlotSpacing: 13, // metres of kerb one kerbside parking spot stands for (matches the grid generator's spacing)
     parkingKerbGap: 1.3, // metres from the road edge to a parked car's centre line (grid boulevard spots)
     parkingJunctionGap: 10, // metres of kerb kept free next to each junction (grid boulevard spots)

@@ -150,9 +150,11 @@ export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z
   });
   const types = Object.keys(V.types) as CarTypeName[];
   const paints = ['#e63946', '#f1faee', '#457b9d', '#2a9d8f', '#e9c46a', '#264653', '#8d99ae', '#ff8fab', '#606c38', '#bc6c25'];
+  const byMap = V.parkingByMap[w.city.id];
+  const perKerb = byMap?.perKerb100m ?? V.parkedCarsPer100m, lotFill = byMap?.lotFill ?? V.lotFill;
   for (const cls of [...(Object.keys(V.parkedCarsPer100m) as SpotClass[]), 'lot' as const]) {
     const pool = w.city.parkingSpots.filter((s) => s.cls === cls);
-    const want = Math.round(cls === 'lot' ? pool.length * V.lotFill : ((pool.length * V.kerbSlotSpacing) / 100) * V.parkedCarsPer100m[cls]);
+    const want = Math.round(cls === 'lot' ? pool.length * lotFill : ((pool.length * V.kerbSlotSpacing) / 100) * perKerb[cls]);
     let placed = 0, tries = 0;
     while (placed < want && pool.length && tries++ < 500) {
       const s = pool[Math.floor(rng.next() * pool.length)];

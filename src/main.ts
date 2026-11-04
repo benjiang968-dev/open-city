@@ -258,7 +258,9 @@ async function boot() {
   function frame(now: number) {
     requestAnimationFrame(frame);
     if (!boot.firstFrameMs) boot.firstFrameMs = Math.round(performance.now());
-    const dt = Math.min(0.1, (now - last) / 1000);
+    // never negative: after a long boot the first rAF timestamp can be older than `last`, which would wind the
+    // fixed-step accumulator back and freeze the simulation for as long as the boot took
+    const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
     fpsAcc += dt;
     fpsFrames++;
