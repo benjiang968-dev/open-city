@@ -44,3 +44,11 @@ node scripts/shot.mjs 06-taxi taxi       # runs a scenario, saves screenshots/06
 ```
 
 Scenarios live in `scripts/scenarios.mjs` (handling, life, taxi, chat, police, bust, night, perf …).
+
+## Map data
+
+Map data © OpenStreetMap contributors, ODbL
+
+Milestone 3 builds the city from OpenStreetMap (Georgetown, Washington DC; see https://www.openstreetmap.org/copyright).
+Street, river, canal and park names come from OSM. Shop and business names are invented (`src/data/poiNames.ts`).
+To import the map, follow `data/osm/README.md` (`npm run import-osm`).

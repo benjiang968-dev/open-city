@@ -2,3 +2,5 @@ node_modules
 dist
 dist-prof
 .claude/
+data/osm/*.osm
+data/osm/*.osm.gz
