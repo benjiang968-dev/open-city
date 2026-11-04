@@ -108,6 +108,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
     if (style === 'short') continue;
     const th = G.deckThickness + (e.freeway ? 0.3 : 0);
     const W2 = e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0);
+    const colOff = W2 - (style === 'steel' ? 1.2 : 1.6); // column pairs stand this far either side of the centre line
     const canPier = (s: number) => {
       const q = pointAtS(e, s);
       const y = net.profAt(e, s);
@@ -117,6 +118,13 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         if (bd === B.ROAD || bd === B.HOLE) return false;
         if (style !== 'arch' && (kd & K.WATER)) return false;
         if (y - ras.heightAt(x, z) < 3) return false;
+      }
+      // a column (and a car's width round it) must not stand in a carriageway below (Water St under the freeway)
+      if (style !== 'arch') {
+        for (const sd of [-1, 1]) for (const a of [-G.columnRoadClear, 0, G.columnRoadClear]) for (const l of [-G.columnRoadClear, 0, G.columnRoadClear]) {
+          const o = colOff * sd + l;
+          if (ras.bandAt(q.x - q.uz * o + q.ux * a, q.z + q.ux * o + q.uz * a) === B.ROAD) return false;
+        }
       }
       return true;
     };
@@ -186,7 +194,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const q = pointAtS(e, s);
         const y = net.profAt(e, s) - th;
         const rx = -q.uz, rz = q.ux;
-        const off = W2 - (style === 'steel' ? 1.2 : 1.6);
+        const off = colOff;
         const cap = style === 'steel' ? COL.steel : COL.concreteDark;
         const buf = chunks.buf('ground', q.x, q.z);
         for (const sd of [-1, 1]) {
