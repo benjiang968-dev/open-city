@@ -44,6 +44,9 @@ export interface AiCar {
   turnPts: Float32Array; // x,z pairs of the current junction curve (preallocated)
   turnCum: Float32Array;
   turnLen: number;
+  /** Heading (sin, cos) of the lane the junction curve leads into, at its start (set with the curve). */
+  exitSin: number;
+  exitCos: number;
   speed: number;
   heading: number;
   /** Seconds waiting at the stop line, and of those standing still (a stop sign needs a full stop). */
@@ -118,6 +121,10 @@ function needsTurn(e: LaneEdge, n: LaneEdge): boolean {
 function buildTurn(w: World, car: AiCar): void {
   const edges = w.city.roads.edges;
   car.turnLen = turnCurve(edges[car.edge], edges[car.next], car.turnPts, car.turnCum);
+  const n = edges[car.next];
+  laneSample(n, laneStart(n), LP3);
+  car.exitSin = Math.sin(LP3.heading);
+  car.exitCos = Math.cos(LP3.heading);
 }
 
 /** Point at distance s along the junction curve (x and z of `out`). */
@@ -254,7 +261,7 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
   w.scene.add(mesh);
   const car: AiCar = {
     id: kind === 'police' ? w.police?.cars?.length ?? 0 : w.traffic.length, kind, type, body, collider, mesh, meshYOffset: rideY - halfH, halfW: hx, halfL: hz,
-    edge, next: -1, move: -1, phase: 'lane', s: 0, turnPts: new Float32Array((TURN_SEGS + 1) * 2), turnCum: new Float32Array(TURN_SEGS + 1), turnLen: 0.01,
+    edge, next: -1, move: -1, phase: 'lane', s: 0, turnPts: new Float32Array((TURN_SEGS + 1) * 2), turnCum: new Float32Array(TURN_SEGS + 1), turnLen: 0.01, exitSin: 0, exitCos: 1,
     speed: 0, heading: 0, waitT: 0, stopT: 0, arriveT: 0, hold: HOLD_GO, holdT: 0, commit: false, cleared: false, latOff: 0, target: -1, planMove: -1, lcCool: 0,
     honkCd: 0, blockedT: 0, swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, py: 0, pz: 0, lastSetHeading: NaN,
     active: true, respawnWanted: false, respawns: 0, searchEdge: -1,
@@ -396,9 +403,9 @@ function turnPathDist(w: World, car: AiCar): void {
     az = bz;
   }
   if (car.next >= 0) {
-    const n = w.city.roads.edges[car.next];
-    laneSample(n, laneStart(n), LP3);
-    const hx = Math.sin(LP3.heading), hz = Math.cos(LP3.heading), rx = x - ax, rz = z - az;
+    // (the exit lane's heading is cached with the curve: sampling the lane here, once per object ahead of every
+    // turning car, made garbage)
+    const hx = car.exitSin, hz = car.exitCos, rx = x - ax, rz = z - az;
     if (rx * hx + rz * hz > 0) { const d = Math.abs(rx * hz - rz * hx); if (d < best) best = d; }
   }
   PL[2] = best;
