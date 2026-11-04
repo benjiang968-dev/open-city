@@ -122,7 +122,8 @@ export function isUTurn(e: LaneEdge, n: LaneEdge): boolean {
 
 /**
  * Random next lane at the end of the car's edge: never back the way it came unless it's a dead end, and not into a
- * parking lane (cars parked along its kerb) while another lane leads on.
+ * parking lane (cars parked along its kerb, another lane going the same way) while another lane leads on. A narrow
+ * street's single lane each way is not avoided even when cars park along it: its points already keep clear of them.
  */
 export function pickNext(w: World, car: AiCar, rng: () => number): number {
   const { nodes, edges } = w.city.roads;
@@ -133,14 +134,14 @@ export function pickNext(w: World, car: AiCar, rng: () => number): number {
     const o = edges[out[i]];
     if (isUTurn(e, o)) continue;
     n++;
-    if (!o.parking) free++;
+    if (!(o.parking && o.lanesSameDir > 1)) free++;
   }
   if (n === 0) return e.twin >= 0 ? e.twin : out.length ? out[Math.floor(rng() * out.length)] : -1;
   const skipParking = free > 0;
   let k = Math.floor(rng() * (skipParking ? free : n));
   for (let i = 0; i < out.length; i++) {
     const o = edges[out[i]];
-    if (isUTurn(e, o) || (skipParking && o.parking)) continue;
+    if (isUTurn(e, o) || (skipParking && o.parking && o.lanesSameDir > 1)) continue;
     if (k-- === 0) return out[i];
   }
   return -1;
@@ -206,7 +207,7 @@ export function placeRandom(w: World, car: AiCar, minDist: number, rng: () => nu
     const a = nodes[Math.floor(rng() * nodes.length)];
     if (!a.out.length) continue;
     const e = edges[a.out[Math.floor(rng() * a.out.length)]];
-    if (e.parking) continue; // parked cars stand along it
+    if (e.parking && e.lanesSameDir > 1) continue; // parked cars stand in it
     const laneLen = stopLine(e) - laneStart(e);
     if (laneLen < 20) continue; // too short to start on
     const s0 = 5 + rng() * Math.max(1, laneLen - 15);
@@ -272,21 +273,54 @@ export function cachePositions(w: World): void {
 }
 
 const OB = { dist: 0, player: false };
+const PL = new Float64Array(3); // turnPathDist scratch: x, z in; distance out (no doubles through the call)
+const LP3: LanePoint = { x: 0, y: 0, z: 0, heading: 0 };
+/**
+ * A turning car: distance from (PL[0], PL[1]) to the rest of its junction curve and, beyond the curve's end, the
+ * straight line along the lane it leads into; written to PL[2]. obstacleAhead's straight-ahead cone points across the
+ * junction while the car turns, which made cars wait for ones queuing at another approach's stop line that the
+ * curve passes clear of (and those waited for the turning car: a 25 s deadlock until it was recycled).
+ */
+function turnPathDist(w: World, car: AiCar): void {
+  const P = car.turnPts, C = car.turnCum, x = PL[0], z = PL[1];
+  let best = Infinity, ax = car.px, az = car.pz, k = 1;
+  while (k < TURN_SEGS && C[k] <= car.s) k++;
+  for (; k <= TURN_SEGS; k++) {
+    const bx = P[k * 2], bz = P[k * 2 + 1], ex = bx - ax, ez = bz - az, L2 = ex * ex + ez * ez;
+    let t = L2 > 1e-9 ? ((x - ax) * ex + (z - az) * ez) / L2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = ax + ex * t - x, dz = az + ez * t - z, d = Math.sqrt(dx * dx + dz * dz);
+    if (d < best) best = d;
+    ax = bx;
+    az = bz;
+  }
+  if (car.next >= 0) {
+    const n = w.city.roads.edges[car.next];
+    laneSample(n, laneStart(n), LP3);
+    const hx = Math.sin(LP3.heading), hz = Math.cos(LP3.heading), rx = x - ax, rz = z - az;
+    if (rx * hx + rz * hz > 0) { const d = Math.abs(rx * hz - rz * hx); if (d < best) best = d; }
+  }
+  PL[2] = best;
+}
 /**
  * Distance to the nearest obstacle ahead in this car's lane (Infinity if clear) and whether it is the player.
- * Another car is in the lane when the sides of the two bodies are less than traffic.sideGap apart.
+ * Another car is in the lane when the sides of the two bodies are less than traffic.sideGap apart. Anything more
+ * than traffic.levelGap (+ levelGrade x the distance ahead, for hills) above or below is on another level (a car on
+ * the Whitehurst Freeway does not brake for one parked on K St underneath).
  * Returns a shared object: read it immediately. Written as flat loops with no helper calls: passing
  * doubles to a non-inlined helper boxes them, which made this the biggest allocator in the game.
  */
 export function obstacleAhead(w: World, car: AiCar, look: number): { dist: number; player: boolean } {
-  const px = car.px, pz = car.pz, fx = Math.sin(car.heading), fz = Math.cos(car.heading), half = car.halfL, side = car.halfW + TT.sideGap;
+  const px = car.px, py = car.py, pz = car.pz, fx = Math.sin(car.heading), fz = Math.cos(car.heading), half = car.halfL, side = car.halfW + TT.sideGap;
+  const lg = TT.levelGap, gr = TT.levelGrade, turning = car.phase === 'turn';
   let best = Infinity, isPlayer = false;
   const traffic = w.traffic;
   for (let i = 0; i < traffic.length; i++) {
     const o = traffic[i];
     if (o === car) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW) continue;
+    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW || Math.abs(o.py - py) > lg + along * gr) continue;
+    if (turning) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
     const d = along - o.halfL - half;
     if (d < best) { best = d; isPlayer = false; }
   }
@@ -295,7 +329,8 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     const o = police[i];
     if (o === car) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW) continue;
+    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW || Math.abs(o.py - py) > lg + along * gr) continue;
+    if (turning) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
     const d = along - o.halfL - half;
     if (d < best) { best = d; isPlayer = false; }
   }
@@ -304,7 +339,8 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     const v = vehicles[i];
     const hl = v.spec.halfExtents[2];
     const rx = v.px - px, rz = v.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + hl || Math.abs(rx * fz - rz * fx) > side + v.spec.halfExtents[0]) continue;
+    if (along <= 0 || along > look + hl || Math.abs(rx * fz - rz * fx) > side + v.spec.halfExtents[0] || Math.abs(v.py - py) > lg + along * gr) continue;
+    if (turning) { PL[0] = v.px; PL[1] = v.pz; turnPathDist(w, car); if (PL[2] > side + v.spec.halfExtents[0]) continue; }
     const d = along - hl - half;
     if (d < best) { best = d; isPlayer = v.driven; }
   }
@@ -313,14 +349,14 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     const p = peds[i];
     if (!p.active || p.hidden || p.state === 'down') continue;
     const rx = p.pos.x - px, rz = p.pos.z - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + 0.3 || Math.abs(rx * fz - rz * fx) > 1.7) continue;
+    if (along <= 0 || along > look + 0.3 || Math.abs(rx * fz - rz * fx) > 1.7 || Math.abs(p.pos.y - py) > lg + along * gr) continue;
     const d = along - 0.3 - half;
     if (d < best) { best = d; isPlayer = false; }
   }
   if (!w.player.vehicle) {
     const pp = w.player.mesh.position;
     const rx = pp.x - px, rz = pp.z - pz, along = rx * fx + rz * fz;
-    if (along > 0 && along <= look + 0.3 && Math.abs(rx * fz - rz * fx) <= 1.8) {
+    if (along > 0 && along <= look + 0.3 && Math.abs(rx * fz - rz * fx) <= 1.8 && Math.abs(pp.y - py) <= lg + along * gr) {
       const d = along - 0.3 - half;
       if (d < best) { best = d; isPlayer = true; }
     }

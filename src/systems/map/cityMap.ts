@@ -633,7 +633,7 @@ class Heap {
 
 /**
  * Directed shortest paths on the road graph (A*, cost = travel time len/speed, x TUNING.map.parkingLaneCost on
- * parking lanes, straight-line heuristic).
+ * parking lanes that have another lane going the same way, straight-line heuristic).
  * Reusable buffers: create one per system and keep it. After `path()` the edge ids are in `edges[0..count)`.
  */
 export class RoadRouter {
@@ -687,7 +687,7 @@ export class RoadRouter {
         const e = edges[out[i]];
         const m = e.to;
         if (this.done[m] === st) continue;
-        const g = this.g[n] + (e.len / e.speed) * (e.parking ? M.parkingLaneCost : 1);
+        const g = this.g[n] + (e.len / e.speed) * (e.parking && e.lanesSameDir > 1 ? M.parkingLaneCost : 1);
         if (this.seen[m] !== st || g < this.g[m]) {
           this.seen[m] = st;
           this.g[m] = g;

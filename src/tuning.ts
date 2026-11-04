@@ -277,6 +277,8 @@ const RAW = {
     bodyRound: 0.3, // metres: AI car bodies (pitch locked) have edges this round, so they ride over kerbs and grade changes
     spawnMinDistFromPlayer: 25,
   },
+    levelGap: 3, // metres: something this far above or below a car (plus levelGrade per metre ahead) is on another level, not in its way
+    levelGrade: 0.25, // height change per metre ahead a street can account for (steep hills) before it counts as another level
 
   peds: {
     maxPopulation: 60, // people created at load (the quality preset activates 30 / 45 / 60 of them)
