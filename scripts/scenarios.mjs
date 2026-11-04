@@ -1953,7 +1953,7 @@ export async function geodrive(page, S) {
     w.dayNight.hour = 13.5;
     run(1.5); // traffic gathers round the new spot
     w.trafficSim.measure = true; window.__ocTraffic.resetStats();
-    G.t0 = w.time; G.hp0 = v.health;
+    G.t0 = w.time; G.hp0 = v.health; G.hpLast = v.health; G.dmg = [];
     for (const car of w.traffic) G.last.set(car, [car.edge, car.respawns]);
     // the autopilot: one 60 Hz frame per step, keys only
     const J = w.junctions, CTL = { SIGNALS: 1, STOP: 2, PRIORITY: 3, ALLWAY: 4, RING: 5 };
@@ -1996,7 +1996,7 @@ export async function geodrive(page, S) {
         const dStop = G.cum[G.stopIdx[k]] - G.cum[G.idx];
         const c = J.nodes[e.to];
         let hold = false;
-        if (k < G.route.length - 1 && dStop < 70) {
+        if (k < G.route.length - 1 && dStop < 70 && dStop > -0.5) { // (once over the line, carry on: holding in the box blocked the ring)
           if (c.kind === CTL.SIGNALS) {
             const L = J.light[eid];
             if (L === 2 || (L === 1 && dStop > (sp * sp) / 8 + 3)) hold = true;
@@ -2005,6 +2005,12 @@ export async function geodrive(page, S) {
           } else if (c.kind === CTL.RING && !e.roundabout) {
             for (const o of w.traffic) { const d = window.__ocTraffic.ringDist(o, e.to); if (d < 34 && (d < 10 || d / Math.max(o.speed, 0.5) < 3.6)) hold = true; }
           }
+        }
+        // the next lane is too short to stop on (K St off Washington Circle, 2 m before a signal): stop for that
+        // signal from here, as the AI cars do (they go round the ring again instead)
+        if (!hold && k + 1 < G.route.length - 1 && J.shortLane[G.route[k + 1]] && J.nodes[E[G.route[k + 1]].to].kind === CTL.SIGNALS && J.light[G.route[k + 1]] !== 0) {
+          const d2 = G.cum[G.stopIdx[k + 1]] - G.cum[G.idx];
+          if (d2 < 70) { hold = true; target = Math.min(target, Math.sqrt(2 * 3 * Math.max(0, d2 - 3))); }
         }
         if (hold) target = Math.min(target, Math.sqrt(2 * 3 * Math.max(0, dStop - 3)));
         G.why = hold ? `hold at node ${e.to} (kind ${c.kind}) dStop ${dStop.toFixed(1)}` : '';
@@ -2016,10 +2022,11 @@ export async function geodrive(page, S) {
         }
         // anything ahead in our way
         const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
-        const ahead = (ox, oy, oz, half, what) => { const rx = ox - px, rz = oz - pz, al = rx * fx + rz * fz, lat = Math.abs(rx * fz - rz * fx); if (al > 0 && al < 45 && lat < 2.4 && Math.abs(oy - v.py) < 3) { const t = Math.max(0, (al - half - 5) * 0.7); if (t < target) { target = t; G.why = `${what} ${al.toFixed(1)} m ahead`; } } };
+        const ahead = (ox, oy, oz, half, what, latMax = 2.4) => { const rx = ox - px, rz = oz - pz, al = rx * fx + rz * fz, lat = Math.abs(rx * fz - rz * fx); if (al > 0 && al < 45 && lat < latMax && Math.abs(oy - v.py) < 3) { const t = Math.max(0, (al - half - 5) * 0.7); if (t < target) { target = t; G.why = `${what} ${al.toFixed(1)} m ahead`; } } };
         for (const o of w.traffic) ahead(o.px, o.py, o.pz, o.halfL, `car ${o.id} (${o.phase}, hold ${o.hold})`);
         for (const o of w.police.cars) ahead(o.px, o.py, o.pz, o.halfL, 'police');
-        for (const p of w.peds) if (p.active && !p.hidden && p.state !== 'down') ahead(p.pos.x, p.pos.y, p.pos.z, 0.5, `person ${p.id} (${p.state})`);
+        // people: in the road only (AI traffic's band); a wider one stopped us for someone on the Key Bridge pavement
+        for (const p of w.peds) if (p.active && !p.hidden && p.state !== 'down') ahead(p.pos.x, p.pos.y, p.pos.z, 0.5, `person ${p.id} (${p.state})`, 1.7);
         // keys
         for (const key of keys) w.input.keys.delete(key);
         if (want > v.steer + 0.01) w.input.keys.add('KeyA');
@@ -2050,6 +2057,13 @@ export async function geodrive(page, S) {
           }
           l[1] = car.respawns;
         }
+        if (v.health < G.hpLast - 0.5 && G.dmg.length < 8) {
+          // what hit us (or what we hit): the nearest AI car
+          let near = null, nd = Infinity;
+          for (const o of w.traffic.concat(w.police.cars)) { const d = Math.hypot(o.px - px, o.pz - pz); if (d < nd) { nd = d; near = o; } }
+          G.dmg.push(`t ${(w.time - G.t0).toFixed(1)} -${(G.hpLast - v.health).toFixed(0)} hp at (${Math.round(px)}, ${Math.round(pz)}) on ${e.name} v ${(sp * 3.6).toFixed(0)} km/h; nearest ${near ? `${near.kind} ${near.id} ${near.phase} ${E[near.edge].name}#${near.edge} ${nd.toFixed(1)} m` : '-'}; ${G.why}`);
+        }
+        G.hpLast = v.health;
         if (sp < 0.3) G.stuckT += 1 / 60; else G.stuckT = 0;
         if (G.stuckT > 60) return { status: 'stuck', at: [Math.round(px), Math.round(pz)], edge: e.name, why: G.why, target: +target.toFixed(2), keys: [...w.input.keys].join(' '), speed: +v.speed.toFixed(2), steer: +v.steer.toFixed(2) };
         if (until) { const cp = until(G, v, e, k); if (cp && !G.seen[cp]) { G.seen[cp] = 1; return { status: 'checkpoint', name: cp }; } }
@@ -2098,7 +2112,7 @@ export async function geodrive(page, S) {
     w.trafficSim.measure = false;
     return {
       completed: status === 'done', status, routeSeconds: +(w.time - G.t0).toFixed(1), routeMetres: Math.round(G.cum[G.n - 1]), maxOffPathM: +G.maxDev.toFixed(2), maxOffPathAt: G.maxDevAt,
-      playerDamage: Math.round(G.hp0 - (v ? v.health : 0)), playerRedRuns: G.playerRedRuns,
+      playerDamage: Math.round(G.hp0 - (v ? v.health : 0)), damageEvents: G.dmg, playerRedRuns: G.playerRedRuns,
       ai: {
         cars: w.traffic.length, wrongWayMoves: st.wrongWay, lastWrongWay: st.lastWrongWay, illegalLaneMoves: G.illegal, illegalWhere: G.illegalWhere, laneMovesChecked: G.moves,
         redLightRuns: st.redRuns, signalCrossings: st.signalCrossings, lastRedRun: st.lastRedRun,

@@ -717,7 +717,11 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
  */
 export function holdAhead(w: World, J: JunctionState, car: AiCar): number {
   const n = w.city.roads.edges[car.next];
-  if (J.nodes[n.to].kind === CTL_SIGNALS && J.light[n.id] !== LIGHT_GREEN) return HOLD_RED;
+  const cB = J.nodes[n.to];
+  if (cB.kind !== CTL_SIGNALS) return HOLD_GO;
+  if (J.light[n.id] !== LIGHT_GREEN) return HOLD_RED;
+  // a fixed-time crossing (the K St underpass junctions beside Washington Circle): enough green left to get through
+  if (cB.pedPhase && cB.stage === 0 && cB.greens[cB.phase] - cB.t < TT.shortLaneGreenLeft) return HOLD_RED;
   return HOLD_GO;
 }
 
