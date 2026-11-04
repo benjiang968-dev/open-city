@@ -10,6 +10,7 @@ import { poiName } from '../../data/poiNames';
 import type { GeoDoc, Pt } from './geoDoc';
 import { hashStr, pointInPoly } from './geoDoc';
 import { buildGeorgetownWorld, type GeoQuality, type GeoRoadPoly, type GeoWorld } from './georgetownWorld';
+import { SIGN_CATS } from './facades';
 import {
   MapIndex, laneSample,
   type Building, type CityMap, type KerbHit, type LaneEdge, type LaneHit, type LanePoint, type MinimapDrawOpts,
@@ -110,11 +111,13 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     const fwdOff = fwdL.map((l) => l.offset), bwdOff = bwdL.map((l) => l.offset);
     let parkR = false, parkL = false;
     if (canPark) {
-      if (fwdL.length >= 2) parkR = true; // the kerbside lane is the parking lane
-      if (bwdL.length >= 2) parkL = true;
-      if (fwdL.length === 1 && bwdL.length === 1 && hw >= M.parkingMinHalfWidth) {
+      // only along a kerb with a pavement (people get in and out there; Canal Rd and the like have none)
+      if (fwdL.length >= 2 && P.sidewalkR) parkR = true; // the kerbside lane is the parking lane
+      if (bwdL.length >= 2 && P.sidewalkL) parkL = true;
+      if (fwdL.length === 1 && bwdL.length === 1 && hw >= M.parkingMinHalfWidth && (P.sidewalkL || P.sidewalkR)) {
         // narrow two-way street: park on one kerb (the same kerb along the whole street) and move both lanes over
-        const side = hashStr(P.roadId) & 1 ? 1 : -1;
+        const pick = hashStr(P.roadId) & 1 ? 1 : -1;
+        const side = (pick === 1 ? P.sidewalkR : P.sidewalkL) ? pick : -pick;
         const room = 2 * hw - band, near = hw - band - room / 4, far = hw - band - (room * 3) / 4;
         if (side === 1) { parkR = true; fwdOff[0] = near; bwdOff[0] = far; }
         else { parkL = true; bwdOff[0] = -near; fwdOff[0] = -far; }
@@ -163,7 +166,8 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   const tRoads = performance.now();
 
   // ------------------------------------------------------------------ walk graph
-  const walk = buildWalkGraph(doc, geo, polys, polyLanes);
+  const walkBuild = buildWalkGraph(doc, geo, polys, polyLanes);
+  const walk = walkBuild.nodes;
   const tWalk = performance.now();
 
   // ------------------------------------------------------------------ buildings, streets, index
@@ -239,7 +243,8 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     const bd = sp.b ? bById.get(sp.b) : undefined;
     const place = bd ? frontOf(bd.pts, sp.x, sp.z) : openSpot(sp.x, sp.z);
     if (!place) continue;
-    addPoi(name, kind, place.x, place.z, place.door);
+    const poi = addPoi(name, kind, place.x, place.z, place.door);
+    if (poi && bd && SIGN_CATS.test(sp.cat)) poi.signed = true; // facades.ts paints this name on the shop front
   }
   // homes: rowhouses and flats, spread over the residential streets (fixed by the map, never the seed)
   {
@@ -298,7 +303,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   const tEnd = performance.now();
   const stats = {
     worldMs: Math.round(tWorld - t0), roadsMs: Math.round(tRoads - tWorld), walkMs: Math.round(tWalk - tRoads), placesMs: Math.round(tEnd - tWalk),
-    totalMs: Math.round(tEnd - t0), world: geo.stats, oneWays: oneWayCheck, roundabout: ringCheck,
+    totalMs: Math.round(tEnd - t0), world: geo.stats, oneWays: oneWayCheck, roundabout: ringCheck, walkDropped: walkBuild.dropped,
   };
   if (oneWayCheck.wrong.length) console.warn(`Georgetown: one-way lanes against the data: ${oneWayCheck.wrong.join(', ')}`);
   if (ringCheck.problem) console.warn(`Georgetown: Washington Circle: ${ringCheck.problem}`);
@@ -568,7 +573,8 @@ class NodeGrid {
   }
 }
 
-function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: { cls: RoadClass }[]): WalkNode[] {
+/** The walk graph; `dropped` lists the pieces cut off from the main network (too far to join) that were left out. */
+function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: { cls: RoadClass }[]): { nodes: WalkNode[]; dropped: string[] } {
   const W = walkBuilder();
   const grid = new NodeGrid(16);
   const add = (x: number, y: number, z: number, kind: WalkKind, street: string | null) => {
@@ -782,6 +788,7 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
   const order = sizes.map((_, c) => c).filter((c) => c !== main).sort((p, q) => sizes[q] - sizes[p]);
   const members: number[][] = sizes.map(() => []);
   for (let i = 0; i < N; i++) members[comp[i]].push(i);
+  const dropped: string[] = [];
   for (const c of order) {
     let bestA = -1, bestB = -1, bd = Infinity;
     for (const a of members[c]) {
@@ -789,7 +796,11 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
       const j = grid.nearest(W.nodes, n.x, n.z, M.walkBridgeRange, (o) => inMain[o.id] === 1 && Math.abs(o.y - n.y) <= gap);
       if (j >= 0) { const d = Math.hypot(W.nodes[j].x - n.x, W.nodes[j].z - n.z); if (d < bd) { bd = d; bestA = a; bestB = j; } }
     }
-    if (bestA < 0) continue;
+    if (bestA < 0) {
+      const n0 = W.nodes[members[c][0]];
+      dropped.push(`${members[c].length} ${n0.kind} node(s) near (${n0.x.toFixed(0)}, ${n0.z.toFixed(0)})${n0.street ? ` ${n0.street}` : ''}`);
+      continue;
+    }
     W.link(bestA, bestB);
     for (const a of members[c]) inMain[a] = 1;
   }
@@ -801,7 +812,7 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
     n.id = remap[n.id];
     n.nbrs = n.nbrs.map((u) => remap[u]).filter((u) => u >= 0);
   }
-  return out;
+  return { nodes: out, dropped };
 }
 
 // ======================================================================================================

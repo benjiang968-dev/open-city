@@ -75,7 +75,8 @@ export class DealershipJob implements JobSystem {
         if (w.city.pois.some((q) => q.id !== poiId && Math.hypot(q.curbX - x, q.curbZ - z) < D.slotClearance)) return;
         slots.push({ x, z, heading, type, car: null, soldAt: -Infinity });
       });
-      const name = NAMES[k % NAMES.length];
+      // a place whose name is already on its shop sign keeps it; otherwise it gets a dealership name
+      const name = poi.signed ? poi.name : NAMES[k % NAMES.length];
       poi.name = name; // so people can give directions to it
       buildSign(w, name, poi.x + nx * D.signOut, poi.z + nz * D.signOut, Math.atan2(nx, nz));
       this.sites.push({ id: k, poiId, name, x: poi.x, z: poi.z, slots });

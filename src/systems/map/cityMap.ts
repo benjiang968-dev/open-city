@@ -140,6 +140,8 @@ export interface Poi {
   door: { x: number; z: number };
   street: string;
   walkNode: number;
+  /** The name is painted on the building's sign (real maps): systems that rename places must keep it. */
+  signed?: boolean;
 }
 
 export interface ParkingSpot {
