@@ -142,6 +142,16 @@ function drawLabels(px: number, pz: number, yaw: number, k: number, r: number): 
   ctx.fillStyle = '#f4f1e8';
   const cy = Math.cos(yaw), sy = Math.sin(yaw), th = H.minimapLabelPx * 0.6 + 2, pad = H.minimapLabelGapPx;
   let n = 0;
+  // the badges (taxi ranks, dealerships) go on top: labels keep clear of them
+  for (let i = 0; i < badgeX.length && n < placedIdx.length; i++) {
+    const dx = (badgeX[i] - px) * k, dz = (badgeZ[i] - pz) * k;
+    const sx = dx * cy - dz * sy, sz = dx * sy + dz * cy;
+    if (sx * sx + sz * sz > r * r) continue;
+    const rad = (badgeKind[i] === 1 ? H.minimapDealerBadgePx : H.minimapRankBadgePx) + 1;
+    const o = n * 4;
+    placed[o] = sx; placed[o + 1] = sz; placed[o + 2] = rad; placed[o + 3] = rad;
+    placedIdx[n++] = -1;
+  }
   for (let i = 0; i < labelText.length && n < placedIdx.length; i++) {
     const dx = (labelX[i] - px) * k, dz = (labelZ[i] - pz) * k;
     const sx = dx * cy - dz * sy, sz = dx * sy + dz * cy;

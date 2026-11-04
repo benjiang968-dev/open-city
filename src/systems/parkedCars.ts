@@ -237,7 +237,11 @@ export function createParkedCars(w: World, keep: readonly { x: number; z: number
   w.parked = S;
   // the pool of drivable stand-ins (idle until a parked car near you needs one)
   const pool = V.parkedPool as Record<CarTypeName, number>;
-  for (const t of TYPES) for (let k = 0; k < pool[t]; k++) free[t].push(makePooled(w, t));
+  // (never more than there are parked cars of the type: the grid city has only a few dozen)
+  for (const t of TYPES) {
+    const want = Math.min(pool[t], cars.filter((r) => r.type === t).length);
+    for (let k = 0; k < want; k++) free[t].push(makePooled(w, t));
+  }
   return S;
 }
 
