@@ -155,6 +155,8 @@ export interface ParkingSpot {
   /** The parking lane this kerbside spot stands in (-1 in a car park), and the distance along it. */
   edge: number;
   s: number;
+  /** Metres of kerb this kerbside spot stands for (spot spacing); default TUNING.vehicles.kerbSlotSpacing. */
+  span?: number;
 }
 
 /** A named street for minimap labels: its centre line as x,z pairs. */

@@ -911,13 +911,14 @@ function buildParking(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: {
       const tS = e.from === P.nodeA ? P.trimA : P.trimB, tE = e.from === P.nodeA ? P.trimB : P.trimA;
       const s0 = tS + V.parkingJunctionGap, s1 = e.len - tE - V.parkingJunctionGap;
       const shift = e.halfWidth - M.parkingBand / 2 - e.offset; // lane centre -> parked car centre, to the right
-      for (let s = s0 + V.kerbSlotSpacing / 2; s <= s1 - V.kerbSlotSpacing / 2 + 0.01; s += V.kerbSlotSpacing) {
+      const gap = M.kerbSpotSpacing;
+      for (let s = s0 + gap / 2; s <= s1 - gap / 2 + 0.01; s += gap) {
         laneSample(e, s, LP);
         const x = LP.x - Math.cos(LP.heading) * shift, z = LP.z + Math.sin(LP.heading) * shift;
         if (!geo.isRoad(x, z) || geo.isBlocked(x, z) || !isClear(x, z)) continue;
         const y = geo.roadSurfaceAt(x, z, LP.y);
         if (solid(x, y, z, LP.heading)) continue;
-        spots.push({ x, y, z, heading: LP.heading, cls: e.cls, street: e.name, lot: -1, edge: e.id, s });
+        spots.push({ x, y, z, heading: LP.heading, cls: e.cls, street: e.name, lot: -1, edge: e.id, s, span: gap });
       }
     }
   });

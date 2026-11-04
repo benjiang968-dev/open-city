@@ -56,6 +56,7 @@ const RAW = {
     passThroughMaxBend: 0.6, // radians: where two pieces of the same street meet bending less than this, cars run straight on (real maps)
     deadEndTurnRoom: 12, // metres before a dead end (a road leaving the map) where cars turn round (real maps)
     parkingLaneCost: 3, // RoadRouter: driving along a parking lane costs this many times its travel time (routes keep out)
+    kerbSpotSpacing: 6.5, // metres between kerbside parking spots along a parking lane (real maps): a car length plus room to pull out
     // walk graph building (real maps)
     walkNodeSpacing: 12, // metres between walk nodes along sidewalks and paths
     walkJoinRange: 10, // metres: a path end joins the nearest walk node this close on its own level
@@ -225,22 +226,35 @@ const RAW = {
       'pickup',
     ],
     ownedAtStart: 1, // the first N cars at the starting taxi rank are yours; the others belong to locals
-    // drivable parked cars per 100 m of kerb, by the kerbside parking spot's road class (both kerbs counted; each
-    // spot stands for kerbSlotSpacing metres). On the grid city the bay boulevard is 'secondary' and every other
-    // street 'residential'. Keep 'secondary' before 'residential': the order is the order cars are placed in.
-    parkedCarsPer100m: { primary: 0.6, secondary: 0.6, tertiary: 0.3, residential: 0.07, service: 0, parkway: 0 },
-    lotFill: 0, // share of car park bays with a parked car (lots fill after the kerbs; the grid has none)
-    // per map (by CityMap id), replacing the two above. Georgetown: M St, Wisconsin Ave, K St, Pennsylvania Ave and
-    // Canal Rd are 'primary'; 23rd St, New Hampshire Ave, Reservoir Rd 'secondary'; P/Q/R St, Water St, 37th St
-    // 'tertiary'; the rowhouse streets 'residential'; the parkway and the freeway never have parking. Coarse until
-    // the density pass, and held low on purpose: a parked car costs ~15 draw calls (+ shadows) like a driven one.
-    parkingByMap: {
-      georgetown: { perKerb100m: { primary: 0.35, secondary: 0.15, tertiary: 0.06, residential: 0.05, service: 0, parkway: 0 }, lotFill: 0.01 },
-    } as Record<string, { perKerb100m: Record<'primary' | 'secondary' | 'tertiary' | 'residential' | 'service' | 'parkway', number>; lotFill: number }>,
-    kerbSlotSpacing: 13, // metres of kerb one kerbside parking spot stands for (matches the grid generator's spacing)
+    // Parked cars (parkedCars.ts), by map and by the parking spot's street class: drivable parked cars per 100 m of
+    // kerb (both kerbs counted; a spot stands for its `span` of kerb, so the most there can be is 100 / span).
+    // Georgetown: M St, Wisconsin Ave, K St, Pennsylvania Ave and Canal Rd are 'primary'; 23rd St, New Hampshire Ave
+    // and Reservoir Rd 'secondary'; P, Q and R St, Water St and 37th St 'tertiary'; the rowhouse streets 'residential'
+    // (most park on one kerb; the one-way single-lane ones, like 29th St, not at all); the parkway and the freeway
+    // never have parking. Grid city: the bay boulevard is 'secondary' and every other street 'residential'.
+    parkedCarsPer100m: {
+      grid: { primary: 0.6, secondary: 0.6, tertiary: 0.3, residential: 0.07, service: 0, parkway: 0 },
+      georgetown: { primary: 11, secondary: 7, tertiary: 6, residential: 3.5, service: 2, parkway: 0 },
+    } as Record<string, Record<'primary' | 'secondary' | 'tertiary' | 'residential' | 'service' | 'parkway', number>>,
+    lotFill: { grid: 0, georgetown: 0.5 } as Record<string, number>, // by map: share of car park bays with a car in them
+    waterfrontLotFill: 0.95, // car parks by the river are full: bays within waterfrontLotRange of the waterfront promenade
+    waterfrontLotRange: 150, // metres
+    parkedTypeWeights: { hatchback: 4, sedan: 4, pickup: 2 }, // how common each car type is among parked cars
+    // Near you a parked car is a real drivable car (physics, E to get in), taken from a pool; further away it is only
+    // drawn (one instanced mesh per car type), so a street full of parked cars costs a handful of draw calls.
+    parkedPool: { hatchback: 10, sedan: 10, pickup: 8 }, // drivable cars per type kept ready (the pool grows if it must)
+    parkedLiveRadius: 26, // metres: parked cars this close to you are drivable cars
+    parkedAheadTime: 1.6, // seconds: ...and those near where your car will be this far ahead
+    parkedAheadRadius: 16, // metres around that point ahead
+    parkedReleaseRadius: 45, // metres: untouched ones further than this (and not ahead of you) go back to being drawn only
+    parkedMustRadius: 9, // metres: a parked car this close always gets a drivable car, even if the pool has to grow
+    parkedDrawDistance: { low: 150, medium: 210, high: 300 }, // metres, by quality: parked cars drawn this far from you
+    parkedRefresh: 0.25, // seconds between redraws of the far parked cars (sooner after you move 12 m)
+    parkedReuseGap: 0.25, // metres: a released car that moved less than this keeps its parking spot's pose
+    kerbSlotSpacing: 13, // metres of kerb one kerbside parking spot stands for unless the spot says (grid generator's spacing)
     parkingKerbGap: 1.3, // metres from the road edge to a parked car's centre line (grid boulevard spots)
     parkingJunctionGap: 10, // metres of kerb kept free next to each junction (grid boulevard spots)
-    parkedClearOfRank: 40, // metres: no random parked cars this close to the player's spawn
+    parkedClearOfRank: 16, // metres: no other parked cars this close to the player's spawn (your starting cars stand there)
     parkedClearOfPoi: 12, // metres: kerb spots this close to a POI kerb (taxi stop) stay free (grid boulevard spots)
   },
 
@@ -254,6 +268,9 @@ const RAW = {
     lookTimeRandom: 1.5, // extra random seconds of staring, so a crowd doesn't all turn away at once
     lookCheckInterval: 0.25, // seconds between checks for people hearing an alarm
     ownerNoticeRange: 60, // metres: an owner this close who sees it (or hears their alarm) comes after you
+    ownerHomeRange: 250, // metres: each grown-up owns the parked car nearest their home or work if it is this close
+    localOwnerNearby: 0.35, // a car owned by a local nobody has met: chance its owner is right there (in a shop nearby) when you take it
+    localOwnerRange: 35, // metres: that owner is one of the people this close who can see the car
     ownerChaseTime: 14, // seconds the owner chases and shouts before giving up (then may call 999)
     ownerGiveUpDistance: 70, // metres: owner stops chasing once you are this far away
     ownerRunFactor: 0.85, // owner's chasing speed as a fraction of the flee (running) speed

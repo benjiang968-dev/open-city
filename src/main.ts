@@ -16,6 +16,7 @@ import { createDebug, updateDebug } from './systems/debug';
 import { spawnTraffic, updateTraffic, syncTraffic } from './systems/traffic';
 import { spawnPeds, updatePeds } from './systems/pedestrians';
 import { createPedDensity, densityAround, updatePedDensity } from './systems/pedDensity';
+import { createParkedCars, assignParkedOwners, updateParkedCars } from './systems/parkedCars';
 import { updateNpcMemory } from './systems/npcMemory';
 import { createPolice, spawnPolicePool, updatePolice, drivePolice, syncPolice } from './systems/police';
 import { JobManager } from './systems/economy/jobManager';
@@ -83,11 +84,12 @@ async function boot() {
   const spawn = w.city.spawn;
   w.player = createPlayer(w, spawn.x, spawn.z);
   w.player.facing = spawn.heading;
-  // dealership showrooms plan their kerb slots first so random parked cars keep clear of them; the display
-  // cars are parked after the starting cars (vehicle ids 0..2 stay the cars at the taxi rank)
+  // dealership showrooms plan their kerb slots first so parked cars keep clear of them; the display cars are parked
+  // after the starting cars (vehicle ids 0..2 stay the cars at the taxi rank), then every other parked car
   const dealerships = new DealershipJob(w, pickDealershipPois(w.city));
-  spawnInitialVehicles(w, dealerships.reservedSpots());
+  const startingSpots = spawnInitialVehicles(w, dealerships.reservedSpots());
   dealerships.stockShowrooms(w);
+  createParkedCars(w, [...dealerships.reservedSpots(), ...startingSpots]);
   w.itemsState = createItems(w);
   scatterItems(w);
   spawnTraffic(w);
@@ -95,6 +97,7 @@ async function boot() {
   w.pedDensity = createPedDensity(w); // crowd density from the map (shops, road class, time of day)
   spawnPeds(w);
   assignCarOwners(w); // every parked car that isn't yours belongs to someone (or nobody)
+  assignParkedOwners(w);
   w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
   w.hurtFx = createHurtFx(w);
   w.hud = createHud();
@@ -119,10 +122,14 @@ async function boot() {
     pool[0].mesh.material = wreckMaterial;
     const crack = w.vehicles[0].dmg.crack;
     crack.visible = true;
+    updateParkedCars(w, 0); // the instanced parked cars exist and are drawn
+    const car0 = w.vehicles[0].mesh, car0Shown = car0.visible;
+    car0.visible = true; // a car's own meshes (shown once driven or dented)
     showHurtFxForWarmup(w.hurtFx, true);
     renderer.compile(scene, camera);
     showHurtFxForWarmup(w.hurtFx, false);
     crack.visible = false;
+    car0.visible = car0Shown;
     pool[0].mesh.material = keep;
     for (const c of pool) c.mesh.visible = false;
   }
@@ -198,6 +205,8 @@ async function boot() {
     if (w.input.pressed.has('KeyM')) toggleMute(w.audio);
     if (w.started && !w.input.blocked && w.input.pressed.has('KeyN')) cycleWeather(w);
 
+    // drivable stand-ins for the parked cars around you (before physics), and the parked-car draw lists
+    P.begin('parked'); updateParkedCars(w, dt); P.end('parked');
     acc += dt;
     let steps = 0;
     P.begin('sim');

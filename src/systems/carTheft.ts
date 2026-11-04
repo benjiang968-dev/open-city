@@ -40,7 +40,7 @@ export function assignCarOwners(w: World): void {
   const pois = w.city.pois;
   const hasCar = new Set<number>();
   for (const v of w.vehicles) {
-    if (v.owned || v.forSale) continue;
+    if (v.owned || v.forSale || v.pooled) continue; // parked cars get theirs from parkedCars.assignParkedOwners
     v.owner = 'nobody';
     v.locked = false;
     if (rng.chance(TH.abandonedFraction)) continue;
@@ -69,7 +69,7 @@ export function carPrompt(w: World, v: Vehicle): string {
   if (v.owned) return `E  drive your ${name}`;
   if (v.stolen) return `E  drive the ${name}`;
   const who = ownerName(w, v);
-  const whose = who ? `${who}'s car` : 'abandoned';
+  const whose = who ? `${who}'s car` : v.ownerLocal ? "a local's car" : 'abandoned';
   if (!v.locked) return `E  steal the ${name} <span style="opacity:.75">(${whose}, unlocked)</span>`;
   return `E  break into the ${name} <span style="opacity:.75">(${whose}, locked: smash the window)</span>`;
 }
@@ -178,6 +178,7 @@ function carTaken(w: World, v: Vehicle, forced: boolean): void {
   v.stolen = true;
   theftStats.thefts++;
   const alarm = v.alarmUntil > w.time;
+  if (v.ownerLocal && v.owner === 'nobody') localOwnerShowsUp(w, v);
   const ownerId = typeof v.owner === 'number' ? v.owner : -1;
   const owner = ownerId >= 0 ? w.peds[ownerId] : null;
   let ownerSaw = false;
@@ -199,6 +200,28 @@ function carTaken(w: World, v: Vehicle, forced: boolean): void {
   emit(w, { type: 'carTheft', x: v.px, z: v.pz, carId: v.id, ownerId, ownerSaw, alarm, forced });
   const who = ownerName(w, v);
   toast(w, `<span style="font-size:20px">🚗 You stole ${who ? `${who}'s` : 'an abandoned'} ${v.spec.label}</span>`, 2);
+}
+
+/**
+ * A car owned by a local nobody has met: sometimes its owner is right there (out of a shop nearby). One of the
+ * grown-ups within localOwnerRange who can see the car becomes its owner, and then notices, chases and remembers.
+ */
+function localOwnerShowsUp(w: World, v: Vehicle): void {
+  v.ownerLocal = false;
+  if (v.parked) v.parked.ownerLocal = false;
+  if (Math.random() >= TH.localOwnerNearby) return;
+  let best: Ped | null = null, bd: number = TH.localOwnerRange;
+  for (const p of w.peds) {
+    if (!canReact(p) || p.archetype === 'kid' || (p.state !== 'walk' && p.state !== 'idle' && p.state !== 'look')) continue;
+    const d = Math.hypot(p.pos.x - v.px, p.pos.z - v.pz);
+    if (d >= bd || !canSee(w, p, v.px, v.pz, w.city.heightAt(v.px, v.pz, v.py))) continue;
+    if (w.vehicles.some((o) => o.owner === p.id) || w.parked.cars.some((r) => r.owner === p.id)) continue; // already owns a car
+    bd = d;
+    best = p;
+  }
+  if (!best) return;
+  v.owner = best.id;
+  if (v.parked) v.parked.owner = best.id;
 }
 
 function canReact(p: Ped): boolean {

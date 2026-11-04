@@ -9,6 +9,7 @@ import type { World } from '../../world';
 import type { CityMap, LaneHit, Poi } from '../map/cityMap';
 import type { JobSystem, JobMarker } from './jobManager';
 import { spawnVehicle, type Vehicle } from '../vehicles';
+import { takePooledCar } from '../parkedCars';
 import { toast } from '../hud';
 import { Rng } from '../../rng';
 
@@ -115,7 +116,9 @@ export class DealershipJob implements JobSystem {
     const sl = site.slots[i];
     if (sl.car) return false;
     if (w.vehicles.some((v) => Math.hypot(v.px - sl.x, v.pz - sl.z) < D.slotClearance)) return false;
-    const v = spawnVehicle(w, sl.type, sl.x, sl.z, sl.heading, new THREE.Color(this.rng.pick(PAINTS)));
+    // at load a new car; restocking later takes an idle car from the parked-car pool (the car list doesn't grow per sale)
+    const paint = new THREE.Color(this.rng.pick(PAINTS));
+    const v = w.parked ? takePooledCar(w, sl.type, sl.x, w.city.heightAt(sl.x, sl.z), sl.z, sl.heading, paint) : spawnVehicle(w, sl.type, sl.x, sl.z, sl.heading, paint);
     v.forSale = { site: site.id, slot: i, price: D.prices[sl.type] };
     v.owner = 'nobody';
     v.locked = true;

@@ -1394,26 +1394,37 @@ async function frozenShot(page, path, cam) {
 // people -> ~3 s window smash, alarm, people turn to look, 999 call, stars; the owner shouts and holds a grudge.
 export async function theft(page, S) {
   await S.start(page);
-  await page.evaluate(() => {
+  return theftRun(page, { quiet: null, busy: null, shots: true });
+}
+
+/**
+ * The two thefts. A: an unlocked parked car (on a `quiet` street if given) with nobody within 120 m -> no calls, no
+ * stars. B: a locked car (on a `busy` street if given) with four people on the pavement and its owner up the street.
+ * Parked cars are records (w.parked.cars): standing next to one gives it a drivable stand-in (record.v).
+ */
+async function theftRun(page, opts) {
+  await page.evaluate((opts) => {
     const w = window.__oc, run = window.__ocRun;
-    const v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked && typeof c.owner === 'number' && w.peds[c.owner].active)
-      ?? w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked);
+    const kerbside = (r) => r.cls !== 'lot' && !r.v && (!opts.quiet || r.street === opts.quiet || r.cls === opts.quiet);
+    const rec = w.parked.cars.find((r) => kerbside(r) && !r.locked && typeof r.owner === 'number' && w.peds[r.owner].active)
+      ?? w.parked.cars.find((r) => kerbside(r) && !r.locked) ?? w.parked.cars.find((r) => kerbside(r));
+    rec.locked = false;
     // empty the street: everyone within 120 m (the owner too) is sent to a pavement far away
-    const far = w.city.walk.nodes.filter((n) => Math.hypot(n.x - v.px, n.z - v.pz) > 200);
+    const far = w.city.walk.nodes.filter((n) => Math.hypot(n.x - rec.x, n.z - rec.z) > 200);
     let moved = 0;
     for (const p of w.peds) {
-      if (!p.active || Math.hypot(p.pos.x - v.px, p.pos.z - v.pz) > 120) continue;
+      if (!p.active || Math.hypot(p.pos.x - rec.x, p.pos.z - rec.z) > 120) continue;
       const n = far[(p.id * 7) % far.length];
       p.pos.set(n.x, window.__mh.gy(n.x, n.z) + 0.02, n.z); p.state = 'idle'; p.timer = 40; p.route = []; moved++;
       if (p.dog) p.dog.pos.set(n.x + 1, window.__mh.gy(n.x + 1, n.z) + 0.02, n.z);
     }
-    const ch = Math.cos(v.heading), sh = Math.sin(v.heading);
-    window.__mh.put(w.player.body, v.px - ch * 2.0, v.pz + sh * 2.0, 1.2);
+    const ch = Math.cos(rec.heading), sh = Math.sin(rec.heading);
+    window.__mh.put(w.player.body, rec.x - ch * 2.0, rec.z + sh * 2.0, 1.2);
     w.player.facing = Math.atan2(ch, -sh); w.cam.yaw = w.player.facing + Math.PI;
     run(0.4);
-    window.__A = { car: v.id, moved };
-  });
-  await frozenShot(page, 'screenshots/23-theft-unlocked.png', null); // the empty street and the steal prompt
+    window.__A = { car: rec.v.id, moved, street: rec.street, cls: rec.cls };
+  }, opts);
+  if (opts.shots) await frozenShot(page, 'screenshots/23-theft-unlocked.png', null); // the empty street and the steal prompt
   const A = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__A.car], moved = window.__A.moved;
     const prompt = w.player.prompt;
@@ -1423,7 +1434,7 @@ export async function theft(page, S) {
     run(8);
     const owner = typeof v.owner === 'number' ? w.peds[v.owner] : null;
     return {
-      car: `${v.type} #${v.id}`, owner: owner ? owner.npc.name : 'nobody', pedsMoved: moved, prompt: prompt.replace(/<[^>]+>/g, ''), inCar, stolen: v.stolen,
+      car: `${v.type} #${v.id}`, street: window.__A.street, cls: window.__A.cls, owner: owner ? owner.npc.name : v.ownerLocal ? 'a local' : 'nobody', pedsMoved: moved, prompt: prompt.replace(/<[^>]+>/g, ''), inCar, stolen: v.stolen,
       thefts: window.__ocTheft.thefts - thefts0, callsStarted: window.__ocWitness.callsStarted - calls0, stars: w.police.stars, heat: w.police.heat,
       ownerMemory: owner ? owner.npc.memory.map((m) => `${m.kind}: ${m.note}`) : [], ownerRel: owner ? owner.npc.relationship : null,
     };
@@ -1431,37 +1442,40 @@ export async function theft(page, S) {
   await page.evaluate(() => { const w = window.__oc; const v = w.player.vehicle; if (v) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2); } });
 
   // ---- B: a locked car, people on the pavement, the owner up the street ----
-  const B0 = await page.evaluate(() => {
+  const B0 = await page.evaluate((opts) => {
     const w = window.__oc, run = window.__ocRun;
     // (an owner who is out and about: not the taxi fare waiting at the rank)
     const free = (id) => w.peds[id].active && !w.peds[id].reserved && !w.peds[id].hidden;
-    let v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && c.locked && !c.stolen && typeof c.owner === 'number' && free(c.owner));
-    if (!v) { // fall back: lock a car and give it an active owner
-      v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.stolen);
-      v.locked = true;
-      v.owner = w.peds.find((p) => free(p.id) && p.archetype === 'adult').id;
+    const kerbside = (r) => r.cls !== 'lot' && !r.v && (!opts.busy || r.street === opts.busy || r.cls === opts.busy);
+    let rec = w.parked.cars.find((r) => kerbside(r) && r.locked && typeof r.owner === 'number' && free(r.owner));
+    if (!rec) { // fall back: lock a car and give it an active owner
+      rec = w.parked.cars.find((r) => kerbside(r));
+      rec.locked = true;
+      rec.owner = w.peds.find((p) => free(p.id) && p.archetype === 'adult' && !w.parked.cars.some((r) => r.owner === p.id)).id;
+      rec.ownerLocal = false;
     }
-    const owner = w.peds[v.owner];
-    const ch = Math.cos(v.heading), sh = Math.sin(v.heading);
+    const owner = w.peds[rec.owner];
+    const ch = Math.cos(rec.heading), sh = Math.sin(rec.heading);
     const kx = -ch, kz = sh; // towards the kerb (the car's right side)
-    const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+    const fx = Math.sin(rec.heading), fz = Math.cos(rec.heading);
     // four people on the pavement nearby (elderly and posh/friendly adults are the likeliest to call)
     const rank = (p) => (p.archetype === 'elderly' ? 0 : p.npc.personality === 'posh' || p.npc.personality === 'friendly' ? 1 : 2);
     const wit = w.peds.filter((p) => p.active && p !== owner && p.followId < 0 && !p.reserved && ['elderly', 'adult', 'parent', 'delivery'].includes(p.archetype))
       .sort((a, b) => rank(a) - rank(b)).slice(0, 4);
     [-11, -6, 7, 12].forEach((off, i) => {
       const p = wit[i];
-      p.pos.set(v.px + kx * 3.0 + fx * off, window.__mh.gy(v.px + kx * 3.0 + fx * off, v.pz + kz * 3.0 + fz * off) + 0.02, v.pz + kz * 3.0 + fz * off);
+      p.pos.set(rec.x + kx * 3.0 + fx * off, window.__mh.gy(rec.x + kx * 3.0 + fx * off, rec.z + kz * 3.0 + fz * off) + 0.02, rec.z + kz * 3.0 + fz * off);
       p.state = 'idle'; p.timer = 40; p.route = [];
     });
-    owner.pos.set(v.px + kx * 3.0 - fx * 23, window.__mh.gy(v.px + kx * 3.0 - fx * 23, v.pz + kz * 3.0 - fz * 23) + 0.02, v.pz + kz * 3.0 - fz * 23);
+    owner.pos.set(rec.x + kx * 3.0 - fx * 23, window.__mh.gy(rec.x + kx * 3.0 - fx * 23, rec.z + kz * 3.0 - fz * 23) + 0.02, rec.z + kz * 3.0 - fz * 23);
     owner.state = 'idle'; owner.timer = 40; owner.route = [];
-    window.__mh.put(w.player.body, v.px + kx * 1.95, v.pz + kz * 1.95, 1.2);
+    window.__mh.put(w.player.body, rec.x + kx * 1.95, rec.z + kz * 1.95, 1.2);
     w.player.facing = Math.atan2(-kx, -kz);
     run(0.4);
+    const v = rec.v;
     window.__B = { car: v.id, owner: owner.id, wit: wit.map((p) => p.id), calls0: window.__ocWitness.callsStarted, done0: window.__ocWitness.callsCompleted, stars0: w.police.stars };
-    return { car: `${v.type} #${v.id}`, owner: `${owner.npc.name} (${owner.npc.personality})`, witnesses: wit.map((p) => `${p.archetype}/${p.npc.personality}`), prompt: w.player.prompt.replace(/<[^>]+>/g, ''), starsBefore: w.police.stars };
-  });
+    return { car: `${v.type} #${v.id}`, street: rec.street, cls: rec.cls, owner: `${owner.npc.name} (${owner.npc.personality})`, witnesses: wit.map((p) => `${p.archetype}/${p.npc.personality}`), prompt: w.player.prompt.replace(/<[^>]+>/g, ''), starsBefore: w.police.stars };
+  }, opts);
   // press E and watch the smash play out
   const B1 = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
@@ -1482,7 +1496,7 @@ export async function theft(page, S) {
     const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh, fx = Math.sin(v.heading), fz = Math.cos(v.heading);
     return { px: v.px + kx * 3.4 - fx * 3.6, py: 2.0, pz: v.pz + kz * 3.4 - fz * 3.6, lx: v.px + kx * 0.9 + fx * 0.4, ly: 1.05, lz: v.pz + kz * 0.9 + fz * 0.4 };
   });
-  await frozenShot(page, 'screenshots/23-theft-smash.png', cam1);
+  if (opts.shots) await frozenShot(page, 'screenshots/23-theft-smash.png', cam1);
   const B2 = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
     let k = 0;
@@ -1502,7 +1516,7 @@ export async function theft(page, S) {
     // down the pavement: the owner running up in front, the callers, then the car
     return { px: v.px + kx * 5.5 - fx * 27, py: 3.4, pz: v.pz + kz * 5.5 - fz * 27, lx: v.px + kx * 1.5 + fx * 2, ly: 1.0, lz: v.pz + kz * 1.5 + fz * 2 };
   });
-  await frozenShot(page, 'screenshots/23-theft-alarm.png', cam2);
+  if (opts.shots) await frozenShot(page, 'screenshots/23-theft-alarm.png', cam2);
   const B3 = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
     const owner = w.peds[window.__B.owner];
@@ -1859,4 +1873,44 @@ export async function geolife(page, S) {
   out.waterfrontMorning = await crowdAt(page, 'waterfront', 9);
   out.ratioLunch = out.st29Lunch.inWindow ? +(out.mstLunch.inWindow / out.st29Lunch.inWindow).toFixed(1) : null;
   return out;
+}
+
+// Parked cars (any map: MAP=<id> node scripts/shot.mjs x parkcheck): how many by street class, cars per 100 m of kerb on
+// M St, a residential street and in the car parks; then walking and driving along a street: the drivable stand-ins
+// near you, the pool, draw calls, and E on the nearest parked car.
+export async function parkcheck(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, P = w.parked, run = window.__ocRun;
+    const st = P.stats;
+    // cars per 100 m of kerb along named streets (kerb length = parking spots x their span)
+    const perStreet = {};
+    for (const s of c.parkingSpots) {
+      if (s.cls === 'lot') continue;
+      const k = s.street ?? '?';
+      perStreet[k] ??= { kerbM: 0, cars: 0, cls: s.cls };
+      perStreet[k].kerbM += s.span ?? 13;
+    }
+    for (const r of P.cars) if (r.cls !== 'lot') { const k = r.street ?? '?'; if (perStreet[k]) perStreet[k].cars++; }
+    const per100 = Object.entries(perStreet).filter(([, v]) => v.kerbM > 150).map(([k, v]) => [k, v.cls, Math.round(v.kerbM), +(v.cars / v.kerbM * 100).toFixed(1)]).sort((a, b) => b[3] - a[3]);
+    const lots = {};
+    for (const s of c.parkingSpots) if (s.cls === 'lot') { lots[s.lot] ??= { bays: 0, cars: 0, x: Math.round(s.x), z: Math.round(s.z) }; lots[s.lot].bays++; }
+    for (const r of P.cars) if (r.cls === 'lot' && lots[r.lot]) lots[r.lot].cars++;
+    // walk to M St, see stand-ins and draw calls
+    const spot = window.__mh.place('M St at Wisconsin Ave');
+    const n = c.walk.nodes[c.nearestWalk(spot.x, spot.z, spot.y)];
+    w.player.body.setTranslation({ x: n.x, y: n.y + 1.2, z: n.z }, true);
+    run(1);
+    const f = window.__ocFrames(3, true);
+    const atMst = { live: w.vehicles.filter((v) => v.pooled && !v.idle).length, pool: P.stats.pool, drawn: P.stats.drawn, calls: w.renderer.info.render.calls, tris: w.renderer.info.render.triangles, vehicles: w.vehicles.length };
+    // the nearest parked car has a drivable stand-in; E works on it
+    let best = null, bd = 1e9;
+    for (const r of P.cars) { const d = Math.hypot(r.x - n.x, r.z - n.z); if (d < bd) { bd = d; best = r; } }
+    const ch = Math.cos(best.heading), sh = Math.sin(best.heading);
+    w.player.body.setTranslation({ x: best.x - ch * 2.0, y: best.y + 1.4, z: best.z + sh * 2.0 }, true);
+    run(0.5);
+    const v = best.v;
+    const prompt = w.player.prompt.replace(/<[^>]+>/g, '');
+    return { stats: { cars: st.cars, kerb: st.kerb, lot: st.lot, byClass: st.byClass, poolGrown: st.poolGrown }, per100: per100.slice(0, 14), lots, atMst, nearest: { dist: Math.round(bd), street: best.street, standIn: v ? `${v.type} #${v.id}` : null, prompt, locked: best.locked, owner: best.owner, local: best.ownerLocal } };
+  });
 }
