@@ -13,7 +13,11 @@ import { createPlayer, updatePlayer } from './systems/player';
 import { spawnInitialVehicles, updateVehicles, detectCrashes, wreckMaterial } from './systems/vehicles';
 import { createHud, showHud, updateHud } from './systems/hud';
 import { createDebug, updateDebug } from './systems/debug';
-import { spawnTraffic, updateTraffic, syncTraffic } from './systems/traffic';
+import { spawnTraffic, updateTraffic, syncTraffic, placeOnEdge } from './systems/traffic';
+import { createJunctions } from './systems/junctions';
+import { placeInitialTraffic, updateTrafficPopulation } from './systems/trafficPopulation';
+import { createSignalHeads, updateSignalHeads } from './systems/signalHeads';
+import { resetTrafficStats } from './systems/trafficAudit';
 import { spawnPeds, updatePeds } from './systems/pedestrians';
 import { updateNpcMemory } from './systems/npcMemory';
 import { createPolice, spawnPolicePool, updatePolice, drivePolice, syncPolice } from './systems/police';
@@ -89,9 +93,12 @@ async function boot() {
   dealerships.stockShowrooms(w);
   w.itemsState = createItems(w);
   scatterItems(w);
+  w.junctions = createJunctions(w.city);
+  w.signalHeads = createSignalHeads(w);
   spawnTraffic(w);
   spawnPolicePool(w);
   spawnPeds(w);
+  placeInitialTraffic(w); // after the parked cars and the police pool: spread the preset's cars round the spawn
   assignCarOwners(w); // every parked car that isn't yours belongs to someone (or nobody)
   w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
   w.hurtFx = createHurtFx(w);
@@ -131,6 +138,7 @@ async function boot() {
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
+  (window as unknown as { __ocTraffic: unknown }).__ocTraffic = { placeOnEdge: (car: Parameters<typeof placeOnEdge>[1], edge: number, s0: number) => placeOnEdge(w, car, edge, s0), resetStats: () => resetTrafficStats(w.trafficSim.stats) };
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {
@@ -219,6 +227,7 @@ async function boot() {
     P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 
+    P.begin('traffic-ctl'); updateTrafficPopulation(w); updateSignalHeads(w, w.signalHeads); P.end('traffic-ctl');
     P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); if (w.started) updateCombat(w, dt); updateInventory(w); updateBubbles(w); P.end('sync');
     P.begin('fx'); updateHurtFx(w, dt); P.end('fx');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');

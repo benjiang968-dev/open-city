@@ -6,7 +6,10 @@ import type { InputState } from './systems/input';
 import type { CityMap } from './systems/map/cityMap';
 import type { PlayerState } from './systems/player';
 import type { Vehicle } from './systems/vehicles';
-import type { TrafficCar } from './systems/traffic';
+import type { TrafficCar, TrafficSim } from './systems/traffic';
+import type { JunctionState } from './systems/junctions';
+import type { TrafficPopulation } from './systems/trafficPopulation';
+import type { SignalHeads } from './systems/signalHeads';
 import type { Ped } from './systems/pedestrians';
 import type { PoliceState } from './systems/police';
 import type { JobManager } from './systems/economy/jobManager';
@@ -70,7 +73,13 @@ export interface World {
   city: CityMap;
   player: PlayerState;
   vehicles: Vehicle[];
+  /** AI traffic cars driving now (the preset's count; the rest wait in trafficSim.pool). */
   traffic: TrafficCar[];
+  trafficSim: TrafficSim;
+  trafficPop: TrafficPopulation;
+  /** Junction control: moves, conflicts, signal phases and lights (junctions.ts). */
+  junctions: JunctionState;
+  signalHeads: SignalHeads;
   peds: Ped[];
   police: PoliceState;
   jobs: JobManager;

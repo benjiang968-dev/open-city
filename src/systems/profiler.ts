@@ -4,7 +4,7 @@ import { TUNING } from '../tuning';
 
 const NAMES = [
   'sim', 'player', 'vehicles', 'traffic', 'police-drive', 'physics', 'crashes', 'peds', 'chat', 'jobs', 'theft', 'memory',
-  'police', 'audio', 'sync', 'daynight', 'weather', 'city', 'camera', 'hud', 'minimap', 'debug', 'render', 'fx',
+  'police', 'audio', 'sync', 'daynight', 'weather', 'city', 'camera', 'hud', 'minimap', 'debug', 'render', 'fx', 'traffic-ctl',
 ] as const;
 export type ProfName = (typeof NAMES)[number];
 

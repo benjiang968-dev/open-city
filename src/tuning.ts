@@ -279,7 +279,57 @@ const RAW = {
     bodyRound: 0.3, // metres: AI car bodies (pitch locked) have edges this round, so they ride over kerbs and grade changes
     levelGap: 3, // metres: something this far above or below a car (plus levelGrade per metre ahead) is on another level, not in its way
     levelGrade: 0.25, // height change per metre ahead a street can account for (steep hills) before it counts as another level
-    spawnMinDistFromPlayer: 25,
+    spawnMinDistFromPlayer: 25, // metres: at boot no AI car starts closer than this to the player
+    // ---- population around the player (trafficPopulation.ts) ----
+    countByQuality: { low: 18, medium: 26, high: 34 }, // AI cars driving near the player, by graphics preset (M2 ran 26 everywhere)
+    despawnRadius: 430, // metres: a car farther than this from the player (and out of view) is moved to a lane nearer the player
+    spawnMinDist: 150, // metres: a respawned car starts at least this far from the player and the camera ...
+    spawnMaxDist: 380, // ... and at most this far from the player
+    bootSpawnMaxDist: 420, // metres: at boot cars are spread over lanes up to this far from the spawn
+    spawnViewMargin: 0.3, // radians added to half the camera's field of view: a lane point inside that cone counts as in view
+    spawnClearance: 14, // metres: a car never spawns this close to another AI car
+    spawnSpeedFraction: 0.7, // a respawned car starts moving at this fraction of its lane's cruise speed
+    populationChecksPerFrame: 3, // cars checked per frame for being far away (round robin)
+    // relative cars per lane-metre by road class (a respawn picks a lane by length x this)
+    densityByClass: { primary: 1, secondary: 0.85, parkway: 0.8, tertiary: 0.6, residential: 0.22, service: 0.06 },
+    stuckRecycle: 25, // seconds stopped (not at a junction) before a car is moved away (gridlock fallback)
+    // ---- junction rules (junctions.ts) ----
+    classRank: { primary: 5, parkway: 5, secondary: 4, tertiary: 3, residential: 2, service: 1 }, // at an uncontrolled junction the lower rank gives way
+    approachDecel: 3.2, // m/s²: comfortable braking toward a stop line or into a junction curve
+    decideDist: 12, // metres beyond the braking distance at which a car starts checking whether it may enter the junction ahead
+    turnLatAccel: 2.6, // m/s² sideways on a junction curve: sets the speed of each turn
+    turnSpeedMin: 3.5, // m/s: slowest junction curve speed (tight corners, U-turns)
+    stopSignWait: 1.1, // seconds stopped at a stop sign before going (then first come, first served)
+    yieldPause: 0.25, // seconds a car giving way stands at the line before pulling out into a gap
+    gapTime: 4, // seconds: a car with priority this close (in time) to the junction blocks a crossing or turning move
+    gapDist: 70, // metres: cars with priority farther than this are ignored by gap acceptance
+    maxYieldWait: 12, // seconds: after waiting this long at a give-way line, only cars under 1.5 s away hold a car back
+    conflictDist: 1.7, // metres: two junction paths that come closer than this conflict (cross or merge)
+    exitSpace: 3, // metres of free lane needed beyond a car's length past the junction before it enters (never block the box)
+    exitSpaceSpeed: 3, // m/s: a car on the exit lane slower than this counts as queuing there
+    amberMargin: 0.3, // seconds: on amber a car goes only if it reaches the stop line this long before red
+    // roundabout (Washington Circle): entering cars yield to circulating ones
+    ringYieldDist: 34, // metres along the ring: circulating cars closer than this to an entry ...
+    ringYieldTime: 3.6, // ... and under this many seconds away make entering cars wait
+    ringYieldNear: 10, // metres: a circulating car this close to the entry always makes entering cars wait
+    ringConflictDist: 16, // metres (audit): an entry with a circulating car this close ...
+    ringConflictTime: 2, // ... and under this many seconds away counts as a failure to yield
+    // lane changes (multi-lane roads: Key Bridge, Pennsylvania Ave, K St, the freeway, the circle)
+    laneChangeRate: 1.5, // m/s sideways while changing lanes
+    laneChangeMinRoom: 16, // metres before the stop line: a lane change not started by here is given up (turn from the lane you are in)
+    laneChangeGapAhead: 4, // metres kept to a car ahead in the target lane (plus 0.6 s at our speed)
+    laneChangeGapBehind: 5, // metres kept to a car behind in the target lane (plus 1.2 s of its closing speed)
+    // audit (trafficAudit.ts, only when tests switch it on)
+    wrongLevelGap: 2.5, // metres: an AI car this far above or below its lane is on the wrong level
+    stuckReport: 20, // seconds stopped that count as stuck (gridlock) in the audit
+  },
+  signals: {
+    green: 15, // seconds of green for the phase carrying a junction's biggest road
+    greenSide: 9, // seconds of green for every other phase
+    amber: 3, // seconds of amber
+    allRed: 1.5, // seconds of all-red between phases
+    pedPhase: 7, // seconds of all-red (people cross) at a signal with only one traffic phase (a mid-block crossing)
+    oppositeAngle: 2.4, // radians: two approaches this close to head-on share a phase
   },
 
   peds: {
@@ -368,7 +418,9 @@ const RAW = {
     spawnDistance: 160, // metres from player they spawn
     chaseSpeed: [0, 14, 17, 20, 23, 26], // m/s by star level
     accel: 7, // m/s²
-    directChaseRange: 45, // metres: drive straight at the player when visible this close
+    directChaseRange: 45, // metres: drive straight at the player when visible this close ...
+    directChaseLevelGap: 3, // ... and no more than this many metres above or below (a deck over the road is out of reach)
+    searchRadius: 160, // metres: after reaching your last known position, police cruise to lanes within this of it
     offRoadRejoin: 10, // metres off its lane (after a direct chase) before a police car rejoins the nearest lane
     rejoinSearch: 80, // metres: how far a police car looks for a lane to rejoin
     goalLaneRange: 400, // metres: police route to the lane nearest your last known position within this distance

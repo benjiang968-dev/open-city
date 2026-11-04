@@ -7,7 +7,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../../tuning';
 import { generateCity, updateCity } from '../cityGen';
 import {
-  MapIndex, makeLaneGeometry,
+  MapIndex, makeLaneGeometry, linkLaneNeighbours,
   type Building, type CityMap, type KerbHit, type LaneEdge, type LaneHit, type MinimapDrawOpts, type ParkingSpot,
   type Poi, type RoadClass, type RoadNode, type StreetLine, type WalkNode,
 } from './cityMap';
@@ -24,7 +24,7 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
 
   // ---------- road graph: one node per grid junction (same ids), lane edges in node.nbrs order ----------
   const nodes: RoadNode[] = g.nodes.map((n) => ({
-    id: n.id, x: n.x, y: 0, z: n.z, out: [], in: [], roundabout: false, signals: false, deadEnd: n.nbrs.length < 2, junction: true,
+    id: n.id, x: n.x, y: 0, z: n.z, out: [], in: [], roundabout: false, signals: false, stop: false, deadEnd: n.nbrs.length < 2, junction: true,
   }));
   const edges: LaneEdge[] = [];
   // lanes per direction: the innermost lane centre sits at traffic.laneOffset, then one laneWidth per lane outward,
@@ -48,7 +48,7 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
           id: edges.length, from: a.id, to: b.id, ...geo, trimStart: trimA, trimEnd: trimB, speed: TT.cruiseSpeed,
           cls: alongX ? clsOfZ(a.j) : 'residential', name: alongX ? streetNamesZ[a.j] : streetNamesX[a.i],
           roadId: alongX ? `ew${a.j}` : `ns${a.i}`, lane: k, lanesSameDir: lanes, offset: off, oneway: false,
-          roundabout: false, bridge: false, halfWidth: half, twin: -1, parking: false, // parked cars stand outside the traffic lanes
+          roundabout: false, bridge: false, halfWidth: half, twin: -1, left: -1, right: -1, parking: false, // parked cars stand outside the traffic lanes
         };
         edges.push(e);
         nodes[a.id].out.push(e.id);
@@ -59,6 +59,7 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
   const byEnds = new Map<string, number>();
   for (const e of edges) byEnds.set(`${e.from},${e.to},${e.lane}`, e.id);
   for (const e of edges) e.twin = byEnds.get(`${e.to},${e.from},${e.lane}`) ?? -1;
+  linkLaneNeighbours(edges);
 
   // ---------- walk graph: the pavement corners (same ids and neighbour order) ----------
   const walk: WalkNode[] = g.sideNodes.map((s) => ({ id: s.id, x: s.x, y: 0, z: s.z, nbrs: [...s.nbrs], kind: 'sidewalk', street: null }));
