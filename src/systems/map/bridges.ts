@@ -272,6 +272,7 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
   for (const st of plans) {
     const { pts, cum, w } = st;
     const big = !!st.name;
+    const hLow = Math.min(st.h(0), st.h(st.L)); // the stair's foot (the towpath for the canal steps)
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1], b = pts[i];
       const segL = cum[i] - cum[i - 1];
@@ -289,7 +290,9 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         const p1x = a[0] + ux * (s1 - cum[i - 1]), p1z = a[1] + uz * (s1 - cum[i - 1]);
         const h0 = st.h(s0), h1 = st.h(s1);
         pb.quad(p0x - rx, h0, p0z - rz, p0x + rx, h0, p0z + rz, p1x + rx, h1, p1z + rz, p1x - rx, h1, p1z - rz);
-        // side walls (render + physics) keep people on the stair
+        // side walls (render + physics) keep people on the stair, once it has risen above its foot: on the flat
+        // run-in at the bottom they stood across the towpath under every street bridge and blocked it
+        if (Math.max(h0, h1) < hLow + G.stairWallFrom) continue;
         for (const sd of [-1, 1]) {
           const wx0 = p0x + rx * sd * 1.08, wz0 = p0z + rz * sd * 1.08, wx1 = p1x + rx * sd * 1.08, wz1 = p1z + rz * sd * 1.08;
           const top = big ? 1.1 : 0.9;
