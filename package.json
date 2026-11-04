@@ -9,6 +9,8 @@
     "preview": "vite preview",
     "shot": "node scripts/shot.mjs",
     "import-osm": "node scripts/importOsm.mjs",
+    "gen-georgetown": "node scripts/georgetownFromSpec.mjs",
+    "preview-map": "node scripts/previewMap.mjs",
     "deploy": "npm run build && gh-pages -d dist --dotfiles"
   },
   "dependencies": {

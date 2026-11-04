@@ -4,3 +4,4 @@ dist-prof
 .claude/
 data/osm/*.osm
 data/osm/*.osm.gz
+screenshots/*.svg

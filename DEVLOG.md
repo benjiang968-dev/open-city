@@ -126,3 +126,39 @@ Format: date · what changed · what to test · known issues.
 - **M3 B6 Car ownership, theft and dealerships:** every drivable parked car has an owner (a local, or nobody if abandoned) and only the first car at the starting rank is yours (`ownedAtStart`); half of locals' cars are locked. E on an unlocked car steals it at once; on a locked one you smash the side window for 3 s (elbow strikes rock the car, the glass cracks, a synthesized smash, then a 12 s car alarm that makes everyone within 55 m stop and stare). Taking a car is a new `carTheft` crime (30 heat, 24 m witness radius, 55 m while the alarm sounds); the owner remembers it (`stoleMyCar`, then refuses to chat) and, within 60 m, runs over shouting "Hey! That's my car!" and may phone 999 afterwards. Two dealerships (garage/shop POIs on the grid, data-driven from POI ids, with a kerb sign) show 3–4 display cars: E shows price and stats and buys (hatchback $900, sedan $1,600, pickup $2,200), and bought cars are yours (no theft, no alarm) with a green marker on the minimap. Parked cars follow `parkedCarsPer100m` per street class (boulevard = main, other streets residential, `waterfrontLot` waits for the real map): 24 drivable cars instead of 12, and parked cars now sleep in Rapier and are skipped, so garbage fell from 82.5 to 70.8 KB/frame and vehicle CPU from 0.2 to 0 ms. Tested: `theft` (unlocked car on an empty street: 0 calls, 0 stars; locked car with 4 people around: 3.0 s smash, alarm, all 4 people stop to look, 4–7 completed 999 calls and 2–3 stars over 4 runs; the owner shouts, refuses to talk, and phoned 999 in 3 of the 4 runs) and `dealership` ($900 deducted, owned, no theft/alarm/calls, 2 owned-car markers); handling, taxi, police, witness and gate2 unchanged. Known issues: `chat` is flaky on main too (the second chat sometimes closes early), and the garage building keeps its old shop sign.
 
 - **M3 B6 review fixes:** a wrecked display car could still be bought for full price; now its prompt says it is wrecked and the showroom drops it from stock. A parked car that fell asleep in Rapier on its roof never auto-righted (the new sleep skip froze its upside-down timer); it is now updated until righted, then sleeps again. Test: `theft`, `dealership`, `handling`, `gate2` re-run clean; `chat` fails on main too (2 of 2 runs) at the second conversation.
+
+- **M3 Georgetown map from knowledge (branch `m3-georgetown-data`):** Overpass can't be reached from here, so `src/data/georgetown.json` is now generated from a hand-authored spec instead of an OSM download.
+  - **Spec:** `data/georgetown-spec.json` holds 61 streets, the Potomac shore, the canal, Rock Creek, 14 areas, 29 landmarks, street character, 47 spot heights and 101 noted uncertainties, all as lat/lon. It was written from general knowledge, not OSM, so expect 20–80 m of error. It is pretty-printed so coordinates, lanes and one-ways can be edited by hand.
+  - **Generator:** `npm run gen-georgetown` (`scripts/georgetownFromSpec.mjs`, plain Node, seeded) writes the importer's format (`open-city-osm-1`; extras are `meta.synthetic`, `synth: true` on buildings, `heights`, and `capacity` on car parks). The crop is the spec bbox (2255 × 1665 m); a real import with `--crop -77.074,38.899,-77.048,38.914` uses the same frame.
+  - **Synthesized:**
+    - about 3,960 buildings along the street frontages by street character: rowhouses, shop fronts, waterfront and West End blocks, mansions, a Georgetown University campus and 29 landmark buildings
+    - about 710 POIs as categories only, including a car dealer with its lot, fuel, car repair, police, a fire station and 3 public car parks
+    - sidewalks with corner joins and 419 crossings
+    - the towpath with steps up to every canal bridge, the waterfront promenade and boardwalk, piers, park paths and the Rock Creek Trail
+    - about 6,500 props
+    - a 10 m heightfield fitted to the spot heights (rms misfit 0.5 m)
+  - **Validation (printed by the generator):**
+    - The road graph is 1 component and 1 strongly connected component; a synthetic parkway ramp joins Rock Creek Pkwy to K St.
+    - Washington Circle is a closed one-way loop with 8 spokes.
+    - There are 119 intersections.
+    - 0 buildings overlap a road, a sidewalk buffer, each other, water or parks.
+    - The file is 0.97 MB.
+  - **Preview:** `npm run preview-map` (`scripts/previewMap.mjs`) draws the data to `screenshots/24-map-preview.png` (2400 px, via Playwright).
+  - **Test:** run both commands, then open the PNG.
+  - **Known issues:**
+    - The geometry is approximate and some one-way directions are majority guesses.
+    - East of Rock Creek between M and P St there are no spec streets, so it is empty land.
+    - The canal is not cut into the heightfield.
+    - The game doesn't load this file yet.
+
+- **M3 Georgetown map, geography check (2026-11-04):** an independent check of the spec against the real place. The main layout holds up: Key Bridge, M St into Pennsylvania Ave, the canal, the waterfront, the Whitehurst, the street order, Rock Creek and Washington Circle are all where they should be. Four fixes:
+  - **Wisconsin Ave north of P St** now leans further NNW. The R St junction moved about 80 m west, to -77.0657, so the avenue sits a block west of 32nd St and Dumbarton Oaks. The Q St junction and the spot heights at both junctions moved with it.
+  - **Car Barn:** moved to the east side of the Exorcist Steps, facing the Key Bridge landing.
+  - **Georgetown Library and Book Hill Park:** the library moved to the south side of R St at Wisconsin Ave (3260 R St). Book Hill Park moved from north of R St to the slope below the library, facing Wisconsin Ave.
+  - **Mount Zion church:** moved to the west side of 29th St.
+  - **Validation after the fixes:** unchanged. The road graph is 1 strongly connected component with 119 intersections. There are 0 bad buildings and 5 footway groups. All 29 landmarks are placed, and the Car Barn no longer needs shrinking.
+  - **Test:** `npm run gen-georgetown && npm run preview-map`, then look at the top centre and the Key Bridge end of the PNG.
+  - **Still uncertain:**
+    - The Virginia shore and the tip of Roosevelt Island probably reach into the south-west corner of the box, but the map shows open river there.
+    - The canal west of Key Bridge may lie closer to Canal Rd.
+    - It is unclear whether Oak Hill Cemetery reaches down to Rock Creek.
