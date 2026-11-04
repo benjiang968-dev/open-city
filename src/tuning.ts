@@ -292,6 +292,8 @@ const RAW = {
       minTripDistance: 280, // m: destinations are at least this far
       maxTripDistance: 900, // m
       expectedSpeed: 11, // m/s used to compute the time allowance
+      routeLaneSearch: 60, // metres: the time allowance follows the roads from the lanes this close to the start and the drop-off
+      offRoadDetour: 1.4, // allowance distance = this x the straight line when either end has no lane near it (or no route)
       timeBonusMax: 25, // $ extra for beating the time allowance by a lot
       tipFraction: 0.25, // tip = this fraction of the fare when no crash happened
       crashTipLossDamage: 3, // health lost during a fare that voids the tip

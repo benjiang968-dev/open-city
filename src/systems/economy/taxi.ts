@@ -6,7 +6,7 @@ import type { World } from '../../world';
 import { emit } from '../../world';
 import type { JobMarker, JobSystem } from './jobManager';
 import type { Ped } from '../pedestrians';
-import { roadRouter, type KerbHit, type LaneHit, type Poi } from '../map/cityMap';
+import { roadRouter, type KerbHit, type LaneEdge, type LaneHit, type Poi } from '../map/cityMap';
 import { toast } from '../hud';
 import { adjustRelationship, remember } from '../../npc/npc';
 
@@ -79,7 +79,7 @@ export class TaxiJob implements JobSystem {
     if (this.phase === 'riding' || this.phase === 'boarding') return false;
     if (this.ped && this.ped !== ped) this.release();
     // the kerb stopping point nearest to where they stand
-    const k = w.city.kerbPoint(ped.pos.x, ped.pos.z, KERB);
+    const k = w.city.kerbPoint(ped.pos.x, ped.pos.z, KERB, ped.pos.y);
     this.waitWith(ped, k ? KERB.x : ped.pos.x, k ? KERB.z : ped.pos.z, `${ped.npc.name.split(' ')[0]} (here)`);
     return true;
   }
@@ -304,15 +304,34 @@ export class TaxiJob implements JobSystem {
 
 /**
  * Driving distance from (ax, az) to (bx, bz) along the lanes: from the nearest lane at the start, through the
- * road graph, to the nearest lane at the end. Falls back to 1.4 x the straight line if either end is off-road.
+ * road graph, to the nearest lane at the end, taking either direction of the road at each end (the driver can turn
+ * round; the stop can be on either kerb). Falls back to TX.offRoadDetour x the straight line if either end is
+ * off-road or there is no route.
  */
 export function routeDistance(w: World, ax: number, az: number, bx: number, bz: number): number {
   const c = w.city;
   const straight = Math.hypot(bx - ax, bz - az);
-  if (!c.nearestLane(ax, az, 60, HA) || !c.nearestLane(bx, bz, 60, HB)) return straight * 1.4;
-  const ea = c.roads.edges[HA.edge], eb = c.roads.edges[HB.edge];
-  if (ea.id === eb.id && HB.s >= HA.s) return HB.s - HA.s;
-  const r = roadRouter(c);
-  if (r.path(ea.to, eb.from) < 0) return straight * 1.4;
-  return ea.len - HA.s + r.length + HB.s;
+  if (!c.nearestLane(ax, az, TX.routeLaneSearch, HA) || !c.nearestLane(bx, bz, TX.routeLaneSearch, HB)) return straight * TX.offRoadDetour;
+  const E = c.roads.edges, ea = E[HA.edge], eb = E[HB.edge];
+  let best = Infinity;
+  for (let i = 0; i < 2; i++) {
+    const a = i === 0 ? ea : ea.twin >= 0 ? E[ea.twin] : null;
+    if (!a) continue;
+    const sa = i === 0 ? HA.s : Math.max(0, a.len - HA.s);
+    for (let j = 0; j < 2; j++) {
+      const b = j === 0 ? eb : eb.twin >= 0 ? E[eb.twin] : null;
+      if (!b) continue;
+      const sb = j === 0 ? HB.s : Math.max(0, b.len - HB.s);
+      best = Math.min(best, legDistance(w, a, sa, b, sb));
+    }
+  }
+  return best < Infinity ? best : straight * TX.offRoadDetour;
+}
+
+/** Distance from `sa` along lane `a` to `sb` along lane `b` through the road graph (Infinity if unreachable). */
+function legDistance(w: World, a: LaneEdge, sa: number, b: LaneEdge, sb: number): number {
+  if (a.id === b.id && sb >= sa) return sb - sa;
+  const r = roadRouter(w.city);
+  if (r.path(a.to, b.from) < 0) return Infinity;
+  return a.len - sa + r.length + sb;
 }
