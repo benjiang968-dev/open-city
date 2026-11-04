@@ -128,18 +128,33 @@ function chaseNext(w: World, car: AiCar): number {
   const searching = !pol.seen && w.time >= pol.trackUntil;
   if (searching && goal >= 0) {
     let se = car.searchEdge;
-    if (car.edge === goal || edges[car.edge].to === edges[goal].from) se = se >= 0 && se !== car.edge ? se : pickSearchLane(w, car);
-    if (se >= 0 && (car.edge === se || edges[car.edge].to === edges[se].from)) se = pickSearchLane(w, car);
+    if (reached(w, car, goal)) se = se >= 0 && se !== car.edge ? se : pickSearchLane(w, car);
+    if (se >= 0 && reached(w, car, se)) se = pickSearchLane(w, car);
     car.searchEdge = se;
     if (se >= 0) goal = se;
   } else car.searchEdge = -1;
   if (goal >= 0) {
     const out = nodes[at].out;
-    for (let i = 0; i < out.length; i++) if (out[i] === goal) return goal;
-    const first = roadRouter(w.city).firstEdge(at, edges[goal].from);
+    const twin = edges[goal].twin;
+    for (let i = 0; i < out.length; i++) if (out[i] === goal || out[i] === twin) return out[i];
+    // the lane, or the one the other way along the same road, whichever is quicker to reach (the nearest lane to a
+    // player on Key Bridge could be the far carriageway: routing only to it sent them round by the Virginia end)
+    const router = roadRouter(w.city);
+    let first = -1, best = Infinity;
+    for (let k = 0; k < 2; k++) {
+      const g = k === 0 ? goal : twin;
+      if (g < 0) continue;
+      if (router.path(at, edges[g].from) > 0 && router.length < best) { best = router.length; first = router.edges[0]; }
+    }
     if (first >= 0) return first;
   }
   return pickNext(w, car, Math.random);
+}
+
+/** The car is on lane `g` (or its twin), or about to turn into one of them. */
+function reached(w: World, car: AiCar, g: number): boolean {
+  const edges = w.city.roads.edges, t = edges[g].twin, to = edges[car.edge].to;
+  return car.edge === g || car.edge === t || to === edges[g].from || (t >= 0 && to === edges[t].from);
 }
 
 /** A lane within police.searchRadius of the last known position, on its level, that this car can drive to. */
@@ -172,28 +187,48 @@ function spawnCar(w: World): void {
   camLook.y = 0;
   camLook.normalize();
   const goal = goalLane(w);
-  const router = roadRouter(w.city);
-  // score lanes leaving nodes in the distance band; then take the best one with a route to the goal
-  let best = -1, bestScore = -Infinity;
-  for (let pass = 0; pass < 2 && best < 0; pass++) {
+  // score lanes leaving nodes in the distance band (behind the camera, near spawnDistance, clear, out of sight); then
+  // for the best few, the route to your last known position: the shortest drive wins. On Georgetown's one-way streets
+  // and bridges a lane 200 m away can be a 2 km drive (you were lost before they arrived): if the best drive is longer
+  // than spawnMaxDrive, look further out (up to spawnFarFactor x spawnDistance), then accept a spot in view.
+  let best = -1, bestDrive = Infinity, fallback = -1, fallbackDrive = Infinity;
+  const cand: { e: number; score: number }[] = [];
+  for (let pass = 0; pass < 3; pass++) {
+    const maxD = P.spawnDistance * (pass === 0 ? 1.6 : P.spawnFarFactor);
+    cand.length = 0;
     for (const a of nodes) {
       if (!a.out.length) continue;
       const d = Math.hypot(a.x - pp.x, a.z - pp.z);
-      if (d < P.spawnDistance * 0.6 || d > P.spawnDistance * 1.6) continue;
+      if (d < P.spawnDistance * 0.6 || d > maxD) continue;
       const tx = a.x - cam.position.x, tz = a.z - cam.position.z, tl = Math.hypot(tx, tz) || 1;
       const behind = -(tx * camLook.x + tz * camLook.z) / tl;
       const score = behind - Math.abs(d - P.spawnDistance) / 100 + Math.random() * 0.3;
-      if (score <= bestScore) continue;
-      const eid = a.out[Math.floor(Math.random() * a.out.length)];
-      const e = edges[eid];
-      if (!isTrafficLane(e) || stopLine(e) - laneStart(e) < 12) continue;
-      laneSample(e, laneStart(e) + 5, LP);
-      if (pass === 0 && visible(w, LP.x, LP.y, LP.z)) continue; // never appear in sight of the camera
-      if (goal >= 0 && e.to !== edges[goal].from && router.path(e.to, edges[goal].from) < 0) continue; // no way there
-      bestScore = score;
-      best = eid;
+      for (let i = 0; i < a.out.length; i++) {
+        const e = edges[a.out[i]];
+        if (!isTrafficLane(e) || stopLine(e) - laneStart(e) < 12) continue;
+        laneSample(e, laneStart(e) + 5, LP);
+        if (!spotClear(w, LP.x, LP.y, LP.z)) continue; // not on top of another car (two cars dispatched to one lane met in the same spot)
+        cand.push({ e: e.id, score });
+      }
     }
+    cand.sort((p, q) => q.score - p.score);
+    let bestScore = -Infinity, checked = 0;
+    best = -1;
+    for (let k = 0; k < cand.length && checked < P.spawnRouteChecks; k++) {
+      const e = edges[cand[k].e];
+      laneSample(e, laneStart(e) + 5, LP);
+      if (pass < 2 && visible(w, LP.x, LP.y, LP.z)) continue; // never appear in sight of the camera (unless nothing else will do)
+      checked++;
+      const drive = goal >= 0 ? routeLen(w, e.to, goal) : 0;
+      if (drive === Infinity) continue; // no way there
+      const score = cand[k].score - drive / P.spawnRoutePenalty;
+      if (score > bestScore) { bestScore = score; best = e.id; bestDrive = drive; }
+    }
+    if (best >= 0 && bestDrive <= P.spawnMaxDrive) break;
+    if (best >= 0 && bestDrive < fallbackDrive) { fallback = best; fallbackDrive = bestDrive; }
+    best = -1;
   }
+  if (best < 0) best = fallback;
   if (best < 0) best = anyLane(w);
   car.body.setGravityScale(1, true);
   car.body.wakeUp();
@@ -202,6 +237,36 @@ function spawnCar(w: World): void {
   car.chooser = (c) => chaseNext(w, c);
   car.searchEdge = -1;
   w.police.cars.push(car);
+}
+
+/** Metres of driving from node `a` onto lane `goal` or its twin (the shorter), Infinity if there is no route. */
+function routeLen(w: World, a: number, goal: number): number {
+  const edges = w.city.roads.edges, router = roadRouter(w.city), t = edges[goal].twin;
+  let best = Infinity;
+  for (let k = 0; k < 2; k++) {
+    const g = k === 0 ? goal : t;
+    if (g < 0) continue;
+    if (router.path(a, edges[g].from) >= 0 && router.length < best) best = router.length;
+  }
+  return best;
+}
+
+/** No AI car (traffic or police) or drivable car within traffic.spawnClearance of (x, y, z) on its level. */
+function spotClear(w: World, x: number, y: number, z: number): boolean {
+  const r2 = TUNING.traffic.spawnClearance * TUNING.traffic.spawnClearance, lg = TUNING.traffic.levelGap;
+  const lists = [w.traffic, w.police.cars];
+  for (let l = 0; l < 2; l++) {
+    const list = lists[l];
+    for (let i = 0; i < list.length; i++) {
+      const o = list[i], dx = o.px - x, dz = o.pz - z;
+      if (dx * dx + dz * dz < r2 && Math.abs(o.py - 0.62 - y) < lg) return false;
+    }
+  }
+  for (let i = 0; i < w.vehicles.length; i++) {
+    const v = w.vehicles[i], dx = v.px - x, dz = v.pz - z;
+    if (dx * dx + dz * dz < r2 && Math.abs(v.py - y) < lg + 1) return false;
+  }
+  return true;
 }
 
 function hasLineOfSight(w: World, car: AiCar): boolean {
