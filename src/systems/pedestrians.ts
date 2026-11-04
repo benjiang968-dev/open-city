@@ -194,6 +194,14 @@ function setActive(p: Ped, on: boolean): void {
   p.body.setEnabled(p.solid);
 }
 
+/** Bring someone on-stage right where they are now (a taxi fare taken from off-stage at a quiet hour). */
+export function bringOnStage(w: World, p: Ped): void {
+  if (p.active) return;
+  setActive(p, true);
+  for (const kid of w.peds) if (kid.followId === p.id) setActive(kid, true);
+  w.pedDensity.added++;
+}
+
 function countActive(w: World): number {
   let n = 0;
   for (const p of w.peds) if (p.active) n++;

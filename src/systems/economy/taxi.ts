@@ -5,7 +5,7 @@ import { TUNING } from '../../tuning';
 import type { World } from '../../world';
 import { emit } from '../../world';
 import type { JobMarker, JobSystem } from './jobManager';
-import type { Ped } from '../pedestrians';
+import { bringOnStage, type Ped } from '../pedestrians';
 import { roadRouter, type KerbHit, type LaneEdge, type LaneHit, type Poi } from '../map/cityMap';
 import { toast } from '../hud';
 import { adjustRelationship, remember } from '../../npc/npc';
@@ -92,10 +92,12 @@ export class TaxiJob implements JobSystem {
     }
     const cam = w.camera.position;
     const candidates = w.peds.filter((p) => p.active && !p.hidden && p.followId < 0 && !p.dog && p.archetype !== 'parent' && p.phoneMode === null && !p.reserved && p.state !== 'down' && p.state !== 'talk' && p.pos.distanceTo(cam) > 60);
-    const ped = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : w.peds.find((p) => !p.reserved && p.state !== 'talk');
+    // (at a quiet hour nobody may be out: then someone off-stage who travels alone)
+    const ped = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : w.peds.find((p) => !p.reserved && p.state !== 'talk' && p.followId < 0 && !p.dog && p.archetype !== 'parent' && !p.hidden);
     if (!ped) return;
     const px = rank.x + (Math.random() - 0.5) * 2, pz = rank.z + (Math.random() - 0.5) * 2;
     ped.pos.set(px, w.city.heightAt(px, pz) + FOOT, pz);
+    bringOnStage(w, ped);
     this.waitWith(ped, rank.curbX, rank.curbZ, rank.name);
   }
 
