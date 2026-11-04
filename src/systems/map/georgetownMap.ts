@@ -616,6 +616,12 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
   const SW = G.sidewalkWidth, step = M.walkNodeSpacing, gap = M.walkLevelGap;
   const tmp = [0, 0, 0];
   const blocked = (x: number, z: number) => geo.isBlocked(x, z) || geo.isWater(x, z);
+  /** Does the straight link a-b cross a building (at ground level, not under a deck)? */
+  const throughBuilding = (a: WalkNode, b: WalkNode) => {
+    const n = Math.ceil(Math.hypot(b.x - a.x, b.z - a.z));
+    for (let k = 1; k < n; k++) if ((geo.kindAt(a.x + ((b.x - a.x) * k) / n, a.z + ((b.z - a.z) * k) / n) & (K.BUILDING | K.DECK)) === K.BUILDING) return true;
+    return false;
+  };
 
   // ---- sidewalks along each kerb with one (ends[pi*2 + side] = [node near A, node near B]) ----
   const ends = new Int32Array(polys.length * 4).fill(-1);
@@ -808,7 +814,7 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
     const n = W.nodes[id];
     // not back onto its own way: skip itself and anything within two links of it
     const near = (o: WalkNode) => o.id === id || n.nbrs.includes(o.id) || n.nbrs.some((u) => W.nodes[u].nbrs.includes(o.id));
-    const j = grid.nearest(W.nodes, n.x, n.z, M.walkJoinRange, (o) => Math.abs(o.y - n.y) <= gap && !near(o));
+    const j = grid.nearest(W.nodes, n.x, n.z, M.walkJoinRange, (o) => Math.abs(o.y - n.y) <= gap && !near(o) && !throughBuilding(n, o));
     if (j >= 0) W.link(id, j);
   }
 
@@ -836,7 +842,7 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
     let bestA = -1, bestB = -1, bd = Infinity;
     for (const a of members[c]) {
       const n = W.nodes[a];
-      const j = grid.nearest(W.nodes, n.x, n.z, M.walkBridgeRange, (o) => inMain[o.id] === 1 && Math.abs(o.y - n.y) <= M.walkBridgeLevelGap);
+      const j = grid.nearest(W.nodes, n.x, n.z, M.walkBridgeRange, (o) => inMain[o.id] === 1 && Math.abs(o.y - n.y) <= M.walkBridgeLevelGap && !throughBuilding(n, o));
       if (j >= 0) { const d = Math.hypot(W.nodes[j].x - n.x, W.nodes[j].z - n.z); if (d < bd) { bd = d; bestA = a; bestB = j; } }
     }
     if (bestA < 0) {
