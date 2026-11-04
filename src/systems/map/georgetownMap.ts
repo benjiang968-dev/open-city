@@ -908,8 +908,9 @@ function buildParking(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: {
       if (id === undefined) continue;
       const e = edges[id];
       if (!e.parking) continue;
-      // the junction boxes at both ends (the real plateaus, also at pass-through nodes)
-      const tS = e.from === P.nodeA ? P.trimA : P.trimB, tE = e.from === P.nodeA ? P.trimB : P.trimA;
+      // the junction boxes at both ends (the real plateaus, also at pass-through nodes), and the room traffic needs to
+      // turn round at a dead end (a road leaving the map: the lane's own trim there)
+      const tS = Math.max(e.from === P.nodeA ? P.trimA : P.trimB, e.trimStart), tE = Math.max(e.from === P.nodeA ? P.trimB : P.trimA, e.trimEnd);
       const s0 = tS + V.parkingJunctionGap, s1 = e.len - tE - V.parkingJunctionGap;
       const shift = e.halfWidth - M.parkingBand / 2 - e.offset; // lane centre -> parked car centre, to the right
       const gap = M.kerbSpotSpacing;
