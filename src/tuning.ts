@@ -289,6 +289,8 @@ const RAW = {
     spawnClearance: 14, // metres: a car never spawns this close to another AI car
     spawnSpeedFraction: 0.7, // a respawned car starts moving at this fraction of its lane's cruise speed
     populationChecksPerFrame: 3, // cars checked per frame for being far away (round robin)
+    respawnsPerFrame: 1, // at most this many cars are moved per frame (each move tries lanes and casts sight rays)
+    spawnTries: 50, // lanes tried for one move (the last 30% at any distance out of sight)
     // relative cars per lane-metre by road class (a respawn picks a lane by length x this)
     densityByClass: { primary: 1, secondary: 0.85, parkway: 0.8, tertiary: 0.6, residential: 0.22, service: 0.06 },
     stuckRecycle: 25, // seconds stopped (not at a junction) before a car is moved away (gridlock fallback)
@@ -308,6 +310,7 @@ const RAW = {
     boxReserveTime: 1.2, // seconds: a car given the go this close to its stop line counts as in the junction already
     exitSpaceSpeed: 3, // m/s: a car on the exit lane slower than this counts as queuing there
     amberMargin: 0.3, // seconds: on amber a car goes only if it reaches the stop line this long before red
+    redCommitSpeed: 3, // m/s: a car that went for an amber but is slower than this at the line when it turns red stops
     stopBehindLine: 0.5, // metres between a waiting car's front bumper and the stop line
     stopClearance: 2.3, // metres: a waiting car stands back until its front is this far from every other approach's junction curve ...
     stopBackMax: 8, // ... but never more than this many metres behind the line

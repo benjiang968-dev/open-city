@@ -597,7 +597,7 @@ function inBox(w: World, J: JunctionState, c: NodeCtl, o: AiCar, mv: number): bo
 export function boxBlocked(w: World, car: AiCar): boolean {
   const J = w.junctions;
   const c = J.nodes[w.city.roads.edges[car.edge].to];
-  if (c.kind === CTL_SIGNALS && J.light[car.edge] === LIGHT_RED && !car.commit) return true;
+  if (c.kind === CTL_SIGNALS && J.light[car.edge] === LIGHT_RED && (!car.commit || car.speed < TT.redCommitSpeed)) { car.commit = false; return true; }
   const traffic = w.traffic;
   for (let i = 0; i < traffic.length; i++) { const o = traffic[i]; if (o !== car && inBox(w, J, c, o, car.move)) return true; }
   const pol = w.police.cars;
@@ -623,7 +623,9 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
   // ---- lights ----
   if (k === CTL_SIGNALS) {
     const L = J.light[car.edge];
-    if (L === LIGHT_RED && !car.commit) return HOLD_RED;
+    // red: stop, unless committed on amber and still moving too fast to stop at the line (a committed car that slowed
+    // right down behind someone stops for the red instead)
+    if (L === LIGHT_RED && (!car.commit || car.speed < TT.redCommitSpeed)) { car.commit = false; return HOLD_RED; }
     if (L === LIGHT_AMBER && !car.commit) {
       const rem = stopLine(e) - car.s;
       // time to the line while easing to the junction curve's speed (never faster than now)

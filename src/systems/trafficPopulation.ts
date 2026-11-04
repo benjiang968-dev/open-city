@@ -105,8 +105,8 @@ export function respawnCar(w: World, car: AiCar, boot = false): boolean {
   if (!P.cand.length) return false;
   const edges = w.city.roads.edges;
   const pp = w.player.mesh.position;
-  for (let tries = 0; tries < 90; tries++) {
-    const relax = tries >= 60; // late tries: any distance out of view
+  for (let tries = 0; tries < TT.spawnTries; tries++) {
+    const relax = tries >= TT.spawnTries * 0.7; // late tries: any distance out of view
     const id = pickLane(P);
     const e = edges[id];
     const a = laneStart(e) + 5, b = stopLine(e) - 10;
@@ -217,13 +217,14 @@ export function updateTrafficPopulation(w: World): void {
   if (!n) return;
   const pp = w.player.mesh.position;
   const R2 = TT.despawnRadius * TT.despawnRadius;
-  for (let k = 0; k < TT.populationChecksPerFrame; k++) {
+  let moved = 0;
+  for (let k = 0; k < TT.populationChecksPerFrame && moved < TT.respawnsPerFrame; k++) {
     P.rr = (P.rr + 1) % n;
     const car = w.traffic[P.rr];
     if (car.keep) continue;
     const dx = car.px - pp.x, dz = car.pz - pp.z;
     const far = dx * dx + dz * dz > R2;
     // out of sight, or (a car stranded in the road for good) even in view: a gridlock must not last for ever
-    if ((far || car.respawnWanted) && (!visible(w, car.px, car.py - 0.62, car.pz) || (car.respawnWanted && car.stuckT > 2 * TT.stuckRecycle))) respawnCar(w, car);
+    if ((far || car.respawnWanted) && (!visible(w, car.px, car.py - 0.62, car.pz) || (car.respawnWanted && car.stuckT > 2 * TT.stuckRecycle))) { respawnCar(w, car); moved++; }
   }
 }

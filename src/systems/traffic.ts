@@ -506,7 +506,7 @@ function crossing(w: World, car: AiCar): void {
   const st = w.trafficSim.stats;
   if (c.kind === CTL_SIGNALS) {
     st.signalCrossings++;
-    if (J.light[car.edge] === LIGHT_RED) { st.redRuns++; st.lastRedRun = `${e.name ?? e.roadId} at node ${e.to}, car ${car.id}`; }
+    if (J.light[car.edge] === LIGHT_RED) { st.redRuns++; st.lastRedRun = `${e.name ?? e.roadId} at node ${e.to}, car ${car.id} ${car.phase} v ${car.speed.toFixed(1)} commit ${car.commit} cleared ${car.cleared} hold ${car.hold} t ${w.time.toFixed(1)}`; }
   }
   if (c.kind === CTL_RING && !e.roundabout && car.next >= 0 && edges[car.next].roundabout) {
     st.ringEntries++;
