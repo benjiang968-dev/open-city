@@ -24,6 +24,8 @@ export interface PedDensityState {
   shop: Float32Array; // people per metre from the shops nearby, at the peak of the 'shops' curve
   shops: Uint8Array; // shops within shopRadius (counted, before the cap)
   zone: Uint8Array;
+  /** 1: people may appear on this link; 0: a crossing (it lies in the carriageway: people cross it, never appear on it). */
+  spawnable: Uint8Array;
   outdoor: Float32Array; // spawn weight factor for dog walkers and joggers
   /** Per walk node: route cost factor for dog walkers and joggers (towpath, waterfront, park paths are cheaper). */
   routeCost: Float32Array;
@@ -61,7 +63,7 @@ export function createPedDensity(w: World): PedDensityState {
   for (const a of W) for (const j of a.nbrs) if (j > a.id) n++;
   const ax = new Float32Array(n), az = new Float32Array(n), bx = new Float32Array(n), bz = new Float32Array(n), ly = new Float32Array(n);
   const len = new Float32Array(n), base = new Float32Array(n), shop = new Float32Array(n), zone = new Uint8Array(n), outdoor = new Float32Array(n);
-  const shops = new Uint8Array(n);
+  const shops = new Uint8Array(n), spawnable = new Uint8Array(n);
   // shops in a coarse grid for the radius counts
   const SC = Math.max(8, D.shopRadius);
   const shopKinds = new Set<string>(D.shopKinds);
@@ -111,6 +113,7 @@ export function createPedDensity(w: World): PedDensityState {
       zone[i] = Z_WATER;
     }
     shop[i] = shopTerm;
+    spawnable[i] = kind === 'crossing' ? 0 : 1;
     outdoor[i] = OB[kind] ?? 1;
     i++;
   }
@@ -139,7 +142,7 @@ export function createPedDensity(w: World): PedDensityState {
   for (let k = 0; k < n; k++) items[fill[cellOf((ax[k] + bx[k]) / 2, (az[k] + bz[k]) / 2)]++] = k;
 
   return {
-    n, ax, az, bx, bz, ly, len, base, shop, shops, zone, outdoor, routeCost, outdoorNodes: Int32Array.from(out),
+    n, ax, az, bx, bz, ly, len, base, shop, shops, zone, spawnable, outdoor, routeCost, outdoorNodes: Int32Array.from(out),
     minX, minZ, cols, rows, start, items,
     cand: new Int32Array(n), cumAll: new Float32Array(n), cumOut: new Float32Array(n), nCand: 0,
     curve: new Float32Array(ZONES.length), timer: 0,
@@ -192,7 +195,7 @@ export function updatePedDensity(w: World, dt: number, force = false): void {
       if (d2 > R2) continue;
       const people = rho(S, k) * S.len[k];
       real += people;
-      if (d2 < m2 || (w.started && inCameraView(w, mx, mz))) continue;
+      if (!S.spawnable[k] || d2 < m2 || (w.started && inCameraView(w, mx, mz))) continue;
       cumA += people;
       cumO += people * S.outdoor[k];
       S.cand[nc] = k;
@@ -209,11 +212,11 @@ export function updatePedDensity(w: World, dt: number, force = false): void {
 }
 
 /**
- * A spawn point for one person: a random point on a candidate link, picked by the links' head counts (dog walkers
- * and joggers: `outdoor`, weighted towards the towpath and the waterfront). Re-checks the view. Returns false if
- * nothing in range qualifies (the caller keeps the person where they are).
+ * A spawn point for one person: a random point on a candidate link (never a crossing), picked by the links' head
+ * counts (dog walkers and joggers: `outdoor`, weighted towards the towpath and the waterfront), and the link's
+ * direction. Re-checks the view. Returns false if nothing in range qualifies (the caller keeps the person where they are).
  */
-export function pickSpawn(w: World, outdoor: boolean, out: { x: number; y: number; z: number }): boolean {
+export function pickSpawn(w: World, outdoor: boolean, out: { x: number; y: number; z: number; dx: number; dz: number }): boolean {
   const S = w.pedDensity;
   if (!S.nCand) return false;
   const cum = outdoor ? S.cumOut : S.cumAll;
@@ -234,6 +237,10 @@ export function pickSpawn(w: World, outdoor: boolean, out: { x: number; y: numbe
     out.x = x;
     out.y = S.ly[k];
     out.z = z;
+    // the link's direction: a kid or a dog is placed along the pavement, not across it into the road or a wall
+    const l = S.len[k] || 1;
+    out.dx = (S.bx[k] - S.ax[k]) / l;
+    out.dz = (S.bz[k] - S.az[k]) / l;
     return true;
   }
   return false;

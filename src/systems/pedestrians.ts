@@ -239,7 +239,7 @@ function deactivate(w: World, p: Ped): void {
 }
 
 let activateCursor = 0;
-const SPAWN = { x: 0, y: 0, z: 0 };
+const SPAWN = { x: 0, y: 0, z: 0, dx: 1, dz: 0 };
 /** Bring one person (a parent brings their kid) on-stage at a busy spot near you, out of view. */
 function activateOne(w: World): boolean {
   const n = w.peds.length;
@@ -249,7 +249,7 @@ function activateOne(w: World): boolean {
     if (p.active || p.followId >= 0 || p.reserved) continue;
     if (!pickSpawn(w, p.archetype === 'jogger' || p.archetype === 'dogwalker', SPAWN)) return false;
     setActive(p, true);
-    placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z);
+    placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z, SPAWN.dx, SPAWN.dz);
     for (const kid of w.peds) if (kid.followId === p.id) setActive(kid, true);
     w.pedDensity.added++;
     return true;
@@ -778,21 +778,24 @@ function recycleFarPeds(w: World) {
     const S = w.pedDensity;
     if (S.active > S.target + PT.density.slack) { deactivate(w, p); S.active--; continue; }
     if (pickSpawn(w, p.archetype === 'jogger' || p.archetype === 'dogwalker', SPAWN)) {
-      placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z);
+      placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z, SPAWN.dx, SPAWN.dz);
       S.relocated++;
     }
   }
 }
 
-/** Put a person (with their kid and dog) at (x, z) on the surface near height y, standing, about to set off. */
-function placeAt(w: World, p: Ped, x: number, y: number, z: number) {
+/**
+ * Put a person (with their kid and dog) at (x, z) on the surface near height y, standing, about to set off. (dx, dz):
+ * the pavement's direction there: the kid stands just behind and the dog just ahead along it (never off the edge).
+ */
+function placeAt(w: World, p: Ped, x: number, y: number, z: number, dx: number, dz: number) {
   const c = w.city;
   p.pos.set(x, c.heightAt(x, z, y) + FOOT, z);
   p.state = 'idle';
   p.timer = Math.random() * 2;
   p.tilt = 0;
-  for (const kid of w.peds) if (kid.followId === p.id) { kid.pos.set(x + 0.8, c.heightAt(x + 0.8, z, y) + FOOT, z); kid.state = 'follow'; kid.tilt = 0; }
-  if (p.dog) { p.dog.pos.set(x + 1.2, c.heightAt(x + 1.2, z, y) + FOOT, z); p.dog.tumbleT = 0; p.dog.vel.set(0, 0, 0); }
+  for (const kid of w.peds) if (kid.followId === p.id) { const kx = x - dx * 0.8, kz = z - dz * 0.8; kid.pos.set(kx, c.heightAt(kx, kz, y) + FOOT, kz); kid.state = 'follow'; kid.tilt = 0; }
+  if (p.dog) { const gx = x + dx * 1.2, gz = z + dz * 1.2; p.dog.pos.set(gx, c.heightAt(gx, gz, y) + FOOT, gz); p.dog.tumbleT = 0; p.dog.vel.set(0, 0, 0); }
 }
 
 function crossingBlocked(w: World, ped: Ped, dx: number, dz: number): boolean {
