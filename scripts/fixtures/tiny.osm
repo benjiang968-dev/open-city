@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SYNTHETIC TEST FIXTURE for scripts/importOsm.mjs (checked by scripts/testImportOsm.mjs). Not real map data:
+     every street, building and name here is invented. The coordinates only sit inside the importer's crop so that
+     clipping and projection get exercised. Layout in local metres (x east, y north of the crop centre):
+     two streets crossing at a signal, one clipped by the west crop edge; a sidewalk; three buildings (one mostly
+     outside the crop); a cafe with a real-looking name; a complete pond multipolygon with an island; a river
+     multipolygon cut by the download box (one member missing) along the south-west corner; a canal (centre line
+     plus a 12 m wide water area that also runs out of the download box) with an unnamed path beside it and a
+     footbridge over it; a park and a car park. -->
+<osm version="0.6" generator="open-city fixture">
+  <bounds minlat="38.8990" minlon="-77.0740" maxlat="38.9140" maxlon="-77.0480"/>
+  <node id="1" lat="38.9014953" lon="-77.0723746"/>
+  <node id="2" lat="38.9014953" lon="-77.0714523"/>
+  <node id="3" lat="38.9014953" lon="-77.0702994">
+    <tag k="highway" v="traffic_signals"/>
+  </node>
+  <node id="4" lat="38.9014953" lon="-77.0691466"/>
+  <node id="5" lat="38.9022159" lon="-77.0702994"/>
+  <node id="6" lat="38.9006846" lon="-77.0702994"/>
+  <node id="7" lat="38.9015583" lon="-77.0714523"/>
+  <node id="8" lat="38.9015583" lon="-77.0704147"/>
+  <node id="10" lat="38.9016754" lon="-77.0713370"/>
+  <node id="11" lat="38.9016754" lon="-77.0711064"/>
+  <node id="12" lat="38.9018105" lon="-77.0711064"/>
+  <node id="13" lat="38.9018105" lon="-77.0713370"/>
+  <node id="14" lat="38.9018556" lon="-77.0703686"/>
+  <node id="15" lat="38.9018556" lon="-77.0701265"/>
+  <node id="16" lat="38.9019907" lon="-77.0701265"/>
+  <node id="17" lat="38.9019907" lon="-77.0703686"/>
+  <node id="18" lat="38.9009548" lon="-77.0721440"/>
+  <node id="19" lat="38.9009548" lon="-77.0719134"/>
+  <node id="20" lat="38.9010899" lon="-77.0719134"/>
+  <node id="21" lat="38.9010899" lon="-77.0721440"/>
+  <node id="30" lat="38.9016304" lon="-77.0708759">
+    <tag k="amenity" v="cafe"/>
+    <tag k="name" v="Blue Heron Coffee Roasters"/>
+    <tag k="brand" v="Blue Heron"/>
+    <tag k="cuisine" v="coffee_shop"/>
+    <tag k="opening_hours" v="Mo-Su 07:00-19:00"/>
+  </node>
+  <node id="31" lat="38.9015853" lon="-77.0712217">
+    <tag k="natural" v="tree"/>
+  </node>
+  <node id="32" lat="38.9015673" lon="-77.0709335">
+    <tag k="amenity" v="bench"/>
+  </node>
+  <node id="40" lat="38.9028464" lon="-77.0681090"/>
+  <node id="41" lat="38.9031012" lon="-77.0682440"/>
+  <node id="42" lat="38.9032068" lon="-77.0685701"/>
+  <node id="43" lat="38.9031012" lon="-77.0688962"/>
+  <node id="44" lat="38.9028464" lon="-77.0690313"/>
+  <node id="45" lat="38.9025917" lon="-77.0688962"/>
+  <node id="46" lat="38.9024861" lon="-77.0685701"/>
+  <node id="47" lat="38.9025917" lon="-77.0682440"/>
+  <node id="50" lat="38.9028014" lon="-77.0686278"/>
+  <node id="51" lat="38.9028014" lon="-77.0685125"/>
+  <node id="52" lat="38.9028915" lon="-77.0685125"/>
+  <node id="53" lat="38.9028915" lon="-77.0686278"/>
+  <node id="60" lat="38.9005945" lon="-77.0724899"/>
+  <node id="61" lat="38.9005494" lon="-77.0715676"/>
+  <node id="62" lat="38.9004143" lon="-77.0708759"/>
+  <node id="63" lat="38.9001441" lon="-77.0704147"/>
+  <node id="64" lat="38.8997838" lon="-77.0700689"/>
+  <node id="70" lat="38.9023961" lon="-77.0719134"/>
+  <node id="71" lat="38.9023961" lon="-77.0704147"/>
+  <node id="72" lat="38.9023510" lon="-77.0692618"/>
+  <node id="73" lat="38.9024861" lon="-77.0718558"/>
+  <node id="74" lat="38.9024861" lon="-77.0704147"/>
+  <node id="75" lat="38.9024501" lon="-77.0693771"/>
+  <node id="76" lat="38.9022609" lon="-77.0708759"/>
+  <node id="77" lat="38.9025312" lon="-77.0708759"/>
+  <node id="90" lat="38.9024501" lon="-77.0724899"/>
+  <node id="91" lat="38.9024501" lon="-77.0708759"/>
+  <node id="92" lat="38.9024501" lon="-77.0692618"/>
+  <node id="93" lat="38.9023420" lon="-77.0692618"/>
+  <node id="94" lat="38.9023420" lon="-77.0708759"/>
+  <node id="95" lat="38.9023420" lon="-77.0724899"/>
+  <node id="80" lat="38.9016754" lon="-77.0697230"/>
+  <node id="81" lat="38.9016754" lon="-77.0690313"/>
+  <node id="82" lat="38.9020357" lon="-77.0690313"/>
+  <node id="83" lat="38.9020357" lon="-77.0697230"/>
+  <node id="84" lat="38.9009548" lon="-77.0700689"/>
+  <node id="85" lat="38.9009548" lon="-77.0697230"/>
+  <node id="86" lat="38.9012250" lon="-77.0697230"/>
+  <node id="87" lat="38.9012250" lon="-77.0700689"/>
+  <way id="101">
+    <nd ref="1"/>
+    <nd ref="2"/>
+    <nd ref="3"/>
+    <nd ref="4"/>
+    <tag k="highway" v="residential"/>
+    <tag k="name" v="Fixture Street NW"/>
+    <tag k="oneway" v="yes"/>
+    <tag k="lanes" v="1"/>
+    <tag k="maxspeed" v="25 mph"/>
+    <tag k="sidewalk" v="both"/>
+    <tag k="surface" v="sett"/>
+  </way>
+  <way id="102">
+    <nd ref="5"/>
+    <nd ref="3"/>
+    <nd ref="6"/>
+    <tag k="highway" v="tertiary"/>
+    <tag k="name" v="Sample Avenue NW"/>
+    <tag k="oneway" v="-1"/>
+    <tag k="lanes" v="2"/>
+  </way>
+  <way id="103">
+    <nd ref="7"/>
+    <nd ref="8"/>
+    <tag k="highway" v="footway"/>
+    <tag k="footway" v="sidewalk"/>
+  </way>
+  <way id="110">
+    <nd ref="10"/>
+    <nd ref="11"/>
+    <nd ref="12"/>
+    <nd ref="13"/>
+    <nd ref="10"/>
+    <tag k="building" v="house"/>
+    <tag k="building:levels" v="3"/>
+    <tag k="name" v="Fixture House"/>
+    <tag k="addr:housenumber" v="1234"/>
+    <tag k="addr:street" v="Fixture Street NW"/>
+  </way>
+  <way id="111">
+    <nd ref="14"/>
+    <nd ref="15"/>
+    <nd ref="16"/>
+    <nd ref="17"/>
+    <nd ref="14"/>
+    <tag k="building" v="retail"/>
+    <tag k="height" v="12 m"/>
+    <tag k="shop" v="clothes"/>
+    <tag k="name" v="Real Looking Boutique"/>
+    <tag k="brand" v="Real Looking"/>
+    <tag k="website" v="https://example.com"/>
+  </way>
+  <way id="112">
+    <nd ref="18"/>
+    <nd ref="19"/>
+    <nd ref="20"/>
+    <nd ref="21"/>
+    <nd ref="18"/>
+    <tag k="building" v="yes"/>
+  </way>
+  <way id="120">
+    <nd ref="40"/>
+    <nd ref="41"/>
+    <nd ref="42"/>
+    <nd ref="43"/>
+  </way>
+  <way id="121">
+    <nd ref="45"/>
+    <nd ref="44"/>
+    <nd ref="43"/>
+  </way>
+  <way id="122">
+    <nd ref="45"/>
+    <nd ref="46"/>
+    <nd ref="47"/>
+    <nd ref="40"/>
+  </way>
+  <way id="123">
+    <nd ref="50"/>
+    <nd ref="51"/>
+    <nd ref="52"/>
+    <nd ref="53"/>
+    <nd ref="50"/>
+  </way>
+  <way id="130">
+    <nd ref="60"/>
+    <nd ref="61"/>
+    <nd ref="62"/>
+  </way>
+  <way id="131">
+    <nd ref="64"/>
+    <nd ref="63"/>
+    <nd ref="62"/>
+  </way>
+  <way id="140">
+    <nd ref="70"/>
+    <nd ref="71"/>
+    <nd ref="72"/>
+    <tag k="waterway" v="canal"/>
+    <tag k="name" v="Fixture Canal"/>
+  </way>
+  <way id="141">
+    <nd ref="73"/>
+    <nd ref="74"/>
+    <nd ref="75"/>
+    <tag k="highway" v="path"/>
+    <tag k="surface" v="gravel"/>
+  </way>
+  <way id="142">
+    <nd ref="76"/>
+    <nd ref="77"/>
+    <tag k="highway" v="footway"/>
+    <tag k="bridge" v="yes"/>
+    <tag k="layer" v="1"/>
+  </way>
+  <way id="132">
+    <nd ref="90"/>
+    <nd ref="91"/>
+    <nd ref="92"/>
+  </way>
+  <way id="133">
+    <nd ref="92"/>
+    <nd ref="93"/>
+    <nd ref="94"/>
+    <nd ref="95"/>
+  </way>
+  <way id="150">
+    <nd ref="80"/>
+    <nd ref="81"/>
+    <nd ref="82"/>
+    <nd ref="83"/>
+    <nd ref="80"/>
+    <tag k="leisure" v="park"/>
+    <tag k="name" v="Fixture Green"/>
+  </way>
+  <way id="151">
+    <nd ref="84"/>
+    <nd ref="85"/>
+    <nd ref="86"/>
+    <nd ref="87"/>
+    <nd ref="84"/>
+    <tag k="amenity" v="parking"/>
+    <tag k="parking" v="surface"/>
+    <tag k="name" v="Fixture Lot"/>
+  </way>
+  <relation id="201">
+    <member type="way" ref="122" role="outer"/>
+    <member type="way" ref="120" role="outer"/>
+    <member type="way" ref="123" role="inner"/>
+    <member type="way" ref="121" role="outer"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="pond"/>
+    <tag k="name" v="Fixture Pond"/>
+  </relation>
+  <relation id="202">
+    <member type="way" ref="130" role="outer"/>
+    <member type="way" ref="131" role="outer"/>
+    <member type="way" ref="999999" role="outer"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="river"/>
+    <tag k="name" v="Fixture River"/>
+  </relation>
+  <relation id="203">
+    <member type="way" ref="132" role="outer"/>
+    <member type="way" ref="999998" role="outer"/>
+    <member type="way" ref="133" role="outer"/>
+    <tag k="type" v="multipolygon"/>
+    <tag k="natural" v="water"/>
+    <tag k="water" v="canal"/>
+    <tag k="name" v="Fixture Canal"/>
+  </relation>
+</osm>

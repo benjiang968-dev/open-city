@@ -8,6 +8,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "shot": "node scripts/shot.mjs",
+    "import-osm": "node scripts/importOsm.mjs",
     "deploy": "npm run build && gh-pages -d dist --dotfiles"
   },
   "dependencies": {

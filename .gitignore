@@ -1,3 +1,5 @@
 node_modules
 dist
 dist-prof
+data/osm/*.osm
+data/osm/*.osm.gz
