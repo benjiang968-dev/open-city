@@ -142,7 +142,8 @@ const SERVICE_POIS = [
 // ----------------------------------------------------------------------------------- synthetic places
 /** Extra green areas the spec mentions but does not draw ([lat, lon] rings). */
 const SYNTH_PARKS = [
-  { name: 'Book Hill Park', kind: 'leisure=park', ring: [[38.91362, -77.06512], [38.91398, -77.06512], [38.91398, -77.06605], [38.91362, -77.06605]] },
+  // Book Hill Park: the slope below the library (south side of R St), on the east side of Wisconsin Ave (steps up from the avenue).
+  { name: 'Book Hill Park', kind: 'leisure=park', ring: [[38.9118, -77.06495], [38.9126, -77.06535], [38.9126, -77.0642], [38.9118, -77.0642]] },
   { name: null, kind: 'leisure=garden', key: 'tudor-garden', ring: [[38.91085, -77.0620], [38.91265, -77.0620], [38.91265, -77.0631], [38.91085, -77.0631]] },
   { name: null, kind: 'leisure=garden', key: 'stonehouse-garden', ring: [[38.90546, -77.05962], [38.90572, -77.05962], [38.90572, -77.05992], [38.90546, -77.05992]] },
 ];
@@ -160,7 +161,7 @@ const SYNTH_LOTS = [
  * placed building's side.
  */
 const LANDMARKS = [
-  { key: 'carbarn', lat: 38.9056, lon: -77.07103, w: 70, d: 27, type: 'commercial', levels: 4 },
+  { key: 'carbarn', lat: 38.9056, lon: -77.0699, w: 70, d: 27, type: 'commercial', levels: 4 },
   { key: 'healy', lat: 38.9076, lon: -77.0725, w: 90, d: 26, angle: 90, type: 'university', levels: 5, h: 24, campus: true },
   { key: 'healy-tower', attach: 'healy', side: -1, w: 10, d: 8, type: 'university', levels: 5, h: 61 },
   { key: 'trinity', lat: 38.9069, lon: -77.0703, w: 34, d: 18, type: 'church', levels: 1, h: 16, poi: 'amenity=place_of_worship', subcat: 'christian' },
@@ -177,10 +178,10 @@ const LANDMARKS = [
   { key: 'watergate', lat: 38.8995, lon: -77.0553, w: 80, d: 36, type: 'apartments', levels: 12, h: 40 },
   { key: 'tudor', lat: 38.9116, lon: -77.0625, w: 32, d: 14, type: 'house', levels: 2, h: 11, inPark: 'tudor-garden', poi: 'tourism=museum', subcat: 'history' },
   { key: 'dumbarton', lat: 38.9135, lon: -77.0632, w: 55, d: 24, type: 'civic', levels: 3, h: 14, inPark: 'Dumbarton Oaks gardens', poi: 'tourism=museum', subcat: 'art' },
-  { key: 'library', lat: 38.9133, lon: -77.0652, w: 30, d: 24, type: 'civic', levels: 3, h: 13, poi: 'amenity=library' },
+  { key: 'library', lat: 38.9128, lon: -77.065, w: 30, d: 24, type: 'civic', levels: 3, h: 13, poi: 'amenity=library' },
   { key: 'stjohn', lat: 38.9077, lon: -77.0651, w: 28, d: 15, type: 'church', levels: 1, h: 14, poi: 'amenity=place_of_worship', subcat: 'christian' },
   { key: 'christchurch', lat: 38.9077, lon: -77.0618, w: 30, d: 16, type: 'church', levels: 1, h: 15, poi: 'amenity=place_of_worship', subcat: 'christian' },
-  { key: 'mountzion', lat: 38.9069, lon: -77.0576, w: 24, d: 14, type: 'church', levels: 1, h: 13, poi: 'amenity=place_of_worship', subcat: 'christian' },
+  { key: 'mountzion', lat: 38.9069, lon: -77.0584, w: 24, d: 14, type: 'church', levels: 1, h: 13, poi: 'amenity=place_of_worship', subcat: 'christian' },
   { key: 'hydeaddison', lat: 38.9083, lon: -77.0654, w: 45, d: 24, type: 'civic', levels: 3, poi: 'amenity=school' },
   { key: 'visitation', lat: 38.9101, lon: -77.0699, w: 50, d: 25, type: 'civic', levels: 3, poi: 'amenity=school' },
   { key: 'ellington', lat: 38.9134, lon: -77.0701, w: 60, d: 35, type: 'civic', levels: 4, poi: 'amenity=school' },

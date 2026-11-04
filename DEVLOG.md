@@ -150,3 +150,15 @@ Format: date · what changed · what to test · known issues.
     - East of Rock Creek between M and P St there are no spec streets, so it is empty land.
     - The canal is not cut into the heightfield.
     - The game doesn't load this file yet.
+
+- **M3 Georgetown map, geography check (2026-11-04):** an independent check of the spec against the real place. The main layout holds up: Key Bridge, M St into Pennsylvania Ave, the canal, the waterfront, the Whitehurst, the street order, Rock Creek and Washington Circle are all where they should be. Four fixes:
+  - **Wisconsin Ave north of P St** now leans further NNW. The R St junction moved about 80 m west, to -77.0657, so the avenue sits a block west of 32nd St and Dumbarton Oaks. The Q St junction and the spot heights at both junctions moved with it.
+  - **Car Barn:** moved to the east side of the Exorcist Steps, facing the Key Bridge landing.
+  - **Georgetown Library and Book Hill Park:** the library moved to the south side of R St at Wisconsin Ave (3260 R St). Book Hill Park moved from north of R St to the slope below the library, facing Wisconsin Ave.
+  - **Mount Zion church:** moved to the west side of 29th St.
+  - **Validation after the fixes:** unchanged. The road graph is 1 strongly connected component with 119 intersections. There are 0 bad buildings and 5 footway groups. All 29 landmarks are placed, and the Car Barn no longer needs shrinking.
+  - **Test:** `npm run gen-georgetown && npm run preview-map`, then look at the top centre and the Key Bridge end of the PNG.
+  - **Still uncertain:**
+    - The Virginia shore and the tip of Roosevelt Island probably reach into the south-west corner of the box, but the map shows open river there.
+    - The canal west of Key Bridge may lie closer to Canal Rd.
+    - It is unclear whether Oak Hill Cemetery reaches down to Rock Creek.

@@ -241,7 +241,7 @@
         [38.9107,-77.0693],
         [38.9107,-77.0678],
         [38.9107,-77.0663],
-        [38.9107,-77.06411],
+        [38.9107,-77.06455],
         [38.9107,-77.06151],
         [38.9107,-77.0594],
         [38.9107,-77.0582],
@@ -261,7 +261,7 @@
         [38.9128,-77.0694],
         [38.913,-77.069],
         [38.913,-77.06791],
-        [38.913,-77.06476],
+        [38.913,-77.0657],
         [38.913,-77.06183],
         [38.91291,-77.05949],
         [38.9129,-77.0573]
@@ -619,7 +619,7 @@
       "lanes": 4,
       "oneway": "no",
       "confidence": 0.75,
-      "notes": "Main north-south shopping street. Climbs about 5-6% from the canal to R St and leans NNW. South end at the K St / Water St junction; crosses the canal on a bridge.",
+      "notes": "Main north-south shopping street. Climbs about 5-6% from the canal to R St and leans NNW, more strongly north of P St (Book Hill): at R St it is about a block west of 32nd St and Dumbarton Oaks. South end at the K St / Water St junction; crosses the canal on a bridge.",
       "points": [
         [38.9029,-77.06253],
         [38.9032,-77.0626],
@@ -632,9 +632,9 @@
         [38.9072,-77.06318],
         [38.9079,-77.06339],
         [38.90926,-77.0637],
-        [38.9107,-77.06411],
-        [38.913,-77.06476],
-        [38.914,-77.065]
+        [38.9107,-77.06455],
+        [38.913,-77.0657],
+        [38.914,-77.0663]
       ]
     },
     {
@@ -1355,8 +1355,8 @@
       "name": "Car Barn (old streetcar barn, 3600 M St)",
       "kind": "building",
       "lat": 38.9056,
-      "lon": -77.07103,
-      "notes": "North side of M St just west of the Exorcist Steps (R1, R2)."
+      "lon": -77.0699,
+      "notes": "North side of M St between the Exorcist Steps (its west side) and 35th St, facing the Key Bridge landing; back on Prospect St (Georgetown University, 3520 Prospect St). Checker moved it east of the steps; R1 and R2 had it just west of them."
     },
     {
       "name": "Healy Hall, Georgetown University",
@@ -1501,9 +1501,9 @@
     {
       "name": "Georgetown Library (Wisconsin Ave and R St)",
       "kind": "library",
-      "lat": 38.9132,
-      "lon": -77.0652,
-      "notes": "Next to Book Hill park (all three sources)."
+      "lat": 38.9128,
+      "lon": -77.065,
+      "notes": "3260 R St: south side of R St (even numbers are on the south side), south-east corner of Wisconsin Ave, at the top of Book Hill. Book Hill Park slopes down from behind it toward Wisconsin Ave. Checker moved it from the north side of R St (38.9132,-77.0652)."
     },
     {
       "name": "Washington Circle (George Washington statue)",
@@ -1671,9 +1671,9 @@
     {"lat":38.9075,"lon":-77.072,"metres":45},
     {"lat":38.9093,"lon":-77.0693,"metres":45},
     {"lat":38.9129,"lon":-77.0573,"metres":45},
-    {"lat":38.9107,"lon":-77.06411,"metres":46},
+    {"lat":38.9107,"lon":-77.06455,"metres":46},
     {"lat":38.9093,"lon":-77.0719,"metres":48},
-    {"lat":38.913,"lon":-77.06476,"metres":56},
+    {"lat":38.913,"lon":-77.0657,"metres":56},
     {"lat":38.9136,"lon":-77.06,"metres":56},
     {"lat":38.913,"lon":-77.06183,"metres":56.5}
   ],
@@ -1778,6 +1778,8 @@
     "Single-source landmarks kept because they are well-known and useful (marked in notes): Key Bridge Boathouse, Potomac Boat Club, Washington Canoe Club, Grace Episcopal Church, Foggy Bottom-GWU Metro, Wisconsin Ave and M St.",
     "R3 spot height on the Key Bridge deck (38.9035,-77.0703, 20 m) dropped because it is not ground level.",
     "Sheridan Circle and Massachusetts Ave may clip the NE corner of the box (~38.9116,-77.0498); not modelled as streets.",
-    "Minor streets none of the sources drew are absent: 32nd St, Dent Pl, Olive St, Cecil Pl, Cady's Alley, Lovers Lane, Massachusetts Ave."
+    "Minor streets none of the sources drew are absent: 32nd St, Dent Pl, Olive St, Cecil Pl, Cady's Alley, Lovers Lane, Massachusetts Ave.",
+    "Checker (2026-11-04): Wisconsin Ave north of P St moved west to lean NNW like the real avenue (about 17-20 degrees west of north overall): Q St junction -77.06411 -> -77.06455, R St junction -77.06476 -> -77.0657 (close to R2's -77.0658), box edge -77.065 -> -77.0663. Reasons: Dumbarton Oaks (1703 32nd St, east of 32nd St) and Tudor Place put 32nd St at about -77.0641 at R St, and Wisconsin is a block west of it; the library (3260 R St) is at its south-east corner. The two spot heights at those junctions moved with them. Moderate confidence (about 50-80 m).",
+    "Checker (2026-11-04): Car Barn moved from west of the Exorcist Steps to east of them (38.9056,-77.0699); Georgetown Library moved to the south side of R St (38.9128,-77.0650) and Book Hill Park (generator) moved from north of R St to the slope below the library, east of Wisconsin Ave; Mount Zion church (generator) moved to the west side of 29th St (1334 29th St)."
   ]
 }
