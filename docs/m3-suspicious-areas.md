@@ -2,7 +2,7 @@
 
 The Georgetown map in `src/data/georgetown.json` is **not OpenStreetMap data**. Overpass could not be reached, so
 it was generated from a hand-written spec (`data/georgetown-spec.json`) based on general knowledge of the place.
-Expect it to be 20–80 m off in most places, and more in the spots listed in part 3.
+Expect it to be 20–80 m off in most places, and more in the spots listed in part 4.
 
 This file lists every place where the 3D world built from that data (world generator v2, `src/systems/map/`)
 looked wrong during the review of 2026-11-04. For each place it says what was wrong, how bad it is and whether it
@@ -55,17 +55,40 @@ re-generated from a better source, the cut should no longer be needed.
 | s2777 (terrace, 27th St) | 442, −141 | 38.90777, −77.05590 | 4 m² on a junction | medium | fixed (cut back) |
 | 33 rowhouses along the north side of N St (x −146 … 72, z ≈ −92) and the 28th St block (x 270 … 340, z −65 … −96) | e.g. −139, −92 and 285, −93 | 38.90732, −77.06260 and 38.90733, −77.05772 | 0.05–0.2 m into the sidewalk | low | fixed (cut back) |
 
-**Building colliders (fixed, high).** Each building got an axis-aligned box around its footprint. On skewed
-footprints the box reached up to about 1 m over the sidewalk, which made invisible walls. Examples:
+**Building colliders (fixed, medium).** Each building got an oriented box around its footprint, centred on the
+mean of its corners. On 185 skewed footprints the box was 2–9 m² bigger than the building. That made a sliver of
+invisible wall up to a few tens of centimetres wide along a wall or at a corner. Examples:
 
-- s1573 at x 581, z 240 (38.90434, −77.05430)
-- s1572 at x 513, z 212 (38.90459, −77.05509)
+- s1295 at x 234, z 159 (38.90507, −77.05830), 8.9 m² extra
+- s1412 at x −146, z 58 (38.90598, −77.06268), 7.4 m² extra
 
-Rectangular footprints still get a box. Every other footprint now gets an exact prism.
+Those footprints now get an exact prism collider. Near-rectangles, where the box adds at most 1.5 % + 2 m² (a
+sliver of a few cm), keep the cheaper box.
 
 ---
 
-## 2. Geometry that looked wrong
+## 2. Sidewalks missing where the data has them
+
+The data's sidewalk lines run 1.5 m from the kerb. The audit samples them every 4 m: 15,524 points in total. 281
+points (1.8 %) have no sidewalk, car park or deck within 1 m:
+
+- **224 are on a carriageway.** These are the corner joins in the data, which cut across junction corners. That is
+  expected, because the generator draws its own corner sidewalks.
+- **57 are on bare ground**, which means a sidewalk really is missing. Nearly all of them are around Washington
+  Circle (not fixed, low):
+  - Outer edge of the ring and the first metres of the spokes between Pennsylvania Ave, K St and New Hampshire
+    Ave: 863, 452; 866, 425; 889, 401; 897, 399 (38.9025–38.9029, −77.0511 … −77.0507).
+  - East side: 951, 471; 960, 479; 972, 449; 936, 485 (38.9019–38.9025, −77.0498 … −77.0502).
+
+  The generator decides whether each side of an edge has a sidewalk by matching it against the data's sidewalk
+  lines. On the ring that match fails: the ring is snapped to a true circle while the data's sidewalks follow the
+  original polygon.
+- **The K St bridge ends** (401, 435 and 401, 453; 38.9026, −77.0564) lose their north sidewalk where the
+  Whitehurst Freeway runs alongside. This is deliberate (`noSw`); the pavement continues on the south side.
+
+---
+
+## 3. Geometry that looked wrong
 
 ### Fixed
 
@@ -82,7 +105,7 @@ Rectangular footprints still get a box. Every other footprint now gets an exact 
 | Canal footbridges | −330, 233; −564, 225 | 38.90440, −77.06480 | The side-rail collider was one box down the middle of the walkway, which blocked it | high |
 | Grass next to every road | (map-wide) | | `heightAt` was up to 0.3 m above the visible ground within about 5 m of road edges, so 63 trees floated up to 0.9 m | medium |
 | Rowhouse stoops on sloping streets | e.g. N St, 29th St, Prospect St | | 400 bottom steps floated up to 0.75 m and 58 were buried up to 1.5 m | medium |
-| Kerbs (every sidewalk) and the canal walls | (map-wide) | | `heightAt` smeared the 15 cm kerb over 1 m, so it was 5–11 cm off within 0.5 m of every kerb. The canal wall (2.7 m) was smeared the same way. Fixed with a step-distance raster. See the numbers in the DEVLOG. | medium |
+| Kerbs (every sidewalk) and the canal walls | (map-wide) | | `heightAt` smeared the 15 cm kerb over 1 m, so it was 5–11 cm off within 0.5 m of every kerb: 4,596 of 13,776 samples 0.25 m on the road side and 6,406 of 13,778 on the sidewalk side were off by more than 5 cm. Now 12 and 48. The canal's 2.7 m wall was smeared the same way; the mean error on the banks fell from 15 cm to 5 cm. | medium |
 | Grass colour | (map-wide) | | A regular checkerboard was visible from the air | low |
 
 ### Still open (not fixed)
@@ -96,7 +119,10 @@ Rectangular footprints still get a box. Every other footprint now gets an exact 
 | N St dead end at the Rock Creek valley | 434, −22 | 38.90670, −77.05600 | The road ends with a 0.24 m drop onto the grass | low |
 | 31st St crossing the canal; the canal steps sit against its kerb | −29, 244 | 38.90430, −77.06133 | ±0.35 m bump at the edge of the lane | medium |
 | 23rd St at the south side of Washington Circle | 906, 377 | 38.90310, −77.05056 | ±0.26 m step in the lane | medium |
-| Bridge ends: Pennsylvania Ave, P St and Q St over Rock Creek | 485, 223; 693, −335; 746, −478 | 38.90449, −77.05541 | 0.15–0.16 m steps in the lanes where the deck meets the street | medium |
+| Pennsylvania Ave bridge over Rock Creek, east end | 485, 223 | 38.90449, −77.05541 | A 0.15 m step in a lane where the deck meets the street. The same step at the P St and Q St bridge ends (693, −335 and 746, −478) was fixed in the review. | medium |
+| K St west of Washington Circle | 819, 436 and 819, 452 | 38.90258, −77.05166 | 0.15 m steps at the lane edges | medium |
+| New Hampshire Ave at the east map edge | 1124, 152 | 38.90513, −77.04805 | A 0.23 m drop at the very end of the lane, at the boundary wall | low |
+| Waterfront promenade and park at night | −150 … 165, 500 … 600 | 38.9011–38.9020, −77.0627 … −77.0591 | No lamps: the data puts lamps only along the street sidewalks, so the promenade is dark at night | low |
 | K St bridge, north sidewalk, where the Whitehurst Freeway runs alongside it | 382, 436 | 38.90257, −77.05659 | `walkSurfaceAt` is up to 6 m off in a few spots beside the freeway | low |
 | Canal Rd / M St junction (Key Bridge approach from the west) | −911, 116 | 38.90546, −77.07150 | The junction corner on the side with no sidewalk stands about 0.5 m above the grass, with a dark skirt. It is cosmetic: the carriageway itself is smooth. | low |
 | Washington Harbour plaza, river edge | 151, 594 | 38.90115, −77.05926 | `heightAt` smears the 3 m quay wall over 1 m along the edge | low |
@@ -106,7 +132,7 @@ Rectangular footprints still get a box. Every other footprint now gets an exact 
 
 ---
 
-## 3. Geography uncertainties of the knowledge-based map
+## 4. Geography uncertainties of the knowledge-based map
 
 These are not generator bugs. The data itself is probably wrong here, and an OSM import would settle each of
 them.

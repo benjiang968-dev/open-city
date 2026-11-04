@@ -548,8 +548,9 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
         continue;
       }
       // the plateaus under the junction surfaces are flat at the node height (lanes cross them at that height)
-      if (s <= tA) { e.prof[k] = e.a.h; continue; }
-      if (s >= e.L - tB) { e.prof[k] = e.b.h; continue; }
+      // (0.01 m tolerance: the trim sample's arc length is stored as a float32)
+      if (s <= tA + 0.01) { e.prof[k] = e.a.h; continue; }
+      if (s >= e.L - tB - 0.01) { e.prof[k] = e.b.h; continue; }
       const wA = s <= tA ? 1 : cosFall((s - tA) / lamA);
       const wB = s >= e.L - tB ? 1 : cosFall((e.L - tB - s) / lamB);
       e.prof[k] = S[k] + corrA * wA + corrB * wB;
@@ -609,13 +610,13 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       const s = c[k];
       const u = clamp((s - e.trimA) / Math.max(0.1, e.L - e.trimA - e.trimB), 0, 1);
       const base = lerp(e.a.h, e.b.h, u * u * (3 - 2 * u));
-      e.prof[k] = s <= e.trimA ? e.a.h : s >= e.L - e.trimB ? e.b.h : Math.max(base, env[k]);
+      e.prof[k] = s <= e.trimA + 0.01 ? e.a.h : s >= e.L - e.trimB - 0.01 ? e.b.h : Math.max(base, env[k]);
     }
     // ease the kinks (vertical curves), keep plateaus exact
     const sm = smoothArr(e.prof, c, 12);
     for (let k = 0; k < n; k++) {
       const s = c[k];
-      if (s <= e.trimA || s >= e.L - e.trimB) continue;
+      if (s <= e.trimA + 0.01 || s >= e.L - e.trimB - 0.01) continue;
       e.prof[k] = Math.max(sm[k], req[k] === -Infinity ? -Infinity : req[k] - 0.15);
     }
   }

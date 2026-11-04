@@ -3,6 +3,7 @@
 //   npm run build && THROTTLE=4 node scripts/geoPerf.mjs                 -> boot, draw calls / triangles per view and
 //                                                                          quality, GeoWorld.update CPU ms, heap growth
 //   THROTTLE=4 node scripts/geoPerf.mjs --game <dist dir>               -> ms from navigation to the game's first frame
+//   BOOT_ONLY=1 ...                                                      -> boot numbers only
 // Headless WebGL is SwiftShader, so frame times mean little; CPU ms, calls and triangles are what to compare.
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
@@ -54,7 +55,8 @@ if (gameDir) {
     await page.waitForFunction((f) => window.__geo.perf().frames >= f, f0 + frames, { timeout: 300000 });
   };
   const rows = [];
-  for (const view of ['mst', 'circle', 'aerial']) {
+  // BOOT_ONLY=1: just the boot numbers
+  for (const view of process.env.BOOT_ONLY ? [] : ['mst', 'circle', 'aerial']) {
     for (const q of ['low', 'medium', 'high']) {
       await page.evaluate(([v, qq]) => { window.__geo.setQuality(qq); window.__geo.setView(v); }, [view, q]);
       await settle(2);

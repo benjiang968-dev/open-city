@@ -186,3 +186,43 @@ Format: date · what changed · what to test · known issues.
 
   - **Test:** `npm run build && node scripts/previewShots.mjs` writes the `26-geo-*` screenshots and `26-geo-perf.json`, and fails on any console error. `preview.html` has a free-fly camera with WASD, Q/E, drag and 1–9 for views.
   - **Known issues:** see the review entry below.
+
+- **M3 world generator v2 review fixes (branch `m3-geo-art-review`):** an independent review of world generator v2. The main tool is `scripts/geoAudit.mjs`, which casts Rapier rays over a 1.5 m grid of the whole map and along every lane, and compares the colliders with `heightAt`, `roadSurfaceAt` and `walkSurfaceAt`, the queries everything in the game is placed with. It also checks lanes for steps and grades, finds floating and buried props, and checks how footprints and building colliders sit against the streets. Each problem it found was fixed in `src/systems/map/`.
+  - **Canal:** each raster cell now takes its nearest segment of the line the mesh is built from. Before, segments overwrote each other near every bend, so towpath cells sat over open water, 2.7 m off. Bank heights now ramp across lock steps the way the mesh does, and there are no end caps.
+  - **Holes:** terrain triangles that are the only ground over a gap are kept. Gaps under 5 m between sidewalks and buildings, and alleys, were holes down to the safety floor (about 8,500 m²). The paving behind the sidewalk now runs under facades set less than 1 m back; before, a 0.5 m slot opened there.
+  - **heightAt matches what is drawn:** natural cells take the height of the 5 m mesh, which sits up to 0.3 m below the raster beside every road; canal apron cells take the apron height. A natural vertex next to a road may not stand above the road, so the Rock Creek bank no longer pokes 0.8 m through the Parkway. A step-distance raster gives exact kerbs and canal walls instead of smearing them over 1 m.
+  - **Junctions:** road profiles are flat at the node height inside the junction plateaus, and there is a profile sample at every trim. `GeoLane` heights through junctions were up to 1.1 m off, and steep streets met the junctions with steps and see-through cracks. These change the `roadNet.ts` output: lanes, centres and kerbs gain one point at each trim, and their heights inside the trims are now the node height.
+  - **Bridge approaches:** an at-grade edge leaving a raised deck end is held to `maxGrade` by raising the next node, up to 4 hops. The M St bridge over Rock Creek came off at 20 % with a launching crest; that stretch is now at most 13 %.
+  - **Decks:** the deck index covers a sidewalk only on sides that have one, raised by the kerb. Before, `walkSurfaceAt` was 15 cm low on every bridge sidewalk and found decks in mid-air beside one-sided decks.
+  - **Canal footbridges:** the side rails are now per-segment slabs; before, one box ran down the middle of the walkway.
+  - **Buildings:**
+    - Footprints that reach into a carriageway, its sidewalk or a junction are cut back to the back of the sidewalk: 43 overlapped before, 0 now. 207 were trimmed (most by under 0.5 m) and 1 was dropped. `doc.buildings` is edited in place.
+    - 185 skewed footprints get a prism collider instead of a box that stuck out over the sidewalk.
+    - Stoops take their rise from the pavement in front of their own door: 400 bottom steps floated up to 0.75 m and 58 were buried.
+  - **Grass colour:** two octaves of value noise; before, it read as a checkerboard from the air.
+  - **Preview:** 26 review viewpoints (`--review`, `26-geo-r-*.jpg`). `GeoWorld.audit` is an optional new field.
+  - **Audit, before → after:** samples off by more than 5 cm, out of the totals shown.
+
+    | Check | Before | After |
+    |---|---|---|
+    | Terrain | 61,392 of 711k | 11,354 |
+    | Places with no ground under natural cells | 3,798 | 1 |
+    | Sidewalks and paths | 13,452 of 100k | 5,350 |
+    | Carriageway | 7,485 of 118k | 661 |
+    | Canal banks | 2,102 of 6,008 (mean 51 cm) | 594 (mean 5 cm) |
+    | 0.25 m either side of a kerb | 4,459 + 6,199 | 12 + 48 |
+    | `GeoLane` heights | 14,991 of 167k (max 1.12 m) | 105 (max 0.37 m) |
+    | `roadSurfaceAt` on lanes | 541 | 19 |
+    | Bridge sidewalks | 714 of 831 | 13 |
+    | Steps over 15 cm along lanes | 24 | 9 |
+    | Trees floating | 63 (up to 0.89 m) | 2 (up to 0.11 m) |
+    | Building overlaps | 43 | 0 |
+
+  - **Perf:** `previewShots.mjs`'s own ray check is 37,999 samples, 0 off by more than 12 cm, 0 lips on decks, as before. Draw calls and triangles are the same as the builder's (M St, street level: Low 46 calls / 0.39 M triangles, Medium 97 / 0.86 M, High 184 / 1.12 M; the whole map from the air: 276 / 283 / 283 calls). `GeoWorld.update` costs 0.002–0.15 ms at 4× CPU throttle and allocates nothing: 0 bytes of heap growth over 5,000 calls, the same as before.
+  - **Test:** `npm run build && node scripts/geoAudit.mjs` (numbers above, clean console); `node scripts/previewShots.mjs --review` (`26-geo-*.png`, `26-geo-r-*.jpg`, `26-geo-perf.json`; clean console); `THROTTLE=4 node scripts/geoPerf.mjs`. The places still wrong, with coordinates and lat/lon, are in `docs/m3-suspicious-areas.md`.
+  - **Known issues:**
+    - Grades up to 30 % on the side streets between M St and Prospect St. The data's spot heights make that hill very steep, and flat junctions push the climb into mid-block.
+    - 9 lane steps of 0.15–0.39 m remain: at the Pennsylvania Ave bridge end, on K St west of Washington Circle, at 31st St by the canal steps, at 23rd St south of the circle, and at the N St dead end.
+    - The sidewalk is missing around parts of Washington Circle's outer edge.
+    - `heightAt` still smears the plaza quay wall and the Exorcist Steps edges.
+    - Boot is over the 2.5 s budget, and the fixes made it slower. Building the world takes 9.06–9.17 s at 4× CPU throttle after the review, against 7.09–8.60 s before (3 interleaved runs each); unthrottled here it is about 2.3–2.5 s against 2.1 s. The Milestone 2 game reaches its first frame in 5.8–8.1 s at 4× (4.0 s unthrottled), so the Georgetown world alone already takes longer than the whole M2 boot. Moving the building and raster work into a worker, or caching the built geometry, is the next step.
