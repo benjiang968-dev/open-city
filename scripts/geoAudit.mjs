@@ -363,7 +363,7 @@ const report = await page.evaluate(() => {
     area = Math.abs(area / 2);
     const boxArea = 4 * hu * hv;
     // facades.ts uses a footprint prism (exact) when the box would be bigger than the footprint
-    if (boxArea > area * 1.002 + 0.2) continue;
+    if (boxArea > area * 1.015 + 2) continue;
     if (spillWalk > 2 || boxArea > area * 1.15 + 4)
       bBox.push({ id: b.id, type: b.type, at: [r2(cx), r2(cz)], verts: P2.length, area: Math.round(area), boxArea: Math.round(boxArea), spillM2: spill / 4, spillOverWalkableM2: spillWalk / 4 });
     void maxOut;

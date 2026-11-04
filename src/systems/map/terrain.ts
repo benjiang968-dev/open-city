@@ -28,6 +28,9 @@ export const B = {
 
 // ---------------------------------------------------------------------------------------- art constants
 const MESH_STEP = 5; // m, terrain mesh grid
+const STEP_UNIT = 0.025; // m per unit of the step-distance raster
+const STEP_MAX = 126; // units (3.15 m): beyond this a cell is 'far' from any step
+const STEP_FAR = 127;
 const BAND_DIP = 0.3; // m the terrain mesh sits below road/sidewalk surfaces
 const BLEND_CELL = 4; // m, coarse grid used to blend terrain into road bands
 const BLEND_RADIUS = 4; // coarse cells (box blur radius, applied twice)
@@ -70,6 +73,19 @@ export class GeoRaster {
     this.t = new Float32Array(n);
     this.k = new Uint8Array(n);
     this.band = new Uint8Array(n);
+    this.step = new Int8Array(n).fill(STEP_FAR);
+  }
+  /**
+   * Signed distance (STEP_UNIT m) from each cell centre to the nearest height step (a kerb, the canal walls), positive
+   * on the high side; STEP_FAR where none is near. heightAt uses it to sample only the cells on the query point's own
+   * side of a step, so the 1 m raster gives the exact step instead of smearing it over a metre.
+   */
+  step: Int8Array;
+  /** Record a step distance for a cell (signed: + high side); the nearest step wins. */
+  markStep(o: number, signedDist: number) {
+    const v = Math.max(-STEP_MAX, Math.min(STEP_MAX, Math.round(signedDist / STEP_UNIT)));
+    const cur = this.step[o];
+    if (cur === STEP_FAR || Math.abs(v) < Math.abs(cur)) this.step[o] = v;
   }
 
   /** Fill base terrain from the 10 m data heightfield (bilinear). */
@@ -110,8 +126,21 @@ export class GeoRaster {
     if (fx < 0) fx = 0; else if (fx > this.nx - 1.001) fx = this.nx - 1.001;
     if (fz < 0) fz = 0; else if (fz > this.nz - 1.001) fz = this.nz - 1.001;
     const ix = fx | 0, iz = fz | 0, tx = fx - ix, tz = fz - iz;
-    const a = this.hq, o = iz * this.nx + ix;
-    return ((a[o] * (1 - tx) + a[o + 1] * tx) * (1 - tz) + (a[o + this.nx] * (1 - tx) + a[o + this.nx + 1] * tx) * tz) * 0.01;
+    const a = this.hq, o = iz * this.nx + ix, nx = this.nx;
+    const w00 = (1 - tx) * (1 - tz), w10 = tx * (1 - tz), w01 = (1 - tx) * tz, w11 = tx * tz;
+    const S = this.step, s00 = S[o], s10 = S[o + 1], s01 = S[o + nx], s11 = S[o + nx + 1];
+    if (s00 !== STEP_FAR || s10 !== STEP_FAR || s01 !== STEP_FAR || s11 !== STEP_FAR) {
+      // near a kerb or wall: the interpolated signed distance says which side the point is on; average only the
+      // cells on that side (cells without a distance count as far on the high side)
+      const hi = w00 * s00 + w10 * s10 + w01 * s01 + w11 * s11 >= 0;
+      let ws = 0, hs = 0;
+      if (s00 >= 0 === hi) { ws += w00; hs += w00 * a[o]; }
+      if (s10 >= 0 === hi) { ws += w10; hs += w10 * a[o + 1]; }
+      if (s01 >= 0 === hi) { ws += w01; hs += w01 * a[o + nx]; }
+      if (s11 >= 0 === hi) { ws += w11; hs += w11 * a[o + nx + 1]; }
+      if (ws > 1e-6) return (hs / ws) * 0.01;
+    }
+    return (a[o] * w00 + a[o + 1] * w10 + a[o + nx] * w01 + a[o + nx + 1] * w11) * 0.01;
   }
   /** O(1): kind flags of the nearest cell (0 outside the map). */
   kindAt(x: number, z: number): number {
@@ -246,6 +275,17 @@ export class GeoRaster {
 
   /** Freeze the working heights into the compact query raster and drop the build arrays. */
   finish() {
+    // step signs follow what each cell finally is (later fills can turn a sidewalk cell into road and back)
+    const S = this.step, band = this.band, k = this.k;
+    for (let o = 0; o < S.length; o++) {
+      const v = S[o];
+      if (v === STEP_FAR) continue;
+      const b = band[o], m = Math.max(1, Math.abs(v)); // a cell right on the line still has a side
+      if (b === B.ROAD) S[o] = -m;
+      else if (b === B.FLAT) S[o] = m;
+      else if (b === B.HOLE) S[o] = k[o] & K.WATER ? -m : m;
+      else S[o] = STEP_FAR;
+    }
     const h = this.h!;
     this.hq = new Int16Array(h.length);
     for (let o = 0; o < h.length; o++) this.hq[o] = Math.round(clamp(h[o], -300, 300) * 100);
@@ -362,26 +402,32 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
   // collided (the mesh is 5 m and dips under road bands; the 1 m raster alone sits up to 0.3 m above it). Cells with
   // no terrain triangle (beside the canal corridor) are marked for the canal aprons (bakeAprons).
   const meshed = new Uint8Array(ras.nx * ras.nz);
-  for (let jj = 0; jj < ras.nz; jj++) {
-    const j = Math.floor(jj / st);
-    if (j + 1 >= nz) continue;
-    for (let ii = 0; ii < rnx; ii++) {
-      const i = Math.floor(ii / st);
-      if (i + 1 >= nx) continue;
-      const o = jj * rnx + ii;
-      const u = (ii - i * st) / st, v = (jj - j * st) / st;
+  for (let j = 0; j + 1 < nz; j++)
+    for (let i = 0; i + 1 < nx; i++) {
+      const q = (j * (nx - 1) + i) * 2, k0 = kept[q], k1 = kept[q + 1];
+      if (!k0 && !k1) continue;
       const flip = (i + j) & 1;
-      const t = flip ? (u <= v ? 0 : 1) : u + v <= 1 ? 0 : 1;
-      if (!kept[(j * (nx - 1) + i) * 2 + t]) continue;
-      meshed[o] = 1;
-      if (band[o] !== B.NONE || (kind[o] & K.WATER)) continue;
       const v00 = j * nx + i, y00 = vy[v00], y10 = vy[v00 + 1], y01 = vy[v00 + nx], y11 = vy[v00 + nx + 1];
-      let y: number;
-      if (flip) y = t === 0 ? y00 + (y11 - y01) * u + (y01 - y00) * v : y00 + (y10 - y00) * u + (y11 - y10) * v;
-      else y = t === 0 ? y00 + (y10 - y00) * u + (y01 - y00) * v : y11 + (y11 - y01) * (u - 1) + (y11 - y10) * (v - 1);
-      hq[o] = Math.round(clamp(y, -300, 300) * 100);
+      for (let dj = 0; dj < st; dj++) {
+        const jj = j * st + dj;
+        if (jj >= ras.nz) break;
+        const v = dj / st;
+        for (let di = 0; di < st; di++) {
+          const ii = i * st + di;
+          if (ii >= rnx) break;
+          const o = jj * rnx + ii;
+          if (band[o] !== B.NONE || (kind[o] & K.WATER)) continue;
+          const u = di / st;
+          const t = flip ? (u <= v ? 0 : 1) : u + v <= 1 ? 0 : 1;
+          if (!(t === 0 ? k0 : k1)) continue;
+          meshed[o] = 1;
+          let y: number;
+          if (flip) y = t === 0 ? y00 + (y11 - y01) * u + (y01 - y00) * v : y00 + (y10 - y00) * u + (y11 - y10) * v;
+          else y = t === 0 ? y00 + (y10 - y00) * u + (y01 - y00) * v : y11 + (y11 - y01) * (u - 1) + (y11 - y10) * (v - 1);
+          hq[o] = Math.round(clamp(y, -300, 300) * 100);
+        }
+      }
     }
-  }
   ras.meshed = meshed;
   return tris;
 }

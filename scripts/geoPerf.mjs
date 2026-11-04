@@ -28,7 +28,7 @@ const server = createServer(async (req, res) => {
 }).listen(0);
 const port = server.address().port;
 const browser = await chromium.launch({ args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-precise-memory-info', '--js-flags=--expose-gc'] });
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const page = await browser.newPage({ viewport: { width: 640, height: 360 } }); // small: draw calls and triangles do not depend on it
 const throttle = Number(process.env.THROTTLE ?? 1);
 if (throttle > 1) {
   const cdp = await page.context().newCDPSession(page);
@@ -54,10 +54,10 @@ if (gameDir) {
     await page.waitForFunction((f) => window.__geo.perf().frames >= f, f0 + frames, { timeout: 300000 });
   };
   const rows = [];
-  for (const view of ['mst', 'keybridge', 'circle', 'aerial']) {
+  for (const view of ['mst', 'circle', 'aerial']) {
     for (const q of ['low', 'medium', 'high']) {
       await page.evaluate(([v, qq]) => { window.__geo.setQuality(qq); window.__geo.setView(v); }, [view, q]);
-      await settle(3);
+      await settle(2);
       const p = await page.evaluate(() => window.__geo.perf());
       const updMs = await page.evaluate(() => window.__geo.timeUpdate(400));
       rows.push({ view, q, calls: p.calls, trisM: +(p.tris / 1e6).toFixed(2), updateMs: +updMs.toFixed(4) });

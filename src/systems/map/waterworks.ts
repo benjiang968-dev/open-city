@@ -156,6 +156,7 @@ export function rasterizeWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster) {
       h[o] = lerp(lA, lC, tt) + BANK_ABOVE;
       k[o] = (k[o] & ~(K.WATER | K.PARK)) | K.WALK;
     }
+    ras.markStep(o, d - CANAL_HALF); // the canal walls: banks high, water low
     band[o] = B.HOLE;
   }
 }

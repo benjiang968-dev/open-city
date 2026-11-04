@@ -174,6 +174,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
 
   // ---------------------------------------------------------------- bands into the raster, then blend
   const clipped = clipBuildingsToStreets(doc, net);
+  phase('clip');
   const dropped = buildingsUnderDecks(doc, net, ras);
   for (const id of clipped.drop) dropped.add(id);
   rasterizeBuildings(doc, ras, dropped);
@@ -376,16 +377,22 @@ function clipBuildingsToStreets(doc: GeoDoc, net: RoadNet): { clipped: string[];
   }
   const MARGIN = 0.3; // m left between the back of the sidewalk and the cut facade
   const out = { clipped: [] as string[], drop: [] as string[] };
+  // junction outlines with their bounding boxes (x0, z0, x1, z1)
+  const jn = net.nodes.filter((n) => n.outline.length >= 6).map((n) => {
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < n.outline.length; i += 2) { x0 = Math.min(x0, n.outline[i]); x1 = Math.max(x1, n.outline[i]); z0 = Math.min(z0, n.outline[i + 1]); z1 = Math.max(z1, n.outline[i + 1]); }
+    return { n, x0, z0, x1, z1 };
+  });
   for (const b of doc.buildings) {
     const area0 = Math.abs(polyArea(b.pts));
     let P: Pt[] = b.pts;
     for (let pass = 0; pass < 3; pass++) {
       let depth = 0.15, cx = 0, cz = 0, nx = 0, nz = 0;
-      // sample the outline (corners and points along each wall)
+      // sample the outline (corners and wall midpoints)
       const probe: Pt[] = [];
       for (let i = 0; i < P.length; i++) {
         const a = P[i], c = P[(i + 1) % P.length];
-        for (const u of [0, 0.25, 0.5, 0.75]) probe.push([a[0] + (c[0] - a[0]) * u, a[1] + (c[1] - a[1]) * u]);
+        probe.push(a, [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2]);
       }
       for (const p of probe) {
         grid.query(p[0], p[1], (seg, payload, d, t) => {
@@ -405,11 +412,12 @@ function clipBuildingsToStreets(doc: GeoDoc, net: RoadNet): { clipped: string[];
       if (depth <= 0.15) {
         // a corner on a junction surface (beyond the arms' bands): cut along the nearest outline segment, a sidewalk
         // width out
-        const [mx, mz] = centroidOf(P);
+        let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
+        for (const p of P) { bx0 = Math.min(bx0, p[0]); bx1 = Math.max(bx1, p[0]); bz0 = Math.min(bz0, p[1]); bz1 = Math.max(bz1, p[1]); }
         let found = false;
-        for (const n of net.nodes) {
-          if (found || n.outline.length < 6 || Math.abs(n.x - mx) > 90 || Math.abs(n.z - mz) > 90) continue;
-          const O = n.outline;
+        for (const J of jn) {
+          if (found || J.x1 < bx0 || J.x0 > bx1 || J.z1 < bz0 || J.z0 > bz1) continue;
+          const n = J.n, O = n.outline;
           const inside = probe.find((p) => pointInFlat(p[0], p[1], O));
           if (!inside) continue;
           let bd = Infinity;
@@ -439,11 +447,6 @@ function clipBuildingsToStreets(doc: GeoDoc, net: RoadNet): { clipped: string[];
   return out;
 }
 
-function centroidOf(P: Pt[]): Pt {
-  let x = 0, z = 0;
-  for (const p of P) { x += p[0]; z += p[1]; }
-  return [x / P.length, z / P.length];
-}
 function pointInFlat(x: number, z: number, O: ArrayLike<number>): boolean {
   let ins = false;
   for (let i = 0, j = O.length / 2 - 1; i < O.length / 2; j = i++) {
