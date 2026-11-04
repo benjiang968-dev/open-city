@@ -63,7 +63,7 @@ export function createHurtFx(w: World): HurtFxState {
   const stainAlpha = new Float32Array(M);
   discGeo.setAttribute('instanceAlpha', new THREE.InstancedBufferAttribute(stainAlpha, 1).setUsage(THREE.DynamicDrawUsage));
   const stainMat = fadingMaterial({
-    color: 0x9e1018, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
+    color: 0x9e1018, emissive: 0x220000, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
   });
   const stains = new THREE.InstancedMesh(discGeo, stainMat, M);
   stains.count = 0;

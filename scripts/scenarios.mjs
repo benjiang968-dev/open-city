@@ -1220,7 +1220,9 @@ export async function hurtfx(page, S) {
     let k = 0;
     for (let i = 0; i < f.stainLive; i++) if (f.stainAge[i] < f.stainAge[k]) k = i;
     const x = m[k * 16 + 12], z = m[k * 16 + 14];
-    window.__view = { px: x + 1.6, py: 2.4, pz: z - 2.2, lx: x, ly: 0, lz: z };
+    // look from the far side of the stain, away from the player
+    const pp = w.player.mesh.position, dx = x - pp.x, dz = z - pp.z, d = Math.hypot(dx, dz) || 1;
+    window.__view = { px: x + (dx / d) * 1.3 + 0.4, py: 1.7, pz: z + (dz / d) * 1.3, lx: x - (dx / d) * 0.7, ly: 0, lz: z - (dz / d) * 0.7 };
     return { ...H.fx(), alphaNewest: +f.stainAlpha[k].toFixed(2) };
   });
   await snap('22-hurt-stains.png', await page.evaluate(() => window.__view));
