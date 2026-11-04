@@ -1,6 +1,7 @@
 // Player health: crash injuries (belted, so only hard impacts hurt), being hit by cars on foot, slow regen,
 // injury effects under 40 (slower run, camera sway, red vignette), treatment at the clinic, and being
 // knocked out: fade to black, wake at the clinic with a capped bill, job cancelled, heat cleared.
+import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import type { Poi } from './cityGen';
@@ -8,6 +9,7 @@ import { exitVehicle } from './player';
 import { toast } from './hud';
 import { closeChat } from './chat';
 import type { TaxiJob } from './economy/taxi';
+import { hurtBurst } from './hurtFx';
 
 const H = TUNING.health;
 
@@ -34,12 +36,29 @@ export function createHealthUi(): void {
   ui.appendChild(deathEl);
 }
 
-export function hurtPlayer(w: World, amount: number): void {
+const burstAt = new THREE.Vector3();
+const burstDir = new THREE.Vector3();
+
+/** Damage the player. (dirX, dirZ): direction of the blow, if known (sprays the hurt particles that way). */
+export function hurtPlayer(w: World, amount: number, dirX = 0, dirZ = 0): void {
   const p = w.player;
   if (p.dead || amount <= 0) return;
   p.health = Math.max(0, p.health - amount);
   p.lastHurt = w.time;
   vignette.style.setProperty('--flash', '1');
+  const strength = amount * TUNING.hurtFx.strengthPerDamage;
+  const v = p.vehicle;
+  if (v) {
+    // belted in: the burst comes out of the driver's window (left-hand drive, so the car's +X side), no stains
+    const [hx, hy] = v.spec.halfExtents;
+    burstAt.set(hx + 0.05, hy + 0.35, 0.2).applyMatrix4(v.mesh.matrixWorld);
+    burstDir.set(1, 0, 0).transformDirection(v.mesh.matrixWorld);
+    hurtBurst(w, burstAt.x, burstAt.y, burstAt.z, strength, burstDir.x + dirX, burstDir.z + dirZ, 0, false);
+  } else {
+    const m = p.mesh.position;
+    const flung = p.knockT > 0; // thrown by a car: the dots go with you
+    hurtBurst(w, m.x, m.y + 1.2, m.z, strength, dirX, dirZ, Math.max(0, m.y), true, flung ? p.knockX : 0, flung ? p.knockZ : 0);
+  }
   if (p.health <= 0) die(w);
 }
 
@@ -120,11 +139,11 @@ export function updateHealth(w: World, dt: number): void {
       const along = dx * fx + dz * fz, side = dx * fz - dz * fx;
       if (Math.abs(along) > halfL + 0.4 || Math.abs(side) > halfW + 0.4) return;
       if (w.time - p.lastHurt < 0.6) return; // one hit per contact
-      hurtPlayer(w, Math.abs(speed) * H.footHitPerMs);
       const dir = Math.sign(speed);
       p.knockT = 0.6;
       p.knockX = fx * dir * Math.abs(speed) * H.footKnockback + Math.sign(side || 1) * fz * 2;
       p.knockZ = fz * dir * Math.abs(speed) * H.footKnockback - Math.sign(side || 1) * fx * 2;
+      hurtPlayer(w, Math.abs(speed) * H.footHitPerMs, fx * dir, fz * dir);
       w.audio.thud?.(pp.x, pp.z, Math.abs(speed));
     };
     for (const c of w.traffic) check(c.px, c.pz, c.heading, c.speed, c.halfW, c.halfL);

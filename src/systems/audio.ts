@@ -1,4 +1,5 @@
-// All sound is synthesised with WebAudio: engine, tyre screech, horns, thuds, siren, cash chime. No files.
+// All sound is synthesised with WebAudio: engine, tyre screech, horns, thuds, siren, cash chime, a hurt dog's
+// yelp. No files.
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 
@@ -23,6 +24,7 @@ export interface AudioState {
   thunder?: () => void;
   pickup?: () => void;
   whoosh?: () => void;
+  yelp?: (x: number, z: number) => void;
   setRain?: (amount: number) => void;
 }
 
@@ -224,6 +226,32 @@ export function startAudio(s: AudioState): void {
     g.connect(master);
     src.start(t);
     src.stop(t + 0.25);
+  };
+  // hurt dog: two short, falling "ki-yi" cries (sawtooth through a band-pass)
+  s.yelp = (x, z) => {
+    const g0 = distGain(x, z) * A.yelpVolume;
+    if (g0 <= 0.01) return;
+    const t = ctx.currentTime;
+    for (let k = 0; k < 2; k++) {
+      const t0 = t + k * 0.17;
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(1550 - k * 260, t0);
+      o.frequency.exponentialRampToValueAtTime(620, t0 + 0.14);
+      const f = ctx.createBiquadFilter();
+      f.type = 'bandpass';
+      f.frequency.value = 1250;
+      f.Q.value = 1.4;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(g0, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.15);
+      o.connect(f);
+      f.connect(g);
+      g.connect(master);
+      o.start(t0);
+      o.stop(t0 + 0.17);
+    }
   };
   s.chime = () => {
     const t = ctx.currentTime;

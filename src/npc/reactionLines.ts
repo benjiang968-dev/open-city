@@ -8,8 +8,13 @@ export const LINES = {
   pushed: ['Hey, watch it!', 'Excuse YOU.', 'Ever heard of "excuse me"?', 'Mind where you walk!', 'Oof — personal space!'],
   pushedAgain: ['Stop shoving me!', 'Do that again and I call the cops.', "What is your problem?!"],
   calling: ['📞 999… police, please', '📞 Yes, police — hurry!', '📞 There\'s someone attacking people'],
+  callingDog: ['📞 Police! Someone just hurt a dog!', '📞 Yes, police, they attacked a dog. Hurry!'],
+  callingMyDog: ['📞 Police? Someone attacked my dog!', '📞 Please hurry, they hurt my dog!'],
   filming: ['📹 Getting this on camera…', '📹 This is going online', '📹 Smile for the internet'],
   bark: ['Woof!', 'Woof woof!', 'Grrr…'],
+  yelp: ['Yelp!', 'Ki-yi-yi!', 'Awoo…', 'Yip! Yip!'],
+  dogOwner: ['NO! Not my dog!', 'You MONSTER! Leave him alone!', 'What is wrong with you?!', 'Somebody help, they hurt my dog!'],
+  dogWitness: ['Did they just hurt that dog?!', 'Leave the dog alone!', 'Oh no, the poor thing!', 'Hey! What kind of person does that?!'],
   carHorn: ['Get out of the road!'],
 } as const;
 

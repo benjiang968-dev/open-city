@@ -348,6 +348,7 @@ const RAW = {
     engineMaxHz: 165,
     screechSlipThreshold: 0.25, // lateral slip (m/s ÷ speed) before tyres squeal
     hornVolume: 0.25,
+    yelpVolume: 0.32, // a hurt dog's "ki-yi"
   },
 
   items: {
@@ -415,11 +416,70 @@ const RAW = {
     styleByPersonality: { friendly: 'flee', grumpy: 'confront', nervous: 'flee', chatty: 'yell', posh: 'flee', laidback: 'yell' },
   },
 
+  hurtFx: {
+    // red impact dots (one pooled instanced mesh) and ground stains (one pooled instanced mesh)
+    particlePool: 192, // dots that can be in the air at once; never grows (a full pool reuses slots)
+    particlesBase: 3, // dots in the smallest burst
+    particlesPerStrength: 1.6, // extra dots per unit of impact strength (1 strength = 1 m/s of car impact)
+    maxParticlesPerHit: 36, // most dots one hit can make
+    strengthPerDamage: 0.35, // hp of damage -> strength, for throws, melee and player injuries (a brick ≈ 12)
+    minStrength: 0.5, // weaker hits (a gently lobbed rubbish bag) draw no dots
+    spreadBase: 1.4, // m/s the dots fly out at in the smallest burst
+    spreadPerStrength: 0.22, // extra m/s of spread per unit of strength
+    maxSpread: 6, // m/s cap on the spread
+    impactCarry: 0.4, // fraction of the spread added along the blow's direction (dots spray away from it)
+    inheritVelocity: 0.8, // fraction of the victim's own fling velocity the dots keep (they travel with them)
+    gravity: 14, // m/s² on the dots (heavier than real so bursts stay compact)
+    particleLife: 0.6, // seconds a dot lives while it shrinks away (±25% per dot)
+    particleSize: [0.03, 0.065], // radius range of one dot (m)
+    stainPool: 32, // ground stains kept at once; the oldest is reused when full
+    stainsPerStrength: 0.15, // stains per unit of strength, rounded down (a car at 10 m/s leaves 1, at 20 m/s 3)
+    maxStainsPerHit: 3,
+    stainSize: [0.07, 0.17], // radius range of one stain (m)
+    stainLifetime: 60, // seconds a stain takes to fade away completely
+    stainOpacity: 0.85, // opacity of a fresh stain
+    stainFadeHz: 4, // stain fading is updated this many times a second (it is slow; per frame is wasted work)
+    stainLift: 0.065, // metres above the ground a stain is drawn (clears the road markings)
+    dropMaxAge: 3, // seconds: a stain-making drop that never lands (fell off the map) is dropped
+  },
+
+  dogs: {
+    hitCooldown: 0.35, // seconds after a hit before the same dog can be hit again (one bump or swing = one hit)
+    carRehitTime: 1.5, // seconds before your car can hit the same dog again (one pass of the car = one hit)
+    carSideFling: 0.6, // sideways part of a car hit, × car speed: the dog is flung out of the car's path
+    tumbleTimeMax: 0.6, // seconds a dog rolls over after the hardest hits (scaled down for light ones)
+    tumbleFullAt: 10, // strength at which the tumble lasts the full time
+    knockbackPerStrength: 0.45, // m/s a dog is thrown per unit of strength (a car at 10 m/s throws it at 4.5 m/s)
+    maxKnockback: 8, // m/s cap
+    hopBase: 1.2, // m/s upward when hit
+    hopPerStrength: 0.12, // extra m/s upward per unit of strength
+    maxHop: 4, // m/s cap
+    gravity: 18, // m/s² while tumbling
+    groundFriction: 6, // how fast a tumbling dog slides to a stop on the ground (per second)
+    limpTime: 9, // seconds a hurt dog limps, runs back to its owner and stays at their legs
+    maxLimpTime: 20, // repeated hits stack the limp up to this
+    runToOwnerSpeed: 4.5, // m/s a hurt dog runs back to its owner
+    limpRoll: 0.18, // radians a limping dog lurches from side to side
+    hitRadius: 0.38, // metres: how close a thrown item must pass a dog's centre (× dog size)
+    hitHeight: 0.75, // metres: thrown items higher than this pass over a dog (× dog size)
+    meleeReachExtra: 0.3, // metres added to a weapon's reach against a dog
+    ownerScreamTime: 1.3, // seconds the owner screams before getting the phone out
+    yelpHearRadius: 14, // metres: people this close react to the yelp even without line of sight
+    relationshipOwner: -85, // the owner's relationship with you after you hurt their dog
+    ownerMoodDrop: 0.8, // how much the owner's mood drops (mood runs -1..1)
+    relationshipWitness: -25, // everyone nearby who saw it
+    bystanderFleeRadius: 18, // metres: walkers this close run from the scene
+    bystanderFleeTime: 4, // seconds they run
+  },
+
   witness: {
-    // heat a completed 999 call adds for each kind of crime (40 heat = 1 star)
-    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34 },
+    // heat a completed 999 call adds for each kind of crime (40 heat = 1 star). Hurting a dog is taken very
+    // personally: 60 heat (2 stars) from one call, more than knocking a person down.
+    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34, dogAttack: 60 },
     // metres within which people can witness each crime (they also need line of sight)
-    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40 },
+    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40, dogAttack: 45 },
+    // bystander reaction weights are multiplied by these when the crime is hurting a dog: far more call or square up
+    dogAttackReaction: { call: 2, film: 1, flee: 0.5, confront: 2.5 },
     maxWitnesses: 8, // nearest people considered per crime
     callTimeMin: 2.0, // seconds the phone is visibly at their ear before the call goes through
     callTimeMax: 3.0,

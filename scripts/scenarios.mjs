@@ -922,3 +922,317 @@ export async function gate2(page, S) {
   });
   return { picked, victim, res, escape, dent, perf };
 }
+
+// Milestone 3 hurt feedback: red dots and ground stains on every injury (car hit, brick, dog, the player);
+// dogs can be hurt by thrown items, melee and cars (serious crime: the owner screams and calls 999); kids stay
+// untouchable; and an idle frame pays nothing for the effect pool.
+export async function hurtfx(page, S) {
+  await S.start(page);
+  // close-up screenshot of the frozen frame (paused so the 0.6 s dots don't vanish during the capture).
+  // Two rendered frames: the crowd is culled with the previous frame's camera, so a camera cut needs one.
+  const snap = async (file, view) => {
+    await page.evaluate((v) => { const w = window.__oc; w.cam.override = v; window.__ocFrames(2, true); w.paused = true; }, view);
+    await page.waitForTimeout(500);
+    await page.screenshot({ path: `screenshots/${file}` });
+    await page.evaluate(() => { const w = window.__oc; w.paused = false; w.cam.override = null; });
+  };
+  await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, c = w.city;
+    const H = {};
+    H.run = run;
+    H.fx = () => { const f = w.hurtFx; return { bursts: f.bursts, dots: f.live, stains: f.stainLive, stainsMade: f.stainsMade, dotsVisible: f.dots.visible, stainsVisible: f.stains.visible }; };
+    H.calm = () => { const p = w.police; p.heat = 0; p.stars = 0; p.loseTimer = 0; p.trackUntil = 0; p.searchUntil = 0; w.player.health = 100; };
+    const fxIdx = w.prof.names.indexOf('fx');
+    // n unrendered frames: whole-frame CPU and the hurt-fx section alone
+    H.measure = (n) => {
+      const cpu = [], fx = [];
+      for (let k = 0; k < n; k++) { const r = window.__ocFrames(1, false); cpu.push(r[0].cpu); fx.push(w.prof.cur[fxIdx]); }
+      cpu.sort((a, b) => a - b);
+      return { frames: n, median: cpu[n >> 1], p95: cpu[Math.floor(n * 0.95)], fxMeanMs: +(fx.reduce((a, b) => a + b, 0) / n).toFixed(4), fxMaxMs: +Math.max(...fx).toFixed(4) };
+    };
+    // a clear stretch of road between two junctions
+    H.spot = (i, j) => ({ x: (c.xs[i] + c.xs[i + 1]) / 2, z: c.zs[j] });
+    H.tp = (x, z, facing = 0) => { w.player.body.setTranslation({ x, y: 1.2, z }, true); w.player.facing = facing; w.cam.yaw = facing + Math.PI; w.cam.pitch = 0.49; run(0.2, 60); };
+    H.hold = (ped, x, z) => { ped.pos.set(x, 0.02, z); ped.state = 'idle'; ped.timer = 40; ped.route = []; ped.tilt = 0; };
+    // put a dog walker so that their dog stands exactly at (x, z), its leash spot for owner heading h and orbit o
+    // (default: owner 1.7 m to the -x side; h = -PI/2, o = 0 puts the owner 1.9 m to the -z side)
+    H.placeDog = (owner, x, z, h = 0, o = Math.PI / 2) => {
+      H.hold(owner, x - Math.cos(h) * 1.1 - Math.sin(o) * 0.6, z + Math.sin(h) * 0.3 - Math.cos(o) * 0.6);
+      owner.heading = h; owner.dog.orbit = o;
+      owner.dog.pos.set(x, 0.02, z); owner.dog.vel.set(0, 0, 0); owner.dog.tumbleT = 0; owner.dog.hurtT = 0;
+    };
+    // a view from in front of someone (heading h), a little to their right
+    H.front = (p, h, dist, side, y, ly) => ({ px: p.x + Math.sin(h) * dist + Math.cos(h) * side, py: y, pz: p.z + Math.cos(h) * dist - Math.sin(h) * side, lx: p.x, ly, lz: p.z });
+    H.pickUp = (type) => {
+      const it = w.itemsState.items.find((i) => i.type === type && i.inWorld && !i.thrown);
+      w.player.body.setTranslation({ x: it.px, y: 1.2, z: it.pz - 1.0 }, true); w.player.facing = 0; w.cam.yaw = Math.PI;
+      run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+      return w.inventory.slots.filter(Boolean).map((s) => s.type);
+    };
+    H.select = (type) => { w.inventory.selected = w.inventory.slots.findIndex((s) => s && s.type === type); run(0.05, 60); };
+    H.drive = (v, x, z, heading, speed) => {
+      const q = { x: 0, y: Math.sin(heading / 2), z: 0, w: Math.cos(heading / 2) };
+      v.body.setTranslation({ x, y: 1.0, z }, true); v.body.setRotation(q, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      const vx = Math.sin(heading) * speed, vz = Math.cos(heading) * speed;
+      v.body.setLinvel({ x: vx, y: 0, z: vz }, true); v.prevVel.set(vx, 0, vz);
+    };
+    window.__H = H;
+  });
+
+  // ---- 0) idle cost before anything has been hurt ----
+  const idleBefore = await page.evaluate(() => { window.__ocRun(2); return { ...window.__H.measure(300), fx: window.__H.fx() }; });
+
+  // ---- 1) car knocks a pedestrian down (plus: a car at a dog, a car at a kid, and a crash that hurts the driver) ----
+  const car = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    const v = w.vehicles.find((c) => c.type === 'sedan');
+    const t = v.body.translation();
+    w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.4, y: 1.2, z: t.z - Math.sin(v.heading) * 2.4 }, true);
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const inCar = !!w.player.vehicle;
+    const s = H.spot(2, 1);
+    const ped = w.peds.find((p) => p.active && p.archetype === 'adult' && !p.reserved);
+    H.hold(ped, s.x, s.z);
+    ped.state = 'talk'; // not looking: doesn't jump out of the way
+    H.drive(v, s.x - 12, s.z, Math.PI / 2, 11);
+    const fx0 = H.fx();
+    let tt = 0;
+    while (ped.state !== 'down' && tt < 2) { run(1 / 60, 60); tt += 1 / 60; }
+    // the driver stamps on the brake (so the car doesn't roll over the person it threw)
+    v.body.setLinvel({ x: 1, y: 0, z: 0 }, true); v.prevVel.set(1, 0, 0);
+    run(0.15, 60);
+    window.__carPed = ped.id;
+    return { inCar, ped: ped.id, state: ped.state, hitAfter: +tt.toFixed(2), fxBefore: fx0, fxAfter: H.fx() };
+  });
+  await page.evaluate(() => { const w = window.__oc; const p = w.peds[window.__carPed]; window.__view = { px: p.pos.x + 3.2, py: 1.7, pz: p.pos.z - 4.2, lx: p.pos.x - 0.8, ly: 0.7, lz: p.pos.z }; });
+  await snap('22-hurt-car.png', await page.evaluate(() => window.__view));
+  const activeCost = await page.evaluate(() => window.__H.measure(20));
+
+  const carMore = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    const v = w.player.vehicle;
+    // a car at a dog: the dog is in the car's path (1 m off its centre line), its owner (turned to the car,
+    // not jumping clear) 1.9 m off it, outside the car's path
+    run(2); H.calm();
+    const s = H.spot(3, 1);
+    const owners = w.peds.filter((p) => p.dog && p.active);
+    const owner = owners[1] ?? owners[0];
+    H.placeDog(owner, s.x, s.z - 1.0, -Math.PI / 2, 0);
+    owner.state = 'talk';
+    const dog0 = owner.dog.timesHurt, b0 = w.hurtFx.bursts;
+    H.drive(v, s.x - 9, s.z, Math.PI / 2, 11);
+    run(1.2, 60);
+    const dogByCar = { owner: owner.id, dogHurt: owner.dog.timesHurt - dog0, ownerState: owner.state, ownerUp: owner.state !== 'down', bursts: w.hurtFx.bursts - b0 };
+    // a car at a kid: kids always leap clear and are never knocked down
+    run(2); H.calm();
+    const k = H.spot(4, 1);
+    const kid = w.peds.find((p) => p.archetype === 'kid' && p.active);
+    const follow = kid.followId;
+    kid.followId = -1; H.hold(kid, k.x, k.z);
+    const kb = w.hurtFx.bursts;
+    H.drive(v, k.x - 12, k.z, Math.PI / 2, 11);
+    let minState = kid.state;
+    for (let i = 0; i < 70; i++) { run(1 / 60, 60); if (kid.state === 'down') minState = 'down'; }
+    kid.followId = follow;
+    const kidByCar = { kid: kid.id, state: minState, health: kid.health, burstsFromKid: w.hurtFx.bursts - kb };
+    // a hard crash hurts the (belted) driver: the burst comes out of the window, no stains in a car
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0); run(0.5);
+    const hp0 = w.player.health, f0 = H.fx();
+    w.events.push({ type: 'crash', x: v.mesh.position.x, z: v.mesh.position.z, damage: 20, dv: 20 });
+    run(1 / 60, 60);
+    const crash = { hpBefore: hp0, hpAfter: Math.round(w.player.health), bursts: w.hurtFx.bursts - f0.bursts, dots: w.hurtFx.live, stainsMadeAfter2s: 0 };
+    run(2);
+    crash.stainsMadeAfter2s = w.hurtFx.stainsMade - f0.stainsMade;
+    // out of the car
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.5); w.input.pressed.add('KeyE'); run(0.3);
+    return { dogByCar, kidByCar, crash, onFoot: !w.player.vehicle };
+  });
+
+  // ---- 2) a brick at an adult ----
+  const items = await page.evaluate(() => { const H = window.__H; H.calm(); H.pickUp('brick'); H.pickUp('brick'); H.pickUp('bottle'); return H.pickUp('bat'); });
+  const brick = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    H.calm();
+    const s = H.spot(5, 2);
+    H.tp(s.x, s.z - 2.5, 0);
+    H.select('brick');
+    const pp = w.player.mesh.position;
+    const victim = w.peds.find((p) => p.active && p.archetype === 'adult' && p.state !== 'down' && !p.reserved);
+    H.hold(victim, pp.x, pp.z + 5);
+    const f0 = H.fx(), hp0 = victim.health;
+    w.input.keys.add('KeyF'); run(0.36, 60); w.input.keys.delete('KeyF');
+    let tt = 0;
+    while (victim.health === hp0 && tt < 1.5) { run(1 / 60, 60); tt += 1 / 60; }
+    run(0.08, 60);
+    window.__victim = victim.id;
+    return { victim: victim.id, damage: Math.round(hp0 - victim.health), state: victim.state, fxBefore: f0, fxAfter: H.fx() };
+  });
+  await page.evaluate(() => { const w = window.__oc; const v = w.peds[window.__victim]; window.__view = { px: v.pos.x + 2.4, py: 1.9, pz: v.pos.z - 2.8, lx: v.pos.x, ly: 1.1, lz: v.pos.z }; });
+  await snap('22-hurt-brick.png', await page.evaluate(() => window.__view));
+
+  // ---- 3) a thrown brick hits a dog: yelp, owner screams then calls 999 (certain), heat >= the dog-attack value ----
+  const dog = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    run(5); H.calm(); // let earlier 999 calls finish, then start from zero heat
+    const s = H.spot(6, 3);
+    H.tp(s.x, s.z - 3, 0);
+    H.select('brick');
+    const owner = w.peds.filter((p) => p.dog && p.active && p.state !== 'down')[0];
+    // charge, read where the arc passes low (dog height), put the dog there, then release
+    w.input.keys.add('KeyF'); run(0.36, 60);
+    const a = w.combat.arcPts;
+    let k = 1;
+    while (k < 47 && a[k * 3 + 1] > 0.35) k++;
+    H.placeDog(owner, a[k * 3], a[k * 3 + 2]);
+    // five ordinary people standing around in the street, 6-13 m away
+    const dx = owner.dog.pos.x, dz = owner.dog.pos.z;
+    const by = w.peds.filter((p) => p.active && !p.reserved && !p.dog && p.followId < 0 && p.archetype !== 'kid' && p.state !== 'down' && !w.peds.some((q) => q.followId === p.id)).slice(0, 5);
+    [[9, 2], [-10, -1], [13, -2], [-6, 3], [6, -4]].forEach(([ox, oz], i) => { if (by[i]) H.hold(by[i], dx + ox, s.z + oz); });
+    window.__bystanders = by.map((p) => p.id);
+    const witnessesNear = w.peds.filter((p) => p.active && p.id !== owner.id && Math.hypot(p.pos.x - owner.pos.x, p.pos.z - owner.pos.z) < 45).length;
+    const st0 = { ...window.__ocWitness, completedByKind: { ...window.__ocWitness.completedByKind } };
+    const f0 = H.fx(), hurt0 = owner.dog.timesHurt;
+    w.input.keys.delete('KeyF');
+    let tt = 0;
+    while (owner.dog.timesHurt === hurt0 && tt < 1.5) { run(1 / 60, 60); tt += 1 / 60; }
+    run(0.1, 60);
+    window.__owner = owner.id;
+    window.__st0 = st0;
+    return {
+      owner: owner.id, personality: owner.npc.personality, dogHurt: owner.dog.timesHurt - hurt0, tumbling: owner.dog.tumbleT > 0, limpFor: +owner.dog.hurtT.toFixed(1),
+      ownerState: owner.state, ownerHealth: owner.health, fxBefore: f0, fxAfter: H.fx(), witnessesNear,
+    };
+  });
+  await page.evaluate(() => { const w = window.__oc; const d = w.peds[window.__owner].dog; window.__view = { px: d.pos.x + 2.2, py: 1.5, pz: d.pos.z - 2.6, lx: d.pos.x - 0.6, ly: 0.5, lz: d.pos.z }; });
+  await snap('22-hurt-dog.png', await page.evaluate(() => window.__view));
+  const dogCall = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    const owner = w.peds[window.__owner];
+    // the five bystanders' reactions right after (phone = calling or filming)
+    const reactions = {};
+    for (const id of window.__bystanders) { const p = w.peds[id]; const r = p.state === 'phone' ? p.phoneMode : p.state; reactions[r] = (reactions[r] || 0) + 1; }
+    const t0 = w.time;
+    while (owner.phoneMode !== 'call' && w.time - t0 < 4) run(1 / 30);
+    const callStartsAfter = +(w.time - t0).toFixed(2);
+    run(0.6);
+    return { reactions, ownerOnPhone: owner.phoneMode === 'call', callStartsAfter, ownerState: owner.state };
+  });
+  await page.evaluate(() => { const w = window.__oc; const o = w.peds[window.__owner]; window.__view = window.__H.front(o.pos, o.heading, 3.0, 1.4, 1.7, 0.8); });
+  await snap('22-hurt-dog-call.png', await page.evaluate(() => window.__view));
+  const dogAfter = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    const owner = w.peds[window.__owner];
+    const st0 = window.__st0;
+    // run until every 999 call about it is through; note when the owner's own call completes
+    const t0 = w.time;
+    let ownerCallDoneAt = -1, heatAtFirstCall = -1;
+    while (w.time - t0 < 7) {
+      run(1 / 30);
+      const done = (window.__ocWitness.completedByKind.dogAttack ?? 0) - (st0.completedByKind.dogAttack ?? 0);
+      if (done > 0 && heatAtFirstCall < 0) heatAtFirstCall = Math.round(w.police.heat);
+      if (window.__ocWitness.lastCaller === owner.id && ownerCallDoneAt < 0) ownerCallDoneAt = +(w.time - t0).toFixed(1);
+    }
+    const out = {
+      ownerCallCompleted: ownerCallDoneAt >= 0, ownerCallDoneAt,
+      dogAttackCalls: (window.__ocWitness.completedByKind.dogAttack ?? 0) - (st0.completedByKind.dogAttack ?? 0),
+      heatAtFirstCall, heat: Math.round(w.police.heat), dogAttackHeat: 60, stars: w.police.stars,
+      ownerRel: owner.npc.relationship, ownerMemory: owner.npc.memory.map((m) => m.note),
+      witnessMemory: w.peds.filter((p) => p.npc.memory.some((m) => m.kind === 'sawDogHurt')).length,
+    };
+    // the dog limps back to its owner and recovers (dogs can't die)
+    run(10);
+    const d = owner.dog;
+    out.dogRecovered = d.hurtT <= 0 && d.tumbleT <= 0 && Math.abs(d.roll) < 1e-6;
+    out.dogNearOwner = +Math.hypot(d.pos.x - owner.pos.x, d.pos.z - owner.pos.z).toFixed(1);
+    return out;
+  });
+
+  // ---- 3b) a bat swing at a dog (melee) ----
+  const dogMelee = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    H.calm();
+    const s = H.spot(1, 2);
+    H.tp(s.x, s.z - 1.5, 0);
+    H.select('bat');
+    const owners = w.peds.filter((p) => p.dog && p.active && p.state !== 'down');
+    const owner = owners[owners.length - 1];
+    const pp = w.player.mesh.position;
+    H.placeDog(owner, pp.x, pp.z + 2.0); // in reach of the bat; the owner (1.7 m to the side) just out of it
+    const hurt0 = owner.dog.timesHurt, b0 = w.hurtFx.bursts, hp0 = owner.health;
+    w.input.keys.add('KeyF'); run(0.1, 60); w.input.keys.delete('KeyF'); run(0.6, 60);
+    return { owner: owner.id, dogHurt: owner.dog.timesHurt - hurt0, ownerUntouched: owner.health === hp0, bursts: w.hurtFx.bursts - b0, ownerState: owner.state };
+  });
+
+  // ---- kids: a thrown bottle and a bat swing don't touch them ----
+  const kids = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    H.calm();
+    const s = H.spot(2, 3);
+    H.tp(s.x, s.z - 2.5, 0);
+    const kid = w.peds.find((p) => p.archetype === 'kid' && p.active);
+    const follow = kid.followId;
+    kid.followId = -1;
+    const pp = w.player.mesh.position;
+    H.hold(kid, pp.x, pp.z + 5);
+    H.select('bottle');
+    const b0 = w.hurtFx.bursts;
+    w.input.keys.add('KeyF'); run(0.36, 60); w.input.keys.delete('KeyF'); run(1.2, 60);
+    const thrown = { health: kid.health, state: kid.state, hitCount: kid.hitCount };
+    H.hold(kid, pp.x, pp.z + 1.2);
+    H.select('bat');
+    w.input.keys.add('KeyF'); run(0.1, 60); w.input.keys.delete('KeyF'); run(0.6, 60);
+    const melee = { health: kid.health, state: kid.state, hitCount: kid.hitCount };
+    kid.followId = follow;
+    return { kid: kid.id, thrown, melee, bursts: w.hurtFx.bursts - b0 };
+  });
+
+  // ---- 4) the player is hit by a car on foot (real health path: a traffic car running into you) ----
+  const player = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    run(1); H.calm();
+    const s = H.spot(4, 2);
+    H.tp(s.x, s.z + 3.1, Math.PI);
+    const pp = w.player.mesh.position;
+    const tc = w.traffic.reduce((a, c) => (Math.hypot(c.px - pp.x, c.pz - pp.z) < Math.hypot(a.px - pp.x, a.pz - pp.z) ? c : a));
+    const h = tc.heading, fx = Math.sin(h), fz = Math.cos(h);
+    // its front bumper just reaching you at 40 km/h
+    tc.body.setTranslation({ x: pp.x - fx * (tc.halfL + 0.3), y: tc.body.translation().y, z: pp.z - fz * (tc.halfL + 0.3) }, true);
+    tc.body.setLinvel({ x: fx * 11, y: 0, z: fz * 11 }, true);
+    tc.speed = 11;
+    const hp0 = w.player.health, f0 = H.fx();
+    let tt = 0;
+    while (w.player.health === hp0 && tt < 0.5) { run(1 / 60, 60); tt += 1 / 60; }
+    tc.body.setLinvel({ x: 0, y: 0, z: 0 }, true); tc.speed = 0; // the driver brakes
+    run(0.15, 60);
+    window.__carHeading = h;
+    return { hpBefore: hp0, hpAfter: Math.round(w.player.health), fxBefore: f0, fxAfter: H.fx() };
+  });
+  await page.evaluate(() => { const p = window.__oc.player.mesh.position; window.__view = window.__H.front(p, window.__carHeading + Math.PI / 2, 4.4, 1.2, 1.8, 0.8); });
+  await snap('22-hurt-player.png', await page.evaluate(() => window.__view));
+
+  // ---- stains on the ground after the dots are gone; then everything fades and the idle cost is back to zero ----
+  const stains = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    H.calm();
+    run(2);
+    const f = w.hurtFx, m = f.stains.instanceMatrix.array;
+    // look at the newest stain (the player's, on this street)
+    let k = 0;
+    for (let i = 0; i < f.stainLive; i++) if (f.stainAge[i] < f.stainAge[k]) k = i;
+    const x = m[k * 16 + 12], z = m[k * 16 + 14];
+    window.__view = { px: x + 1.6, py: 2.4, pz: z - 2.2, lx: x, ly: 0, lz: z };
+    return { ...H.fx(), alphaNewest: +f.stainAlpha[k].toFixed(2) };
+  });
+  await snap('22-hurt-stains.png', await page.evaluate(() => window.__view));
+  const after = await page.evaluate(() => {
+    const w = window.__oc, H = window.__H, run = H.run;
+    H.calm();
+    run(30);
+    const live = w.hurtFx.stainLive;
+    const half = { ...H.fx(), alphaMax: +Math.max(0, ...Array.from(w.hurtFx.stainAlpha.slice(0, live))).toFixed(2) };
+    run(32); H.calm();
+    const gone = H.fx();
+    return { at30s: half, at62s: gone, idleAfter: H.measure(300) };
+  });
+  return { idleBefore, car, activeCost, carMore, items, brick, dog, dogCall, dogAfter, dogMelee, kids, player, stains, after };
+}

@@ -153,12 +153,16 @@ function drawPed(C: CrowdRender, ped: Ped) {
 
 function drawDog(C: CrowdRender, ped: Ped) {
   const d = ped.dog!;
-  e.set(0, d.heading, 0, 'YXZ');
+  // roll: lying on its side after a hit, or lurching while it limps
+  e.set(0, d.heading, d.roll, 'YXZ');
   q.setFromEuler(e);
   e.order = 'XYZ';
-  v.set(d.pos.x, 0.02 + Math.abs(Math.sin(d.phase)) * 0.04, d.pos.z);
+  const hurt = d.hurtT > 0 || d.tumbleT > 0;
+  // (lifted by half its body width as it rolls, so a dog on its side lies on the ground, not in it)
+  v.set(d.pos.x, d.pos.y + Math.abs(Math.sin(d.phase)) * (hurt ? 0.08 : 0.04) + Math.abs(Math.sin(d.roll)) * 0.13 * d.scale, d.pos.z);
   s.setScalar(d.scale);
   base.compose(v, q, s);
   put(C.dog, base, d.color);
-  put(C.dogTail, limb(0, 0.42, -0.32, -0.6 + Math.sin(d.phase * 2.5) * 0.5, 0), d.color);
+  // tail wags; tucked down between the legs while hurt
+  put(C.dogTail, limb(0, 0.42, -0.32, hurt ? -2.5 : -0.6 + Math.sin(d.phase * 2.5) * 0.5, 0), d.color);
 }

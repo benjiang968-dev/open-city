@@ -48,6 +48,19 @@ export function updateNpcMemory(w: World): void {
         if (e.type === 'assault') for (const p of near(18)) if (p.id !== e.pedId && (p.state === 'walk' || p.state === 'idle')) startFlee(p, e.x, e.z, 4);
         break;
       }
+      case 'dogHurt': {
+        const owner = w.peds[e.pedId];
+        const DG = TUNING.dogs;
+        if (owner) {
+          remember(owner.npc, 'hurtMyDog', e.cause === 'car' ? 'ran my dog over' : `hurt my dog with a ${e.weapon.toLowerCase()}`, hour, day);
+          adjustRelationship(owner.npc, DG.relationshipOwner);
+          owner.npc.mood = Math.max(-1, owner.npc.mood - DG.ownerMoodDrop);
+        }
+        const name = owner ? owner.npc.name.split(' ')[0] : 'someone';
+        mem('sawDogHurt', `hurt ${name}'s dog`, DG.relationshipWitness, TUNING.peds.memoryRadius, e.pedId);
+        for (const p of near(DG.bystanderFleeRadius)) if (p.id !== e.pedId && (p.state === 'walk' || p.state === 'idle')) startFlee(p, e.x, e.z, DG.bystanderFleeTime);
+        break;
+      }
       case 'vandalism':
         mem('vandalism', `smashed up ${e.what.startsWith('a ') ? e.what : 'a ' + e.what.toLowerCase()}`, -6, 25);
         break;

@@ -1,6 +1,7 @@
 // Pedestrians: walk routines between points of interest on the pavement graph, by archetype (adults,
 // joggers, delivery workers, tourists, elderly people, parents with kids, dog walkers). They dodge and flee
-// reckless drivers, get knocked down, react to being hit or shoved, and stop to talk. A quality-dependent
+// reckless drivers, get knocked down, react to being hit or shoved, and stop to talk. Dogs can be hurt too: they
+// tumble, then limp back to their owner and stay at their legs until they recover. A quality-dependent
 // budget of them is kept active near the player; far ones are quietly moved closer, out of view.
 // Each has a kinematic capsule so the player bumps into (and shoves) them and thrown items bounce off.
 import * as THREE from 'three';
@@ -9,7 +10,10 @@ import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
 import { generateNpc, routineTarget, type NpcProfile, type Personality } from '../npc/npc';
-import { reactAfterFlinch } from './npcReactions';
+import { reactAfterFlinch, hurtDog } from './npcReactions';
+import { victimMaybeCalls } from './witness';
+import { hurtBurst } from './hurtFx';
+import type { Vehicle } from './vehicles';
 import { say } from './bubbles';
 import { LINES, pick } from '../npc/reactionLines';
 import { GROUPS } from '../physicsGroups';
@@ -17,6 +21,7 @@ import { Rng } from '../rng';
 
 const PT = TUNING.peds;
 const AR = PT.archetypes;
+const DG = TUNING.dogs;
 
 export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk' | 'flinch' | 'confront' | 'yell' | 'stumble' | 'follow' | 'phone';
 export type Archetype = 'adult' | 'jogger' | 'delivery' | 'tourist' | 'elderly' | 'parent' | 'kid' | 'dogwalker';
@@ -30,6 +35,14 @@ export interface DogState {
   color: THREE.Color;
   barkCd: number;
   orbit: number;
+  // hurt (M3): dogs can't die; they tumble, limp back to their owner and recover
+  vel: THREE.Vector3; // velocity while tumbling after a hit
+  tumbleT: number; // seconds of rolling left
+  hurtT: number; // seconds of limping left
+  lastHit: number; // w.time of the last hit
+  roll: number; // sideways lean for the renderer (rolling over, limping)
+  rollSide: number; // which side it rolls onto (-1 / 1)
+  timesHurt: number;
 }
 
 export interface Ped {
@@ -77,7 +90,7 @@ export interface Ped {
   phoneT: number; // seconds left on a 999 call / filming
   phoneMode: 'call' | 'film' | null;
   report: { x: number; z: number; heat: number; kind: string } | null;
-  /** Kids and dogs are never targets: things pass them by and they always dodge cars. */
+  /** Kids are never targets: things pass them by and they always dodge cars. (Dogs can be hurt: see hurtDog.) */
   protectedTarget: boolean;
   solid: boolean; // capsule currently enabled
 }
@@ -155,6 +168,7 @@ export function spawnPeds(w: World): void {
         p.dog = {
           pos: new THREE.Vector3(start.x + 1.5, 0.02, start.z), heading: 0, phase: 0, scale: rng.range(0.8, 1.2),
           color: new THREE.Color(rng.pick(['#8d5524', '#e0c9a6', '#2b2b2b', '#c68642', '#f5f5f5'])), barkCd: 0, orbit: rng.range(0, 6),
+          vel: new THREE.Vector3(), tumbleT: 0, hurtT: 0, lastHit: -100, roll: 0, rollSide: 1, timesHurt: 0,
         };
       }
       w.peds.push(p);
@@ -368,7 +382,8 @@ export function updatePeds(w: World, dt: number): void {
       case 'yell': {
         ped.timer -= dt;
         ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
-        if (ped.timer <= 0) planRoute(w, ped, chooseDestination(w, ped));
+        // a dog owner screams first, then calls 999 (the witness system has set their report)
+        if (ped.timer <= 0 && !victimMaybeCalls(w, ped)) planRoute(w, ped, chooseDestination(w, ped));
         break;
       }
       case 'phone': {
@@ -457,7 +472,10 @@ export function updatePeds(w: World, dt: number): void {
 
     ped.walkPhase += moveSpeed * dt * 3.2 / Math.max(0.6, ped.scale);
     ped.moveAmount = ped.state === 'down' ? 0 : Math.min(1.4, moveSpeed / PT.walkSpeed);
-    if (ped.dog) updateDog(w, ped, dt, moveSpeed);
+    if (ped.dog) {
+      if (pv && carPos) dogVsCar(w, ped, pv, carSpeed);
+      updateDog(w, ped, dt, moveSpeed);
+    }
 
     // capsule (off while lying down). Its position is only pushed to Rapier near the player: nothing else
     // touches it, and every Rapier body write allocates. Far capsules keep their last spot until you come
@@ -475,9 +493,72 @@ export function updatePeds(w: World, dt: number): void {
   recycleFarPeds(w);
 }
 
+/** The player's car against a dog (uses the car frame set up at the top of updatePeds). */
+function dogVsCar(w: World, ped: Ped, pv: Vehicle, carSpeed: number) {
+  const d = ped.dog!;
+  if (d.tumbleT > 0) return; // already flying
+  tmp.copy(d.pos).sub(CAR_POS);
+  const lz = tmp.dot(fwd), lx = tmp.dot(right);
+  const hx = pv.spec.halfExtents[0] + 0.3, hz = pv.spec.halfExtents[2] + 0.3;
+  if (Math.abs(lx) >= hx || Math.abs(lz) >= hz || d.pos.y > CAR_POS.y + 1.2) return;
+  if (carSpeed > PT.hitSpeed && w.time - d.lastHit > DG.carRehitTime) {
+    // thrown forward and out to the side it was on
+    const side = Math.sign(lx || 1) * carSpeed * DG.carSideFling;
+    if (hurtDog(w, ped, 'car', carSpeed, CAR_VEL.x + right.x * side, CAR_VEL.z + right.z * side, pv.spec.label)) return;
+  }
+  // a slow bump (or still under the car that just hit it): nudged aside
+  d.pos.addScaledVector(right, Math.sign(lx || 1) * (hx - Math.abs(lx) + 0.05));
+}
+
+/** Knocked over: thrown away from the blow, rolls onto its side. Called by hurtDog. */
+export function tumbleDog(d: DogState, strength: number, dirX: number, dirZ: number): void {
+  const l = Math.hypot(dirX, dirZ) || 1;
+  const k = Math.min(DG.maxKnockback, strength * DG.knockbackPerStrength);
+  d.vel.set((dirX / l) * k, Math.min(DG.maxHop, DG.hopBase + strength * DG.hopPerStrength), (dirZ / l) * k);
+  d.tumbleT = DG.tumbleTimeMax * Math.min(1, Math.max(0.3, strength / DG.tumbleFullAt));
+  d.rollSide = Math.random() < 0.5 ? -1 : 1;
+  d.hurtT = Math.min(DG.maxLimpTime, Math.max(0, d.hurtT) + DG.limpTime);
+  d.timesHurt++;
+}
+
 function updateDog(w: World, ped: Ped, dt: number, walkerSpeed: number) {
   const d = ped.dog!;
   d.barkCd -= dt;
+  if (d.tumbleT > 0 || d.pos.y > 0.02) {
+    // rolling over after a hit
+    d.tumbleT -= dt;
+    d.vel.y -= DG.gravity * dt;
+    d.pos.addScaledVector(d.vel, dt);
+    if (d.pos.y <= 0.02) {
+      d.pos.y = 0.02;
+      d.vel.y = 0;
+      const f = Math.max(0, 1 - dt * DG.groundFriction);
+      d.vel.x *= f;
+      d.vel.z *= f;
+    }
+    d.roll += (d.rollSide * 1.45 - d.roll) * Math.min(1, dt * 14);
+    d.phase += dt * 30; // legs scramble
+    return;
+  }
+  if (d.hurtT > 0) {
+    // limp back to the owner and stay pressed against their side
+    d.hurtT -= dt;
+    const tx = ped.pos.x + Math.sin(ped.heading) * 0.15 + Math.cos(ped.heading) * 0.5, tz = ped.pos.z + Math.cos(ped.heading) * 0.15 - Math.sin(ped.heading) * 0.5;
+    const dx = tx - d.pos.x, dz = tz - d.pos.z, dist = Math.hypot(dx, dz);
+    if (dist > 0.2) {
+      const sp = Math.min(DG.runToOwnerSpeed, dist * 4);
+      d.pos.x += (dx / dist) * sp * dt;
+      d.pos.z += (dz / dist) * sp * dt;
+      d.heading = Math.atan2(dx, dz);
+      d.phase += sp * dt * 6;
+    } else d.heading = ped.heading;
+    // lurch on the bad leg while moving, settle (back on its feet after a tumble) while standing
+    const lean = dist > 0.2 ? Math.sin(d.phase * 0.5) * DG.limpRoll : 0;
+    d.roll += (lean - d.roll) * Math.min(1, dt * 10);
+    if (d.hurtT <= 0) d.roll = 0;
+    return;
+  }
+  d.roll = 0;
   d.orbit += dt * 0.6;
   // trot around the walker on an imaginary leash
   const tx = ped.pos.x + Math.cos(ped.heading) * 1.1 + Math.sin(d.orbit) * 0.6, tz = ped.pos.z - Math.sin(ped.heading) * 1.1 + Math.sin(ped.heading) * 0.8 + Math.cos(d.orbit) * 0.6;
@@ -533,7 +614,7 @@ function relocateNearPlayer(w: World, p: Ped) {
     p.timer = Math.random() * 2;
     p.tilt = 0;
     for (const kid of w.peds) if (kid.followId === p.id) { kid.pos.set(n.x + 0.8, 0.02, n.z); kid.state = 'follow'; }
-    if (p.dog) p.dog.pos.set(n.x + 1.2, 0.02, n.z);
+    if (p.dog) { p.dog.pos.set(n.x + 1.2, 0.02, n.z); p.dog.tumbleT = 0; p.dog.vel.set(0, 0, 0); }
     return;
   }
 }
@@ -597,6 +678,7 @@ function knockDown(w: World, ped: Ped, carVel: THREE.Vector3, speed: number) {
   ped.report = null;
   emit(w, { type: 'pedHit', pedId: ped.id, x: ped.pos.x, z: ped.pos.z, speed });
   w.audio.thud?.(ped.pos.x, ped.pos.z, speed);
+  hurtBurst(w, ped.pos.x, 1.05 * ped.scale, ped.pos.z, speed, carVel.x, carVel.z, 0, true, ped.vel.x, ped.vel.z);
 }
 
 /** Nearest ped to a point within range that can be talked to. */
