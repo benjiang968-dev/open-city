@@ -111,6 +111,14 @@ export class DealershipJob implements JobSystem {
     this.restockT = 1;
     const pp = w.player.mesh.position;
     for (const site of this.sites) {
+      // a display car smashed to a wreck is off the market (its slot restocks once the wreck is gone)
+      for (const sl of site.slots) {
+        if (!sl.car?.wrecked) continue;
+        sl.car.forSale = null;
+        sl.car.locked = false;
+        sl.car = null;
+        sl.soldAt = w.time;
+      }
       if (Math.hypot(site.x - pp.x, site.z - pp.z) < D.restockMinDistance) continue;
       site.slots.forEach((sl, i) => {
         if (!sl.car && w.time - sl.soldAt > D.restockSeconds) this.stock(w, site, i);
@@ -181,6 +189,7 @@ function driveLabel(v: Vehicle): string {
 /** HUD prompt next to a display car: price, stats, and whether you can afford it. */
 export function showroomPrompt(w: World, v: Vehicle): string {
   const fs = v.forSale!;
+  if (v.wrecked) return `${v.spec.label} is wrecked`;
   const job = w.jobs.get<DealershipJob>('dealership');
   const site = job?.sites[fs.site];
   const s = v.spec;
@@ -193,7 +202,7 @@ export function showroomPrompt(w: World, v: Vehicle): string {
 /** E on a display car: pay and take the keys (the car becomes yours). */
 export function buyDisplayCar(w: World, v: Vehicle): boolean {
   const fs = v.forSale;
-  if (!fs) return false;
+  if (!fs || v.wrecked) return false; // a wreck is not for sale (the showroom drops it from stock)
   if (w.cash < fs.price) {
     toast(w, `<span style="font-size:20px">Not enough cash for the ${v.spec.label} ($${fs.price.toLocaleString()})</span>`, 2);
     return false;

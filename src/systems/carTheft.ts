@@ -220,7 +220,7 @@ function alarmsDrawAttention(w: World, dt: number): void {
       if (!p.active || p.hidden || p.reserved || (p.state !== 'walk' && p.state !== 'idle')) continue;
       if (Math.abs(p.pos.x - v.px) > r || Math.abs(p.pos.z - v.pz) > r || Math.hypot(p.pos.x - v.px, p.pos.z - v.pz) > r) continue;
       p.state = 'look';
-      p.timer = TH.lookTime + Math.random() * 1.5;
+      p.timer = TH.lookTime + Math.random() * TH.lookTimeRandom;
       theftStats.lookers++;
     }
   }

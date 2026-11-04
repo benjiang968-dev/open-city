@@ -189,7 +189,8 @@ export function updateVehicles(w: World, dt: number): void {
   for (const v of w.vehicles) {
     // parked and at rest: Rapier has put the body to sleep, so skip it (no controller update and no
     // allocating Rapier reads). Anything that bumps it (a car, you, a thrown brick) wakes it up again.
-    if (!v.driven && v.body.isSleeping()) continue;
+    // A car that fell asleep on its roof or side (upsideTimer running) is still updated so it gets righted.
+    if (!v.driven && v.upsideTimer === 0 && v.body.isSleeping()) continue;
     const r = v.body.rotation();
     q.set(r.x, r.y, r.z, r.w);
     fwd.set(0, 0, 1).applyQuaternion(q);

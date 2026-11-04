@@ -201,7 +201,8 @@ const RAW = {
     breakInTime: 3.0, // seconds to smash the side window of a locked car and get in
     strikeTimes: [0.75, 1.55, 2.35], // seconds into the break-in when the elbow hits the glass
     alarmSeconds: 12, // how long a car alarm sounds once triggered
-    lookTime: 3.5, // seconds people stop and stare at a car alarm (plus up to 1.5 s random)
+    lookTime: 3.5, // seconds people stop and stare at a car alarm (plus up to lookTimeRandom)
+    lookTimeRandom: 1.5, // extra random seconds of staring, so a crowd doesn't all turn away at once
     lookCheckInterval: 0.25, // seconds between checks for people hearing an alarm
     ownerNoticeRange: 60, // metres: an owner this close who sees it (or hears their alarm) comes after you
     ownerChaseTime: 14, // seconds the owner chases and shouts before giving up (then may call 999)
