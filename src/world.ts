@@ -40,6 +40,11 @@ export type GameEvent =
   | { type: 'menace'; x: number; z: number }
   /** The player hurt a dog; `pedId` is its owner (dog walker). */
   | { type: 'dogHurt'; pedId: number; x: number; z: number; cause: 'car' | 'thrown' | 'melee'; weapon: string }
+  /**
+   * You took a car that isn't yours. ownerId: the owner's ped id (-1: abandoned); ownerSaw: the owner noticed
+   * and is coming after you; alarm: its alarm is sounding; forced: you smashed the window to get in.
+   */
+  | { type: 'carTheft'; x: number; z: number; carId: number; ownerId: number; ownerSaw: boolean; alarm: boolean; forced: boolean }
   | { type: 'policeCalled'; x: number; z: number; byPed: number };
 
 export interface World {

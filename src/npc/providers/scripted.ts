@@ -46,7 +46,13 @@ export class ScriptedProvider implements DialogueProvider {
     const intent = detectIntent(text);
     const P = TEMPLATES[npc.personality];
     const tics = TICS[npc.personality];
-    const hitMe = npc.memory.some((m) => m.kind === 'hitMe' || m.kind === 'assaulted');
+    // grudges: you hurt me, or you stole my car (the latest one decides what they throw at you)
+    let grudge: 'hit' | 'car' | null = null;
+    for (const m of npc.memory) {
+      if (m.kind === 'hitMe' || m.kind === 'assaulted') grudge = 'hit';
+      else if (m.kind === 'stoleMyCar') grudge = 'car';
+    }
+    const hitMe = grudge !== null;
     const rel = npc.relationship;
     const firstTime = npc.timesTalked === 0;
 
@@ -74,10 +80,11 @@ export class ScriptedProvider implements DialogueProvider {
 
     // ---- grudges first: people you hit don't want to talk ----
     if (hitMe && rel < -30) {
-      if (intent === 'apology') return reply(say(SHARED.apologyHit, undefined, false), undefined, 6);
+      const car = grudge === 'car';
+      if (intent === 'apology') return reply(say(car ? SHARED.apologyStolen : SHARED.apologyHit, undefined, false), undefined, 6);
       if (rel <= TUNING.npc.callPoliceBelow && (intent === 'insult' || intent === 'threat' || npc.timesTalked >= 1))
-        return reply(say(SHARED.callPolice, undefined, false), { type: 'callPolice' }, -5);
-      return reply(say(SHARED.refuseHit, undefined, false), { type: 'refuse' }, -2);
+        return reply(say(car ? SHARED.callPoliceStolen : SHARED.callPolice, undefined, false), { type: 'callPolice' }, -5);
+      return reply(say(car ? SHARED.refuseStolen : SHARED.refuseHit, undefined, false), { type: 'refuse' }, -2);
     }
     if (rel < -60 && intent !== 'apology') {
       if (intent === 'insult' || intent === 'threat') return reply(say(SHARED.callPolice, undefined, false), { type: 'callPolice' }, -5);
@@ -171,6 +178,7 @@ function memoryRemark(mem: DialogueRequest['npc']['memory']): string {
     case 'speeding': return pick(SHARED.memSpeeding!);
     case 'fareDone': return pick(SHARED.memFare!);
     case 'hitSomeone': return pick(SHARED.memHitSomeone!);
+    case 'sawCarTheft': return pick(SHARED.memCarTheft!);
     default: return '';
   }
 }

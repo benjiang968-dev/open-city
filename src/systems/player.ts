@@ -14,6 +14,8 @@ import { clinicNearby, clinicFee, treatAtClinic } from './health';
 import { GROUPS } from '../physicsGroups';
 import { pickUp, freeSlot } from './inventory';
 import { shovePed } from './npcReactions';
+import { carPrompt, useCar, type BreakIn } from './carTheft';
+import { showroomPrompt, buyDisplayCar } from './economy/dealership';
 
 const P = TUNING.player;
 
@@ -38,6 +40,8 @@ export interface PlayerState {
   knockZ: number;
   dead: boolean;
   deadT: number; // seconds since death (drives the fade)
+  /** Smashing a locked car's window (carTheft.ts runs it); you can't move meanwhile. */
+  breakIn: BreakIn | null;
 }
 
 export function createPlayer(w: World, x: number, z: number): PlayerState {
@@ -54,7 +58,7 @@ export function createPlayer(w: World, x: number, z: number): PlayerState {
   cc.setApplyImpulsesToDynamicBodies(true);
   return {
     mesh: rig.root, rig, body, collider, cc, vy: 0, grounded: true, facing: 0, walkPhase: 0, vehicle: null, prompt: '', lastVehicleId: -1,
-    health: 100, lastHurt: -100, knockT: 0, knockX: 0, knockZ: 0, dead: false, deadT: 0,
+    health: 100, lastHurt: -100, knockT: 0, knockX: 0, knockZ: 0, dead: false, deadT: 0, breakIn: null,
   };
 }
 
@@ -88,6 +92,13 @@ export function updatePlayer(w: World, dt: number): void {
     // ride inside; hidden
     if (act.interact(inp) && Math.abs(v.speed) < 6) exitVehicle(w);
     else p.prompt = Math.abs(v.speed) < 6 ? 'E  get out' : '';
+    return;
+  }
+
+  // busy smashing a car window: stand still (carTheft.ts animates and finishes it)
+  if (p.breakIn) {
+    p.prompt = 'Breaking in…';
+    syncMesh(p);
     return;
   }
 
@@ -129,10 +140,17 @@ export function updatePlayer(w: World, dt: number): void {
       return;
     }
   } else if (best && !w.chat.open) {
-    p.prompt = best.wrecked ? `${best.spec.label} is wrecked` : `E  drive ${best.spec.label}`;
-    if (act.interact(inp) && !best.wrecked) {
-      enterVehicle(w, best);
-      return;
+    if (best.forSale) {
+      // dealership stock: price and stats, E buys it
+      p.prompt = showroomPrompt(w, best);
+      if (act.interact(inp)) buyDisplayCar(w, best);
+    } else {
+      // yours: drive; someone else's: steal it, or smash the window if it's locked
+      p.prompt = carPrompt(w, best);
+      if (act.interact(inp) && !best.wrecked) {
+        useCar(w, best);
+        return;
+      }
     }
   }
 
@@ -190,6 +208,7 @@ export function enterVehicle(w: World, v: Vehicle): void {
   const p = w.player;
   p.vehicle = v;
   v.driven = true;
+  v.body.wakeUp(); // parked cars sleep in the physics engine
   p.mesh.visible = false;
   p.collider.setEnabled(false);
   const t = v.body.translation();

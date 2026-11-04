@@ -21,6 +21,9 @@ export interface CarDamage {
   bumpers: Bumper[];
   lights: THREE.Mesh[]; // [left, right]
   crack: THREE.Mesh;
+  /** Cracked/smashed driver's-door glass from a break-in; placed on whichever side was hit. */
+  sideCrack: THREE.Mesh;
+  sideWindow: CarParts['sideWindow'];
   dentTotal: number; // sum of dent depth applied (for tests / debug)
 }
 
@@ -46,9 +49,14 @@ export function buildDamageableCar(v: Pick<Vehicle, 'mesh'>, parts: CarParts): {
   crack.position.set(ws.x, ws.y, ws.z + 0.012);
   crack.visible = false;
   v.mesh.add(crack);
+  // front half of the side window = the driver's door glass (same shared crack material, so no new shader)
+  const sw = parts.sideWindow;
+  const sideCrack = new THREE.Mesh(new THREE.PlaneGeometry(sw.w * 0.48, sw.h * 0.92), crackMaterial());
+  sideCrack.visible = false;
+  v.mesh.add(sideCrack);
   return {
     bodyMesh,
-    dmg: { base: Float32Array.from(attr.array as Float32Array), pos: attr.array as Float32Array, attr, bumpers, lights, crack, dentTotal: 0 },
+    dmg: { base: Float32Array.from(attr.array as Float32Array), pos: attr.array as Float32Array, attr, bumpers, lights, crack, sideCrack, sideWindow: sw, dentTotal: 0 },
   };
 }
 
@@ -168,6 +176,16 @@ export function dentAt(v: Vehicle, px: number, py: number, pz: number, dx: numbe
   }
   dm.dentTotal += depth;
   dm.attr.needsUpdate = true;
+}
+
+/** Show the side-window crack on one side (+1 = the car's left, -1 = right) at a size 0..1 (grows with each strike). */
+export function crackSideWindow(v: Vehicle, side: number, amount: number): void {
+  const c = v.dmg.sideCrack, sw = v.dmg.sideWindow;
+  const s = side >= 0 ? 1 : -1;
+  c.position.set(s * (sw.x + 0.012), sw.y, sw.z + sw.w * 0.25);
+  c.rotation.set(0, s * Math.PI / 2, 0);
+  c.scale.setScalar(Math.max(0.05, Math.min(1, amount)));
+  c.visible = amount > 0;
 }
 
 /** Number of working headlights (0..2), drives the player's headlight beam. */

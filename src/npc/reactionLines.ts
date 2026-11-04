@@ -15,6 +15,10 @@ export const LINES = {
   yelp: ['Yelp!', 'Ki-yi-yi!', 'Awoo…', 'Yip! Yip!'],
   dogOwner: ['NO! Not my dog!', 'You MONSTER! Leave him alone!', 'What is wrong with you?!', 'Somebody help, they hurt my dog!'],
   dogWitness: ['Did they just hurt that dog?!', 'Leave the dog alone!', 'Oh no, the poor thing!', 'Hey! What kind of person does that?!'],
+  callingTheft: ['📞 999… someone\'s stealing a car!', '📞 Police? A car\'s being broken into!', '📞 They just drove off in a stolen car!'],
+  // a car owner chasing the thief (the first line is always the opener)
+  carOwner: ["Hey! That's my car!", 'Stop! Thief!', 'Get out of my car!', 'Somebody stop them, that\'s MY car!', 'I know your face!'],
+  carOwnerGaveUp: ['My car… unbelievable.', 'Great. Just great.', "Who steals a car in broad daylight?!"],
   carHorn: ['Get out of the road!'],
 } as const;
 

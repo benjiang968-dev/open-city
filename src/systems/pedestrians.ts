@@ -23,7 +23,7 @@ const PT = TUNING.peds;
 const AR = PT.archetypes;
 const DG = TUNING.dogs;
 
-export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk' | 'flinch' | 'confront' | 'yell' | 'stumble' | 'follow' | 'phone';
+export type PedState = 'walk' | 'idle' | 'flee' | 'dodge' | 'down' | 'talk' | 'flinch' | 'confront' | 'yell' | 'stumble' | 'follow' | 'phone' | 'look' | 'chase';
 export type Archetype = 'adult' | 'jogger' | 'delivery' | 'tourist' | 'elderly' | 'parent' | 'kid' | 'dogwalker';
 export type ArmPose = 'none' | 'phone' | 'film' | 'wave' | 'carry' | 'cane';
 
@@ -379,6 +379,42 @@ export function updatePeds(w: World, dt: number): void {
         if (ped.timer <= 0 || d > 30) planRoute(w, ped, chooseDestination(w, ped));
         break;
       }
+      case 'look': {
+        // stopped to stare at a commotion (a car alarm): faces you, then carries on where they were going
+        ped.timer -= dt;
+        ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
+        if (ped.timer <= 0) {
+          ped.state = ped.followId >= 0 ? 'follow' : ped.route.length && ped.routeIdx < ped.route.length ? 'walk' : 'idle';
+          ped.timer = 1;
+        }
+        break;
+      }
+      case 'chase': {
+        // a car owner running after the thief, shouting (started by carTheft.ts); then they may call 999
+        const TH = TUNING.theft;
+        ped.timer -= dt;
+        ped.shoutT -= dt;
+        const dx = pp.x - ped.pos.x, dz = pp.z - ped.pos.z, d = Math.hypot(dx, dz);
+        ped.heading = Math.atan2(dx, dz);
+        if (d > TUNING.reactions.confrontDistance) {
+          const sp = PT.fleeSpeed * TH.ownerRunFactor * (ped.archetype === 'elderly' ? 0.45 : 1);
+          ped.pos.x += (dx / d) * sp * dt;
+          ped.pos.z += (dz / d) * sp * dt;
+          moveSpeed = sp;
+        }
+        if (ped.shoutT <= 0) {
+          ped.shoutT = TH.shoutEvery;
+          say(w, ped, pick(LINES.carOwner), 2.2, `ped${ped.id}`);
+        }
+        if (ped.timer <= 0 || d > TH.ownerGiveUpDistance) {
+          if (!victimMaybeCalls(w, ped)) {
+            ped.state = 'yell';
+            ped.timer = TUNING.reactions.yellTime;
+            say(w, ped, pick(LINES.carOwnerGaveUp), 2.2, `ped${ped.id}`);
+          }
+        }
+        break;
+      }
       case 'yell': {
         ped.timer -= dt;
         ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
@@ -468,7 +504,7 @@ export function updatePeds(w: World, dt: number): void {
     if (ped.reserved && ped.state === 'idle') ped.armPose = 'wave';
 
     // keep out of buildings and the bay (simple clamp against building rects)
-    if (ped.state === 'flee' || ped.state === 'dodge' || ped.state === 'down' || ped.state === 'confront' || ped.state === 'stumble') pushOutOfBuildings(w, ped);
+    if (ped.state === 'flee' || ped.state === 'dodge' || ped.state === 'down' || ped.state === 'confront' || ped.state === 'stumble' || ped.state === 'chase') pushOutOfBuildings(w, ped);
 
     ped.walkPhase += moveSpeed * dt * 3.2 / Math.max(0.6, ped.scale);
     ped.moveAmount = ped.state === 'down' ? 0 : Math.min(1.4, moveSpeed / PT.walkSpeed);

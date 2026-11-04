@@ -25,7 +25,7 @@ export function updateDebug(w: World): void {
     `worst@   ${w.prof.worstBreakdown()}`,
     `seed     ${w.seed}`,
     `pos      ${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)}`,
-    `vehicle  ${v ? `${v.spec.label}  ${(v.speed * 3.6).toFixed(0)} km/h  hp ${v.health.toFixed(0)}  slip ${v.slip.toFixed(2)}` : 'on foot'}`,
+    `vehicle  ${v ? `${v.spec.label}  ${(v.speed * 3.6).toFixed(0)} km/h  hp ${v.health.toFixed(0)}  slip ${v.slip.toFixed(2)}  ${v.owned ? 'yours' : v.stolen ? 'STOLEN' : ''}` : 'on foot'}`,
     `job      ${w.jobs.debugText ? w.jobs.debugText() : '-'}`,
     `health   ${w.player.health.toFixed(0)}${w.player.dead ? ' (knocked out)' : ''}`,
     `heat     ${w.police.stars ?? 0}★ (${(w.police.heat ?? 0).toFixed(0)} pts) ${w.police.seen ? 'SEEN' : ''}`,

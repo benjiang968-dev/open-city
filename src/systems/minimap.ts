@@ -1,6 +1,8 @@
-// Minimap: pre-rendered city canvas, rotated around the player, with job markers, police and the player arrow.
+// Minimap: pre-rendered city canvas, rotated around the player, with job markers, police, your own cars,
+// car dealerships and the player arrow.
 import { TUNING } from '../tuning';
 import type { World } from '../world';
+import type { DealershipJob } from './economy/dealership';
 
 const H = TUNING.hud;
 let canvas: HTMLCanvasElement;
@@ -9,6 +11,8 @@ let base: HTMLCanvasElement;
 let scale = 1; // pixels per metre in the base image
 let ox = 0, oz = 0; // world origin of the base image
 let last = 0;
+/** What the last minimap draw showed (debug overlay / automated tests). */
+export const minimapStats = { ownedCars: 0, dealerships: 0 };
 
 export function createMinimap(w: World): void {
   canvas = document.createElement('canvas');
@@ -50,6 +54,24 @@ export function createMinimap(w: World): void {
   for (const r of c.marinaRects) g.fillRect(X(r.x0), Z(r.z0), (r.x1 - r.x0) * scale, (r.z1 - r.z0) * scale);
   g.fillStyle = '#f4c430';
   for (const r of c.taxiRanks) { g.beginPath(); g.arc(X(r.curbX), Z(r.curbZ), 3, 0, Math.PI * 2); g.fill(); }
+  // car dealerships: a blue badge with a dollar sign
+  const dealer = w.jobs.get<DealershipJob>('dealership');
+  for (const site of dealer?.sites ?? []) {
+    const x = X(site.x), z = Z(site.z);
+    g.fillStyle = '#1d4ed8';
+    g.strokeStyle = '#fff';
+    g.lineWidth = 1.5;
+    g.beginPath();
+    g.arc(x, z, 6, 0, Math.PI * 2);
+    g.fill();
+    g.stroke();
+    g.fillStyle = '#fff';
+    g.font = 'bold 9px system-ui, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('$', x, z + 0.5);
+    minimapStats.dealerships++;
+  }
 }
 
 export function showMinimap(): void {
@@ -98,6 +120,31 @@ export function updateMinimap(w: World): void {
     ctx.fill();
     ctx.stroke();
   }
+  // your own cars (parked): a green car shape, kept on the rim when far away so you can find it
+  let owned = 0;
+  for (const v of w.vehicles) {
+    if (!v.owned || v.driven) continue;
+    owned++;
+    const dx = (v.px - p.x) * k, dz = (v.pz - p.z) * k;
+    let sx = dx * Math.cos(yaw) - dz * Math.sin(yaw);
+    let sz = dx * Math.sin(yaw) + dz * Math.cos(yaw);
+    const d = Math.hypot(sx, sz);
+    if (d > r - 9) { sx *= (r - 9) / d; sz *= (r - 9) / d; }
+    ctx.save();
+    ctx.translate(r + sx, r + sz);
+    ctx.rotate(-(v.heading - yaw) + Math.PI);
+    ctx.fillStyle = '#06d6a0';
+    ctx.strokeStyle = '#04332a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(-3.5, -6, 7, 12, 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#04332a';
+    ctx.fillRect(-2.5, -3.5, 5, 2.2); // windscreen: shows which way it faces
+    ctx.restore();
+  }
+  minimapStats.ownedCars = owned;
   // player arrow (heading relative to camera)
   const heading = w.player.vehicle ? w.player.vehicle.heading : w.player.facing;
   ctx.save();

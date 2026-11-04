@@ -53,6 +53,7 @@ export async function handling(page, S) {
     const out = {};
     const keys = w.input.keys;
     const v = w.vehicles.find((c) => c.type === (window.__carType || 'sedan'));
+    v.owned = true; // (M3) only the rank sedan is yours at the start; this test is about handling, not theft
     const z = w.city.zs[w.city.zs.length - 1] + 3;
     const x0 = w.city.xs[0] + 15;
     const q = { x: 0, y: Math.sin(Math.PI / 4), z: 0, w: Math.cos(Math.PI / 4) };
@@ -205,6 +206,7 @@ export async function chat(page, S) {
     const w = window.__oc; const p = w.peds[12];
     p.state = 'idle'; p.timer = 30;
     const v = w.vehicles[1];
+    v.owned = true; // (M3) a car of your own, so this tests the grudge from the hit, not a theft
     w.player.body.setTranslation({ x: v.body.translation().x + 2, y: 1.2, z: v.body.translation().z }, true);
     window.__ocRun(0.2);
     if (!w.player.vehicle) { w.input.pressed.add('KeyE'); window.__ocRun(0.1); }
@@ -235,6 +237,7 @@ export async function police(page, S) {
   out.crime = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun;
     const v = w.vehicles.find((c) => c.type === 'pickup');
+    v.owned = true; // (M3) heat here should come from the hits only, not from taking the car
     const t = v.body.translation();
     w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.6, y: 1.2, z: t.z - Math.sin(v.heading) * 2.6 }, true);
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
@@ -274,6 +277,7 @@ export async function police(page, S) {
     const w = window.__oc, run = window.__ocRun;
     const c = w.city;
     const v2 = w.vehicles.find((x) => x.type === 'hatchback');
+    v2.owned = true; // (M3) switching to a car of your own (stealing one is the theft scenario)
     w.input.pressed.add('KeyE'); run(0.1); // get out
     const far = { x: c.xs[c.xs.length - 2] - 30, z: c.zs[0] + 3 };
     v2.body.setTranslation({ x: far.x, y: 1, z: far.z }, true); v2.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v2.prevVel.set(0, 0, 0);
@@ -546,6 +550,7 @@ export async function gate1(page, S) {
     const free = (x, z) => !w.physics.castRay(new R0.Ray({ x, y: 30, z }, { x: 0, y: -1, z: 0 }), 29.5, true, R0.QueryFilterFlags.ONLY_FIXED);
     const walls = w.city.buildingRects.filter((q) => q.h > 10 && q.x1 - q.x0 > 12).filter((q) => [4, 8, 12, 16].every((d) => free((q.x0 + q.x1) / 2 - 1, q.z1 + d) && free((q.x0 + q.x1) / 2 + 1, q.z1 + d)));
     const v = w.vehicles.find((c) => c.type === 'pickup'); const t = v.body.translation();
+    v.owned = true; // (M3) crash test, not a theft
     w.player.body.setTranslation({ x: t.x + Math.cos(v.heading) * 2.6, y: 1.2, z: t.z - Math.sin(v.heading) * 2.6 }, true);
     window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
     w.cash = 500;
@@ -1237,4 +1242,209 @@ export async function hurtfx(page, S) {
     return { at30s: half, at62s: gone, idleAfter: H.measure(300) };
   });
   return { idleBefore, car, activeCost, carMore, items, brick, dog, dogCall, dogAfter, dogMelee, kids, player, stains, after };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// M3: car ownership, theft and dealerships.
+
+/** Freeze the world (no menu), draw it from a fixed camera, screenshot, then carry on where it was. */
+async function frozenShot(page, path, cam) {
+  await page.evaluate((c) => { const w = window.__oc; w.cam.override = c; window.__ocFrames(3, true); window.__frozenAt = w.time; w.paused = true; }, cam);
+  await page.waitForTimeout(400);
+  await page.screenshot({ path });
+  await page.evaluate(() => { const w = window.__oc; w.paused = false; w.time = window.__frozenAt; w.cam.override = null; });
+}
+
+// Theft: (A) take an unlocked car on an empty street -> no stars. (B) break into a locked car in front of
+// people -> ~3 s window smash, alarm, people turn to look, 999 call, stars; the owner shouts and holds a grudge.
+export async function theft(page, S) {
+  await S.start(page);
+  await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked && typeof c.owner === 'number' && w.peds[c.owner].active)
+      ?? w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked);
+    // empty the street: everyone within 120 m (the owner too) is sent to a pavement far away
+    const far = w.city.sideNodes.filter((n) => Math.hypot(n.x - v.px, n.z - v.pz) > 200);
+    let moved = 0;
+    for (const p of w.peds) {
+      if (!p.active || Math.hypot(p.pos.x - v.px, p.pos.z - v.pz) > 120) continue;
+      const n = far[(p.id * 7) % far.length];
+      p.pos.set(n.x, 0.02, n.z); p.state = 'idle'; p.timer = 40; p.route = []; moved++;
+      if (p.dog) p.dog.pos.set(n.x + 1, 0.02, n.z);
+    }
+    const ch = Math.cos(v.heading), sh = Math.sin(v.heading);
+    w.player.body.setTranslation({ x: v.px - ch * 2.0, y: 1.2, z: v.pz + sh * 2.0 }, true);
+    w.player.facing = Math.atan2(ch, -sh); w.cam.yaw = w.player.facing + Math.PI;
+    run(0.4);
+    window.__A = { car: v.id, moved };
+  });
+  await frozenShot(page, 'screenshots/23-theft-unlocked.png', null); // the empty street and the steal prompt
+  const A = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__A.car], moved = window.__A.moved;
+    const prompt = w.player.prompt;
+    const calls0 = window.__ocWitness.callsStarted, thefts0 = window.__ocTheft.thefts;
+    w.input.pressed.add('KeyE'); run(0.1);
+    const inCar = w.player.vehicle === v;
+    run(8);
+    const owner = typeof v.owner === 'number' ? w.peds[v.owner] : null;
+    return {
+      car: `${v.type} #${v.id}`, owner: owner ? owner.npc.name : 'nobody', pedsMoved: moved, prompt: prompt.replace(/<[^>]+>/g, ''), inCar, stolen: v.stolen,
+      thefts: window.__ocTheft.thefts - thefts0, callsStarted: window.__ocWitness.callsStarted - calls0, stars: w.police.stars, heat: w.police.heat,
+      ownerMemory: owner ? owner.npc.memory.map((m) => `${m.kind}: ${m.note}`) : [], ownerRel: owner ? owner.npc.relationship : null,
+    };
+  });
+  await page.evaluate(() => { const w = window.__oc; const v = w.player.vehicle; if (v) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2); } });
+
+  // ---- B: a locked car, people on the pavement, the owner up the street ----
+  const B0 = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    // (an owner who is out and about: not the taxi fare waiting at the rank)
+    const free = (id) => w.peds[id].active && !w.peds[id].reserved && !w.peds[id].hidden;
+    let v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && c.locked && !c.stolen && typeof c.owner === 'number' && free(c.owner));
+    if (!v) { // fall back: lock a car and give it an active owner
+      v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.stolen);
+      v.locked = true;
+      v.owner = w.peds.find((p) => free(p.id) && p.archetype === 'adult').id;
+    }
+    const owner = w.peds[v.owner];
+    const ch = Math.cos(v.heading), sh = Math.sin(v.heading);
+    const kx = -ch, kz = sh; // towards the kerb (the car's right side)
+    const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+    // four people on the pavement nearby (elderly and posh/friendly adults are the likeliest to call)
+    const rank = (p) => (p.archetype === 'elderly' ? 0 : p.npc.personality === 'posh' || p.npc.personality === 'friendly' ? 1 : 2);
+    const wit = w.peds.filter((p) => p.active && p !== owner && p.followId < 0 && !p.reserved && ['elderly', 'adult', 'parent', 'delivery'].includes(p.archetype))
+      .sort((a, b) => rank(a) - rank(b)).slice(0, 4);
+    [-11, -6, 7, 12].forEach((off, i) => {
+      const p = wit[i];
+      p.pos.set(v.px + kx * 3.0 + fx * off, 0.02, v.pz + kz * 3.0 + fz * off);
+      p.state = 'idle'; p.timer = 40; p.route = [];
+    });
+    owner.pos.set(v.px + kx * 3.0 - fx * 23, 0.02, v.pz + kz * 3.0 - fz * 23);
+    owner.state = 'idle'; owner.timer = 40; owner.route = [];
+    w.player.body.setTranslation({ x: v.px + kx * 1.95, y: 1.2, z: v.pz + kz * 1.95 }, true);
+    w.player.facing = Math.atan2(-kx, -kz);
+    run(0.4);
+    window.__B = { car: v.id, owner: owner.id, wit: wit.map((p) => p.id), calls0: window.__ocWitness.callsStarted, done0: window.__ocWitness.callsCompleted, stars0: w.police.stars };
+    return { car: `${v.type} #${v.id}`, owner: `${owner.npc.name} (${owner.npc.personality})`, witnesses: wit.map((p) => `${p.archetype}/${p.npc.personality}`), prompt: w.player.prompt.replace(/<[^>]+>/g, ''), starsBefore: w.police.stars };
+  });
+  // press E and watch the smash play out
+  const B1 = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
+    w.input.pressed.add('KeyE');
+    const t0 = w.time;
+    const log = [];
+    for (let k = 0; k < 8; k++) {
+      run(0.2); // ends at 1.6 s, just after the second strike (arm in the glass)
+      const b = w.player.breakIn;
+      log.push(`${(w.time - t0).toFixed(2)}s strikes ${b ? b.strikes : '-'} arm ${w.player.rig.armR.rotation.x.toFixed(2)} crack ${v.dmg.sideCrack.visible ? v.dmg.sideCrack.scale.x.toFixed(2) : 0} alarm ${v.alarmUntil > w.time ? 'ON' : 'off'} looking ${window.__B.wit.filter((id) => w.peds[id].state === 'look').length}/4`);
+    }
+    window.__B.t0 = t0;
+    return { log, breakingIn: !!w.player.breakIn, inCar: !!w.player.vehicle };
+  });
+  // mid-smash picture: camera on the pavement behind the player, looking at the cracked window
+  const cam1 = await page.evaluate(() => {
+    const w = window.__oc; const v = w.vehicles[window.__B.car];
+    const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh, fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+    return { px: v.px + kx * 3.4 - fx * 3.6, py: 2.0, pz: v.pz + kz * 3.4 - fz * 3.6, lx: v.px + kx * 0.9 + fx * 0.4, ly: 1.05, lz: v.pz + kz * 0.9 + fz * 0.4 };
+  });
+  await frozenShot(page, 'screenshots/23-theft-smash.png', cam1);
+  const B2 = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
+    let k = 0;
+    while (!w.player.vehicle && k++ < 60) run(0.05);
+    const smashSeconds = +(w.time - window.__B.t0).toFixed(2);
+    const owner = w.peds[window.__B.owner];
+    run(0.6);
+    return {
+      smashSeconds, inCar: w.player.vehicle === v, alarm: v.alarmUntil > w.time, alarmLevel: +(w.audio.alarmLevel ?? 0).toFixed(2), crack: v.dmg.sideCrack.visible,
+      ownerState: owner.state, shout: window.__ocTheft.lastShout, ownerChases: window.__ocTheft.ownerChases,
+      witnessStates: window.__B.wit.map((id) => w.peds[id].state), callsStarted: window.__ocWitness.callsStarted - window.__B.calls0,
+    };
+  });
+  const cam2 = await page.evaluate(() => {
+    const w = window.__oc; const v = w.vehicles[window.__B.car];
+    const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh, fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+    // down the pavement: the owner running up in front, the callers, then the car
+    return { px: v.px + kx * 5.5 - fx * 27, py: 3.4, pz: v.pz + kz * 5.5 - fz * 27, lx: v.px + kx * 1.5 + fx * 2, ly: 1.0, lz: v.pz + kz * 1.5 + fz * 2 };
+  });
+  await frozenShot(page, 'screenshots/23-theft-alarm.png', cam2);
+  const B3 = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
+    const owner = w.peds[window.__B.owner];
+    const ownerStates = [owner.state];
+    // sit in the car: the owner stands at the door shouting until they give up, then (maybe) phones 999
+    for (let k = 0; k < 40 && (w.police.stars === 0 || owner.state === 'chase' || owner.state === 'phone'); k++) { run(0.5); if (ownerStates[ownerStates.length - 1] !== owner.state) ownerStates.push(owner.state); }
+    // the owner won't chat now
+    const world = { hour: 12, clock: '12:00', isNight: false, weather: 'clear', playerInCar: false, playerCarLabel: null, wantedStars: 0, cash: 100, npcWorkplace: 'work', npcHome: 'home', nearestPlace: 'the pier', taxiRanks: [{ poiId: 0, name: 'Rank', street: 'Main St', hasFare: false }], gossip: [], places: [] };
+    const hello = w.dialogue.replySync({ npc: owner.npc, playerText: 'hello! how are you?', world });
+    return {
+      stars: w.police.stars, heat: w.police.heat, callsStarted: window.__ocWitness.callsStarted - window.__B.calls0, callsCompleted: window.__ocWitness.callsCompleted - window.__B.done0,
+      ownerStates, ownerRel: owner.npc.relationship, ownerMemory: owner.npc.memory.map((m) => `${m.kind}: ${m.note}`),
+      ownerSays: hello.text, ownerAction: hello.action?.type ?? null, alarmStillOn: v.alarmUntil > w.time,
+    };
+  });
+  return { A, B0, B1, B2, B3 };
+}
+
+// Dealership: walk up to a display car (price + stats in the prompt), can't buy it broke, buy it with cash,
+// it's yours (no crime, no alarm), money deducted, and it shows on the minimap.
+export async function dealership(page, S) {
+  await S.start(page);
+  const setup = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    const job = w.jobs.get('dealership');
+    const site = job.sites[0];
+    const slot = site.slots.find((s) => s.car && s.type === 'hatchback') ?? site.slots.find((s) => s.car);
+    const v = slot.car;
+    const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh;
+    w.player.body.setTranslation({ x: v.px + kx * 2.0, y: 1.2, z: v.pz + kz * 2.0 }, true);
+    w.player.facing = Math.atan2(-kx, -kz);
+    w.cash = 300;
+    run(0.4);
+    const brokePrompt = w.player.prompt.replace(/<[^>]+>/g, ' ');
+    w.input.pressed.add('KeyE'); run(0.2);
+    const afterBroke = { cash: w.cash, forSale: !!v.forSale, owned: v.owned, inCar: !!w.player.vehicle };
+    w.cash = 5000; w.hud.shownCash = 5000;
+    run(0.2);
+    window.__D = { car: v.id, cash0: w.cash, thefts0: window.__ocTheft.thefts, calls0: window.__ocWitness.callsStarted };
+    w.hud.toastUntil = w.time; // clear the 'not enough cash' toast for the picture
+    // from across the road: the showroom cars, the sign and you with the price prompt
+    const sx = site.x + kx * 1.2, sz = site.z + kz * 1.2;
+    window.__Dcam = { px: sx - kx * 17 - Math.sin(v.heading) * 3, py: 4.6, pz: sz - kz * 17 - Math.cos(v.heading) * 3, lx: sx - kx * 2, ly: 1.4, lz: sz - kz * 2 };
+    return {
+      sites: job.sites.map((s) => ({ name: s.name, poiKind: w.city.pois[s.poiId].kind, cars: s.slots.filter((q) => q.car).map((q) => `${q.type} $${q.car.forSale.price}`) })),
+      car: `${v.type} #${v.id}`, price: v.forSale.price, brokePrompt, afterBroke, prompt: w.player.prompt.replace(/<[^>]+>/g, ' '),
+    };
+  });
+  await frozenShot(page, 'screenshots/23-dealership.png', await page.evaluate(() => window.__Dcam));
+  const buy = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__D.car];
+    w.input.pressed.add('KeyE'); run(0.2);
+    const bought = { cash: w.cash, paid: window.__D.cash0 - w.cash, owned: v.owned, forSale: !!v.forSale, locked: v.locked, prompt: w.player.prompt.replace(/<[^>]+>/g, ' ') };
+    window.__ocFrames(3, true);
+    const minimapOwnedParked = window.__ocMinimap.ownedCars;
+    // get in and drive off: no theft, no alarm, no stars
+    w.input.pressed.add('KeyE'); run(0.2);
+    const inCar = w.player.vehicle === v;
+    const x0 = v.px, z0 = v.pz;
+    w.input.keys.add('KeyW'); run(1.5); const kmh = Math.round(Math.abs(v.speed) * 3.6); w.input.keys.delete('KeyW'); run(4);
+    return {
+      bought, minimapOwnedParked, minimapDealerships: window.__ocMinimap.dealerships, inCar, kmhAfter1_5s: kmh, drove: Math.round(Math.hypot(v.px - x0, v.pz - z0)),
+      thefts: window.__ocTheft.thefts - window.__D.thefts0, alarm: v.alarmUntil > w.time, callsStarted: window.__ocWitness.callsStarted - window.__D.calls0, stars: w.police.stars,
+      ownedCars: w.vehicles.filter((c) => c.owned).map((c) => `${c.type} #${c.id}`),
+    };
+  });
+  // park, get out, walk off a little and look back: the bought car has its own marker on the minimap
+  await page.evaluate(() => {
+    const w = window.__oc; const v = w.player.vehicle;
+    if (v) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); window.__ocRun(0.5); w.input.pressed.add('KeyE'); window.__ocRun(0.3); }
+    const car = w.vehicles[window.__D.car], fx = Math.sin(car.heading), fz = Math.cos(car.heading), kx = -Math.cos(car.heading), kz = Math.sin(car.heading);
+    w.player.body.setTranslation({ x: car.px + kx * 2.2 - fx * 30, y: 1.2, z: car.pz + kz * 2.2 - fz * 30 }, true);
+    w.player.facing = car.heading; w.cam.yaw = car.heading + Math.PI;
+    window.__ocRun(0.5); window.__ocFrames(3, true);
+  });
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: 'screenshots/23-dealership-bought.png' });
+  buy.minimapAfterParking = await page.evaluate(() => window.__ocMinimap.ownedCars);
+  return { setup, buy };
 }

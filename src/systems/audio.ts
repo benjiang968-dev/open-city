@@ -1,7 +1,8 @@
 // All sound is synthesised with WebAudio: engine, tyre screech, horns, thuds, siren, cash chime, a hurt dog's
-// yelp. No files.
+// yelp, breaking glass and car alarms. No files.
 import { TUNING } from '../tuning';
 import type { World } from '../world';
+import { alarmLevel } from './carTheft';
 
 const A = TUNING.audio;
 
@@ -15,6 +16,9 @@ export interface AudioState {
   screechGain: GainNode | null;
   sirenOsc: OscillatorNode | null;
   sirenGain: GainNode | null;
+  alarmGain: GainNode | null;
+  /** Current car-alarm loudness 0..1 at the listener (tests read it). */
+  alarmLevel: number;
   noise: AudioBuffer | null;
   listenerX: number;
   listenerZ: number;
@@ -26,12 +30,13 @@ export interface AudioState {
   whoosh?: () => void;
   yelp?: (x: number, z: number) => void;
   setRain?: (amount: number) => void;
+  smash?: (x: number, z: number) => void;
 }
 
 export function createAudio(): AudioState {
   return {
     ctx: null, master: null, muted: false, engineOsc: [], engineGain: null, engineFilter: null, screechGain: null,
-    sirenOsc: null, sirenGain: null, noise: null, listenerX: 0, listenerZ: 0,
+    sirenOsc: null, sirenGain: null, alarmGain: null, alarmLevel: 0, noise: null, listenerX: 0, listenerZ: 0,
   };
 }
 
@@ -119,6 +124,29 @@ export function startAudio(s: AudioState): void {
   lfo.start();
   s.sirenOsc = so;
   s.sirenGain = sgain;
+
+  // car alarm: a square wave hopping between two pitches; one voice, as loud as the nearest alarm
+  const ao = ctx.createOscillator();
+  ao.type = 'square';
+  ao.frequency.value = (A.alarmLowHz + A.alarmHighHz) / 2;
+  const hop = ctx.createOscillator();
+  hop.type = 'square';
+  hop.frequency.value = A.alarmHopHz;
+  const hopGain = ctx.createGain();
+  hopGain.gain.value = (A.alarmHighHz - A.alarmLowHz) / 2;
+  hop.connect(hopGain);
+  hopGain.connect(ao.frequency);
+  const af = ctx.createBiquadFilter();
+  af.type = 'lowpass';
+  af.frequency.value = 2600;
+  const ag = ctx.createGain();
+  ag.gain.value = 0;
+  ao.connect(af);
+  af.connect(ag);
+  ag.connect(master);
+  ao.start();
+  hop.start();
+  s.alarmGain = ag;
 
   const distGain = (x: number, z: number) => Math.max(0, 1 - Math.hypot(x - s.listenerX, z - s.listenerZ) / 90);
   s.horn = (x, z) => {
@@ -253,6 +281,39 @@ export function startAudio(s: AudioState): void {
       o.stop(t0 + 0.17);
     }
   };
+  s.smash = (x, z) => {
+    // breaking glass: a bright noise burst plus a scatter of short high tinkles
+    const g0 = distGain(x, z) * A.smashVolume;
+    if (g0 <= 0.01) return;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const f = ctx.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = 2800;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(g0, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    src.connect(f);
+    f.connect(g);
+    g.connect(master);
+    src.start(t);
+    src.stop(t + 0.32);
+    for (let k = 0; k < 7; k++) {
+      const at = t + 0.03 + Math.random() * 0.45;
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = 2400 + Math.random() * 3200;
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0, at);
+      og.gain.linearRampToValueAtTime(g0 * 0.25, at + 0.004);
+      og.gain.exponentialRampToValueAtTime(0.001, at + 0.09);
+      o.connect(og);
+      og.connect(master);
+      o.start(at);
+      o.stop(at + 0.1);
+    }
+  };
   s.chime = () => {
     const t = ctx.currentTime;
     [988, 1319, 1568].forEach((hz, k) => {
@@ -312,6 +373,9 @@ export function updateAudio(w: World, _dt: number): void {
   }
   const sv = nearest < 200 ? (1 - nearest / 200) * 0.09 : 0;
   s.sirenGain!.gain.setTargetAtTime(sv, t, 0.2);
+  // car alarm (stolen or knocked cars)
+  s.alarmLevel = alarmLevel(w);
+  s.alarmGain!.gain.setTargetAtTime(s.alarmLevel * A.alarmVolume, t, 0.04);
   // crash thuds for the player's car
   for (const e of w.events) if (e.type === 'crash') s.thud?.(e.x, e.z, e.damage + 6);
 }
