@@ -13,7 +13,7 @@ import { makeAiCarGeometry, carMaterial } from '../art/car';
 import { GROUPS } from '../physicsGroups';
 import {
   TURN_SEGS, laneStart, stopLine, isUTurn, isTrafficLane, turnCurve, findMove, junctionHold, exitHasSpace, ringBlocked, updateJunctions, boxBlocked,
-  HOLD_GO, HOLD_BOX, CTL_NONE, CTL_SIGNALS, CTL_RING, LIGHT_RED,
+  holdAhead, ringDist, movesConflict, HOLD_GO, HOLD_BOX, CTL_NONE, CTL_SIGNALS, CTL_RING, LIGHT_RED,
 } from './junctions';
 import { auditTraffic, type TrafficStats, createTrafficStats } from './trafficAudit';
 import { visible } from './trafficPopulation';
@@ -415,10 +415,13 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
   const traffic = w.traffic;
   for (let i = 0; i < traffic.length; i++) {
     const o = traffic[i];
-    // a car waiting at its line stands clear of the box; when stuck in the box, only a car on our own way out still holds us
-    if (o === car || (turning && (o.phase === 'wait' || (nudge && o.next !== car.next && o.edge !== car.next)))) continue;
+    // a car waiting at its line stands clear of the box (unless it waits on our way out: a queue we drive up to); when
+    // stuck in the box, only a car on our own way out still holds us
+    if (o === car || (turning && ((o.phase === 'wait' && o.edge !== car.next) || (nudge && o.next !== car.next && o.edge !== car.next)))) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW || Math.abs(o.py - py) > lg + along * gr) continue;
+    // straight ahead: within the band of our width; turning: near the rest of our curve (in a tight turn the car ahead
+    // on the same curve is off to the side of the straight-ahead band)
+    if (along <= 0 || along > look + o.halfL || (!turning && Math.abs(rx * fz - rz * fx) > side + o.halfW) || Math.abs(o.py - py) > lg + along * gr) continue;
     if (turning) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
     const d = along - o.halfL - half;
     if (d < best) { best = d; isPlayer = false; }
@@ -428,7 +431,7 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     const o = police[i];
     if (o === car || (nudge && o.next !== car.next && o.edge !== car.next)) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW || Math.abs(o.py - py) > lg + along * gr) continue;
+    if (along <= 0 || along > look + o.halfL || (!turning && Math.abs(rx * fz - rz * fx) > side + o.halfW) || Math.abs(o.py - py) > lg + along * gr) continue;
     if (turning) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
     const d = along - o.halfL - half;
     if (d < best) { best = d; isPlayer = false; }
@@ -438,7 +441,7 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     const v = vehicles[i];
     const hl = v.spec.halfExtents[2];
     const rx = v.px - px, rz = v.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + hl || Math.abs(rx * fz - rz * fx) > side + v.spec.halfExtents[0] || Math.abs(v.py - py) > lg + along * gr) continue;
+    if (along <= 0 || along > look + hl || (!turning && Math.abs(rx * fz - rz * fx) > side + v.spec.halfExtents[0]) || Math.abs(v.py - py) > lg + along * gr) continue;
     if (turning) { PL[0] = v.px; PL[1] = v.pz; turnPathDist(w, car); if (PL[2] > side + v.spec.halfExtents[0]) continue; }
     const d = along - hl - half;
     if (d < best) { best = d; isPlayer = v.driven; }
@@ -745,14 +748,59 @@ function laneChangeStep(w: World, car: AiCar, dt: number, rng: () => number): vo
   }
 }
 
-/** A circulating car about to leave the ring into a queued exit goes round again instead (never stops on the ring). */
+/**
+ * A circulating car about to leave the ring goes round again instead (it never stops on the ring) when its exit is
+ * queued, when the exit lane is too short to stop on before a light that is not green, or, leaving from an inner lane,
+ * when a car in an outer lane is level with it or just behind (its exit would cut across that car).
+ */
 function ringExitCheck(w: World, car: AiCar): void {
   const J = w.junctions, edges = w.city.roads.edges;
-  if (car.move < 0 || edges[car.next].roundabout || exitHasSpace(w, car)) return;
+  if (car.move < 0 || edges[car.next].roundabout) return;
+  const rem = stopLine(edges[car.edge]) - car.s;
+  if (rem < TT.ringExitFreeze) return; // decided: entering cars rely on it now (junctions.ts ringScan)
+  const around = !exitHasSpace(w, car) || (J.shortLane[car.next] === 1 && holdAhead(w, J, car) !== HOLD_GO)
+    || outerLaneAlongside(w, car, rem, w.traffic) || outerLaneAlongside(w, car, rem, w.police.cars);
+  if (!around) return;
   const m0 = J.edgeM0[car.edge], n = J.edgeMN[car.edge];
   for (let m = m0; m < m0 + n; m++) {
     if (J.mvOk[m] && edges[J.mvOut[m]].roundabout) { car.next = J.mvOut[m]; car.move = m; w.trafficSim.stats.ringGoRound++; return; }
   }
+}
+
+/**
+ * Speed limit for a car crossing a junction into a lane too short to stop on that ends at a roundabout entry (K St at
+ * Washington Circle): low enough to pull up at the entry if circulating traffic makes it give way there (it decides
+ * once it is on that lane), and down to a stop at the entry while the ring is busy now.
+ */
+function ringCreep(w: World, car: AiCar): number {
+  const J = w.junctions, n = w.city.roads.edges[car.next], c = J.nodes[n.to];
+  if (c.kind !== CTL_RING) return Infinity;
+  const room = car.turnLen - car.s + stopLine(n) - laneStart(n) - car.halfL - TT.stopBehindLine;
+  let mv = -1; // the entry move it will make (the first lane-discipline move onto the ring)
+  for (let m = J.edgeM0[n.id]; m < J.edgeM0[n.id] + J.edgeMN[n.id] && mv < 0; m++) if (J.mvOk[m]) mv = m;
+  const vEnd = ringBlocked(w, J, c, car, mv, TT.ringYieldDist, TT.ringYieldTime, TT.ringYieldNear) ? 0 : TT.ringEntryCreep;
+  return Math.sqrt(vEnd * vEnd + 2 * TT.approachDecel * Math.max(0, room));
+}
+
+/**
+ * Is a car in a lane outside this one (nearer the ring's outer kerb) heading for the same ring node level with `car`
+ * (`rem` metres from it) or up to traffic.ringExitGap behind, on a move its exit crosses?
+ */
+function outerLaneAlongside(w: World, car: AiCar, rem: number, list: AiCar[]): boolean {
+  const J = w.junctions, edges = w.city.roads.edges;
+  const node = edges[car.edge].to, c = J.nodes[node], myRank = J.edgeRank[car.edge];
+  if (myRank <= 0 || rem >= TT.ringExitDecide) return false;
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i];
+    if (o === car || o.respawnWanted) continue;
+    const oe = edges[o.edge];
+    if (!oe.roundabout || J.edgeRank[o.edge] >= myRank) continue;
+    const d = ringDist(w, o, node);
+    if (d < rem - 2 * car.halfL || d > rem + TT.ringExitGap) continue;
+    if (oe.to === node && o.move >= 0 && J.mvNode[o.move] === node && !movesConflict(J, c, car.move, o.move)) continue;
+    return true;
+  }
+  return false;
 }
 
 // ---------- the per-step update ----------
@@ -808,12 +856,15 @@ export function updateTraffic(w: World, dt: number): void {
     } else if (car.phase === 'turn') {
       if (car.move >= 0) want = Math.min(want, J.mvSpeed[car.move]);
       else want = Math.min(want, 6.5);
+      if (car.next >= 0 && J.shortLane[car.next]) want = Math.min(want, ringCreep(w, car));
     } else {
       // approaching the junction ahead: may we enter? brake for the stop line if not, else for the curve
       const c = J.nodes[e.to];
       if (e.roundabout && car.next >= 0 && stopLine(e) - car.s < 20) ringExitCheck(w, car);
       const rem = stopLine(e) - car.s;
       let vEnd = car.move >= 0 ? J.mvSpeed[car.move] : car.target >= 0 ? e.speed : TT.turnSpeedMin;
+      // a roundabout entry: reach the line slowly enough to stop there if a circulating car turns up late
+      if (c.kind === CTL_RING && !e.roundabout) vEnd = Math.min(vEnd, TT.ringEntryCreep);
       let remStop = rem;
       if (c.kind !== 0 && car.next >= 0 && !car.cleared) {
         if (rem < (car.speed * car.speed) / (2 * TT.approachDecel) + TT.decideDist) {

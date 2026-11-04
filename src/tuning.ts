@@ -324,6 +324,10 @@ const RAW = {
     ringYieldNear: 10, // metres: a circulating car this close to the entry always makes entering cars wait
     ringConflictDist: 16, // metres (audit): an entry with a circulating car this close ...
     ringConflictTime: 2, // ... and under this many seconds away counts as a failure to yield
+    ringEntryCreep: 3.5, // m/s: top speed at a roundabout entry line (and reaching it through a lane too short to stop on, K St at the circle): a car can still stop there
+    ringExitFreeze: 4, // metres before a ring node: a circulating car's choice to leave or go round again is final from here (entering cars rely on it)
+    ringExitDecide: 9, // metres before a ring node: a car leaving the ring from an inner lane checks the lanes outside it from here ...
+    ringExitGap: 10, // ... and goes round again if a car in an outer lane is level with it or up to this many metres behind
     // lane changes (multi-lane roads: Key Bridge, Pennsylvania Ave, K St, the freeway, the circle)
     laneChangeRate: 1.5, // m/s sideways while changing lanes
     laneChangeMinRoom: 16, // metres before the stop line: a lane change not started by here is given up (turn from the lane you are in)

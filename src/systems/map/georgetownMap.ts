@@ -139,7 +139,10 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
       // only along a kerb with a pavement (people get in and out there; Canal Rd and the like have none)
       if (fwdL.length >= 2 && P.sidewalkR) parkR = true; // the kerbside lane is the parking lane
       if (bwdL.length >= 2 && P.sidewalkL) parkL = true;
-      if (fwdL.length === 1 && bwdL.length === 1 && hw >= M.parkingMinHalfWidth && (P.sidewalkL || P.sidewalkR)) {
+      // (not on a link onto a roundabout, like K St's at Washington Circle: moved over for parking, its two lanes ran
+      // 2.3 m apart and cars leaving the ring brushed cars waiting to join it)
+      const ringLink = J[P.nodeA].roundabout || J[P.nodeB].roundabout;
+      if (fwdL.length === 1 && bwdL.length === 1 && hw >= M.parkingMinHalfWidth && (P.sidewalkL || P.sidewalkR) && !ringLink) {
         // narrow two-way street: park on one kerb (the same kerb along the whole street) and move both lanes over
         const pick = hashStr(P.roadId) & 1 ? 1 : -1;
         const side = (pick === 1 ? P.sidewalkR : P.sidewalkL) ? pick : -pick;

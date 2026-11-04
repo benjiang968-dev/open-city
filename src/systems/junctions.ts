@@ -160,6 +160,13 @@ export interface JunctionState {
   playerCheck: number;
   /** Per node: a dead end at the edge of the map (a road leaving it): traffic drives off there instead of turning round. */
   mapEdge: Uint8Array;
+  /**
+   * Per lane edge: too short to stop on before the signal or roundabout at its end (a car coming off the junction
+   * before it at the move's speed could not pull up behind the stop line: the K St links between Washington Circle and
+   * the crossings beside it are 2-3 m). A car enters one before a signal only on green there, and crosses into one
+   * before a roundabout slowly enough to stop at the entry.
+   */
+  shortLane: Uint8Array;
 }
 
 // ------------------------------------------------------------------------------------------- build
@@ -237,6 +244,9 @@ export function createJunctions(map: CityMap): JunctionState {
   const mvIn: number[] = [], mvOut: number[] = [], mvType: number[] = [], mvOk: number[] = [], mvSpeed: number[] = [], mvNode: number[] = [];
   const edgeM0 = new Int32Array(E), edgeMN = new Uint8Array(E), edgeStopBack = new Float32Array(E);
   const ctls: NodeCtl[] = [];
+  const shortLane = new Uint8Array(E);
+  let halfLMax = 0;
+  for (const t of Object.values(TUNING.vehicles.types)) halfLMax = Math.max(halfLMax, t.halfExtents[2]);
   const P = new Float32Array(2 * (TURN_SEGS + 1)), C = new Float32Array(TURN_SEGS + 1);
   const rankOf = (e: LaneEdge) => TT.classRank[e.cls];
   for (const node of nodes) {
@@ -382,11 +392,22 @@ export function createJunctions(map: CityMap): JunctionState {
     edgeM0, edgeMN, edgeAp, edgeRank, edgeLanes, edgeGroup, edgeStopBack,
     light: new Uint8Array(E).fill(LIGHT_NONE), lightsChanged: true, playerEdge: -1, playerS: 0, playerCheck: 0,
     signalNodes: ctls.filter((c) => c.kind === CTL_SIGNALS).map((c) => c.id),
+    shortLane,
     mapEdge: Uint8Array.from(nodes, (n) => {
       const b = map.bounds, m = TT.mapEdgeRange;
       return n.deadEnd && (n.x < b.minX + m || n.x > b.maxX - m || n.z < b.minZ + m || n.z > b.maxZ - m) ? 1 : 0;
     }),
   };
+  // lanes too short to stop on: braking at traffic.brake from the fastest move into them, the car's front would pass
+  // the stop line (where it stands back from it) before it halts
+  for (let m = 0; m < J.mvIn.length; m++) {
+    const n = edges[J.mvOut[m]];
+    const k = ctls[n.to].kind;
+    if (n.roundabout || !isTrafficLane(n) || (k !== CTL_SIGNALS && k !== CTL_RING)) continue;
+    const v = J.mvSpeed[m];
+    const need = (v * v) / (2 * TT.brake) + halfLMax + TT.stopBehindLine + edgeStopBack[n.id];
+    if (stopLine(n) - laneStart(n) < need) shortLane[n.id] = 1;
+  }
   // signals start green for their biggest road; fixed-time crossings are staggered (from the id, never the seed)
   for (const id of J.signalNodes) {
     const c = ctls[id];
@@ -598,6 +619,8 @@ export function boxBlocked(w: World, car: AiCar): boolean {
   const J = w.junctions;
   const c = J.nodes[w.city.roads.edges[car.edge].to];
   if (c.kind === CTL_SIGNALS && J.light[car.edge] === LIGHT_RED && (!car.commit || car.speed < TT.redCommitSpeed)) { car.commit = false; return true; }
+  // a roundabout entry: given the go while it stood back from the line, it looks at the ring again before it joins
+  if (c.kind === CTL_RING && !w.city.roads.edges[car.edge].roundabout && ringBlocked(w, J, c, car, car.move, TT.ringYieldDist, TT.ringYieldTime, TT.ringYieldNear)) return true;
   const traffic = w.traffic;
   for (let i = 0; i < traffic.length; i++) { const o = traffic[i]; if (o !== car && inBox(w, J, c, o, car.move)) return true; }
   const pol = w.police.cars;
@@ -674,6 +697,19 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
   if (k === CTL_RING && ringBlocked(w, J, c, car, mv, TT.ringYieldDist, TT.ringYieldTime, TT.ringYieldNear)) return HOLD_RING;
   // ---- never block the box ----
   if (!exitHasSpace(w, car)) return HOLD_EXIT;
+  // ---- the lane past this junction is too short to stop on: go only if the junction at its end lets us through ----
+  if (car.next >= 0 && J.shortLane[car.next]) return holdAhead(w, J, car);
+  return HOLD_GO;
+}
+
+/**
+ * May `car` (about to enter the short lane `car.next`) carry straight on through the signal at that lane's end? Only on
+ * green (it could not stop on the lane for a red). A roundabout at its end is handled while crossing: the car comes
+ * through this junction slowly enough to stop at the entry (traffic.ts, ringCreep).
+ */
+export function holdAhead(w: World, J: JunctionState, car: AiCar): number {
+  const n = w.city.roads.edges[car.next];
+  if (J.nodes[n.to].kind === CTL_SIGNALS && J.light[n.id] !== LIGHT_GREEN) return HOLD_RED;
   return HOLD_GO;
 }
 
@@ -715,9 +751,10 @@ function ringScan(w: World, J: JunctionState, c: NodeCtl, car: AiCar, mv: number
     if (o === car || o.respawnWanted) continue;
     const d = ringDist(w, o, c.id);
     if (d > dist) continue;
-    // leaving here (or crossing here) on a move clear of ours
+    // leaving here (or crossing here) on a move clear of ours, and past changing its mind (a circulating car may still
+    // decide to go round again until traffic.ringExitFreeze metres from the node: traffic.ts ringExitCheck)
     const oe = edges[o.edge];
-    if (oe.to === c.id && o.move >= 0 && J.mvNode[o.move] === c.id && !movesConflict(J, c, mv, o.move)) continue;
+    if (oe.to === c.id && o.move >= 0 && J.mvNode[o.move] === c.id && !movesConflict(J, c, mv, o.move) && (o.phase === 'turn' || stopLine(oe) - o.s < TT.ringExitFreeze)) continue;
     if (d < near || d / Math.max(o.speed, 0.5) < time) return true;
   }
   return false;
