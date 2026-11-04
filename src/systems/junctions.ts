@@ -167,6 +167,12 @@ export interface JunctionState {
    * before a roundabout slowly enough to stop at the entry.
    */
   shortLane: Uint8Array;
+  /**
+   * Per lane edge: it leads into a dead end inside the map (a cul-de-sac, not a road leaving it). Traffic does not
+   * turn into one while another move is open: cars queued there to turn round blocked the one that had turned
+   * (narrow two-way street) and none got out.
+   */
+  culDeSac: Uint8Array;
 }
 
 // ------------------------------------------------------------------------------------------- build
@@ -393,11 +399,13 @@ export function createJunctions(map: CityMap): JunctionState {
     light: new Uint8Array(E).fill(LIGHT_NONE), lightsChanged: true, playerEdge: -1, playerS: 0, playerCheck: 0,
     signalNodes: ctls.filter((c) => c.kind === CTL_SIGNALS).map((c) => c.id),
     shortLane,
+    culDeSac: new Uint8Array(E),
     mapEdge: Uint8Array.from(nodes, (n) => {
       const b = map.bounds, m = TT.mapEdgeRange;
       return n.deadEnd && (n.x < b.minX + m || n.x > b.maxX - m || n.z < b.minZ + m || n.z > b.maxZ - m) ? 1 : 0;
     }),
   };
+  for (const e of edges) if (nodes[e.to].deadEnd && !J.mapEdge[e.to]) J.culDeSac[e.id] = 1;
   // lanes too short to stop on: braking at traffic.brake from the fastest move into them, the car's front would pass
   // the stop line (where it stands back from it) before it halts
   for (let m = 0; m < J.mvIn.length; m++) {

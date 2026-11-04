@@ -274,6 +274,8 @@ const RAW = {
     swerveDistance: 16, // player car approaching faster than swerveSpeed within this triggers a swerve
     swerveSpeed: 14, // m/s
     swerveOffset: 2.4, // metres sideways when swerving
+    turnTouchGap: 1.5, // metres: a car crossing a junction stops for anything straight ahead this close, even off its curve (two cars leaving one lane on different turns)
+    passGap: 0.05, // metres: an oncoming car whose side clears ours by this much is passing, not in our way (narrow two-way streets)
     sideGap: 0.15, // metres: another car counts as in our path if the gap between the two bodies' sides is less than this
     bodyRound: 0.3, // metres: AI car bodies (pitch locked) have edges this round, so they ride over kerbs and grade changes
     levelGap: 3, // metres: something this far above or below a car (plus levelGrade per metre ahead) is on another level, not in its way

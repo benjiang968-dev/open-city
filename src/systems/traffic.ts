@@ -178,17 +178,20 @@ function planMove(w: World, car: AiCar, rng: () => number): void {
   // count allowed moves over the lane group (traffic lanes)
   let lo = e;
   while (lo.right >= 0) lo = edges[lo.right];
-  let total = 0;
+  // (not into a cul-de-sac while another move is open)
+  let total = 0, open = 0;
   for (let l: LaneEdge | null = lo; l; l = l.left >= 0 ? edges[l.left] : null) {
     const m0 = J.edgeM0[l.id], n = J.edgeMN[l.id];
-    for (let k = m0; k < m0 + n; k++) if (J.mvOk[k]) total++;
+    for (let k = m0; k < m0 + n; k++) if (J.mvOk[k]) { total++; if (!J.culDeSac[J.mvOut[k]]) open++; }
   }
+  const skipCul = open > 0;
+  if (skipCul) total = open;
   let chosen = -1;
   if (total > 0) {
     let k = Math.floor(rng() * total);
     for (let l: LaneEdge | null = lo; l && chosen < 0; l = l.left >= 0 ? edges[l.left] : null) {
       const m0 = J.edgeM0[l.id], n = J.edgeMN[l.id];
-      for (let m = m0; m < m0 + n; m++) if (J.mvOk[m] && k-- === 0) { chosen = m; break; }
+      for (let m = m0; m < m0 + n; m++) if (J.mvOk[m] && !(skipCul && J.culDeSac[J.mvOut[m]]) && k-- === 0) { chosen = m; break; }
     }
   }
   if (chosen >= 0 && J.mvIn[chosen] !== car.edge) {
@@ -196,7 +199,7 @@ function planMove(w: World, car: AiCar, rng: () => number): void {
     const g = J.edgeGroup[J.mvOut[chosen]];
     const m0 = J.edgeM0[car.edge], n = J.edgeMN[car.edge];
     let own = -1;
-    for (let m = m0; m < m0 + n; m++) if (J.mvOk[m] && J.edgeGroup[J.mvOut[m]] === g) { own = m; break; }
+    for (let m = m0; m < m0 + n; m++) if (J.mvOk[m] && J.edgeGroup[J.mvOut[m]] === g && !(skipCul && J.culDeSac[J.mvOut[m]])) { own = m; break; }
     if (own >= 0) chosen = own;
     else if (!e.roundabout && stopLine(e) - Math.max(car.s, laneStart(e)) > TT.laneChangeMinRoom + 12) {
       car.target = J.mvIn[chosen];
@@ -216,16 +219,17 @@ function planMove(w: World, car: AiCar, rng: () => number): void {
   }
 }
 
-/** A random move this lane may make (lane discipline), else any move from it; -1 if none. */
+/** A random move this lane may make (lane discipline; not into a cul-de-sac if it can help it), else any move from it; -1 if none. */
 function ownMove(w: World, car: AiCar, rng: () => number): number {
   const J = w.junctions;
   const m0 = J.edgeM0[car.edge], n = J.edgeMN[car.edge];
-  let ok = 0;
-  for (let m = m0; m < m0 + n; m++) if (J.mvOk[m]) ok++;
-  const pool = ok > 0 ? ok : n;
+  let ok = 0, open = 0;
+  for (let m = m0; m < m0 + n; m++) if (J.mvOk[m]) { ok++; if (!J.culDeSac[J.mvOut[m]]) open++; }
+  const skipCul = open > 0;
+  const pool = skipCul ? open : ok > 0 ? ok : n;
   if (pool === 0) return -1;
   let k = Math.floor(rng() * pool);
-  for (let m = m0; m < m0 + n; m++) if ((ok === 0 || J.mvOk[m]) && k-- === 0) return m;
+  for (let m = m0; m < m0 + n; m++) if ((ok === 0 || J.mvOk[m]) && !(skipCul && J.culDeSac[J.mvOut[m]]) && k-- === 0) return m;
   return -1;
 }
 
@@ -420,9 +424,12 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     if (o === car || (turning && ((o.phase === 'wait' && o.edge !== car.next) || (nudge && o.next !== car.next && o.edge !== car.next)))) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
     // straight ahead: within the band of our width; turning: near the rest of our curve (in a tight turn the car ahead
-    // on the same curve is off to the side of the straight-ahead band)
-    if (along <= 0 || along > look + o.halfL || (!turning && Math.abs(rx * fz - rz * fx) > side + o.halfW) || Math.abs(o.py - py) > lg + along * gr) continue;
-    if (turning) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
+    // on the same curve is off to the side of the straight-ahead band), or in the band and about to touch
+    const inBand = Math.abs(rx * fz - rz * fx) <= side + o.halfW;
+    if (along <= 0 || along > look + o.halfL || (!turning && !inBand) || Math.abs(o.py - py) > lg + along * gr) continue;
+    if (turning && !(inBand && along - o.halfL - half < TT.turnTouchGap)) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
+    // oncoming in the other lane of a narrow street (lanes 2.3 m apart): passes us if the bodies clear each other
+    if (!turning && Math.sin(o.heading) * fx + Math.cos(o.heading) * fz < -0.8 && Math.abs(rx * fz - rz * fx) > car.halfW + o.halfW + TT.passGap) continue;
     const d = along - o.halfL - half;
     if (d < best) { best = d; isPlayer = false; }
   }
