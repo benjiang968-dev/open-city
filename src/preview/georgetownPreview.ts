@@ -171,11 +171,29 @@ async function boot() {
     const hit = physics.castRay(ray, 60, true);
     return hit ? y - hit.timeOfImpact : NaN;
   };
+  /** Ground colliders only (trimeshes: terrain, roads, sidewalks, decks, lots), ignoring posts, trunks and boxes. */
+  const groundOnly = (c: RAPIER.Collider) => c.shapeType() === RAPIER.ShapeType.TriMesh;
+  const castGround = (x: number, y: number, z: number) => {
+    ray.origin = { x, y, z };
+    const hit = physics.castRay(ray, 60, true, undefined, undefined, undefined, undefined, groundOnly);
+    return hit ? y - hit.timeOfImpact : NaN;
+  };
+  /** Like castDown, and the Rapier shape type that was hit (6 = trimesh ground, 1 = box, 10 = cylinder), or -1. */
+  const castDownShape = (x: number, y: number, z: number, out: number[]) => {
+    ray.origin = { x, y, z };
+    const hit = physics.castRay(ray, 60, true);
+    out[0] = hit ? y - hit.timeOfImpact : NaN;
+    out[1] = hit ? hit.collider.shapeType() : -1;
+    return out;
+  };
   (window as unknown as { __geo: unknown }).__geo = {
     ready: true,
     stats: geo.stats,
     geo,
+    doc,
     castDown,
+    castDownShape,
+    castGround,
     setView: (n: string) => setView(n),
     /** Switch quality; returns the milliseconds GeoWorld.setQuality took (the renderer's own settings excluded). */
     setQuality: (q: GeoQuality) => { const t = performance.now(); geo.setQuality(q); const ms = performance.now() - t; applyQ(q); return ms; },
