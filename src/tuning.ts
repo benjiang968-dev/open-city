@@ -318,6 +318,7 @@ const RAW = {
     uTurnReach: 2.5, // metres a U-turn's curve reaches forward beyond the width it turns across (dead ends)
     mapEdgeRange: 40, // metres: a dead end this close to the map's edge is a road leaving the map (cars drive off it)
     // roundabout (Washington Circle): entering cars yield to circulating ones
+    ringSpeed: 8.5, // m/s (31 km/h): top speed on the roundabout ring and through its nodes
     ringYieldDist: 34, // metres along the ring: circulating cars closer than this to an entry ...
     ringYieldTime: 3.6, // ... and under this many seconds away make entering cars wait
     ringYieldNear: 10, // metres: a circulating car this close to the entry always makes entering cars wait

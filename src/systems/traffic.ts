@@ -776,7 +776,7 @@ export function updateTraffic(w: World, dt: number): void {
     if (car.next < 0 && car.target < 0 && car.phase === 'lane') planMove(w, car, rng);
     laneChangeStep(w, car, dt, rng);
     let e = edges[car.edge];
-    let want = e.speed;
+    let want = e.roundabout ? Math.min(e.speed, TT.ringSpeed) : e.speed;
     if (car.phase === 'wait') {
       want = 0;
       car.waitT += dt;

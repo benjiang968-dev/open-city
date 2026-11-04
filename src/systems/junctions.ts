@@ -293,7 +293,7 @@ export function createJunctions(map: CityMap): JunctionState {
         const h0 = Math.atan2(P[2] - P[0], P[3] - P[1]), h1 = Math.atan2(P[TURN_SEGS * 2] - P[TURN_SEGS * 2 - 2], P[TURN_SEGS * 2 + 1] - P[TURN_SEGS * 2 - 1]);
         const bend = Math.abs(wrap(h1 - h0));
         const radius = bend > 0.05 ? len / bend : Infinity;
-        const speed = Math.max(TT.turnSpeedMin, Math.min(b.speed, a.speed, Math.sqrt(TT.turnLatAccel * radius)));
+        const speed = Math.max(TT.turnSpeedMin, Math.min(b.speed, a.speed, Math.sqrt(TT.turnLatAccel * radius), a.roundabout || b.roundabout ? TT.ringSpeed : Infinity));
         mvIn.push(a.id); mvOut.push(b.id); mvType.push(type); mvOk.push(ok ? 1 : 0); mvSpeed.push(speed); mvNode.push(node.id);
       }
       edgeMN[id] = mvIn.length - edgeM0[id];
@@ -615,7 +615,8 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
   const e = edges[car.edge];
   const c = J.nodes[e.to];
   const k = c.kind;
-  if (k === CTL_NONE || k === CTL_DEADEND) return HOLD_GO;
+  if (k === CTL_NONE) return HOLD_GO;
+  if (k === CTL_DEADEND) return exitHasSpace(w, car) ? HOLD_GO : HOLD_EXIT; // don't turn round into a car pulling away
   if (k === CTL_RING && e.roundabout) return HOLD_GO; // circulating cars never stop at the ring's nodes
   const mv = car.move;
   const myType = mv >= 0 ? J.mvType[mv] : MOVE_LEFT;
@@ -623,19 +624,22 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
   // ---- lights ----
   if (k === CTL_SIGNALS) {
     const L = J.light[car.edge];
-    // red: stop, unless committed on amber and still moving too fast to stop at the line (a committed car that slowed
-    // right down behind someone stops for the red instead)
-    if (L === LIGHT_RED && (!car.commit || car.speed < TT.redCommitSpeed)) { car.commit = false; return HOLD_RED; }
-    if (L === LIGHT_AMBER && !car.commit) {
+    if (L !== LIGHT_GREEN) {
       const rem = stopLine(e) - car.s;
-      // time to the line while easing to the junction curve's speed (never faster than now)
-      const vEnd = mv >= 0 ? J.mvSpeed[mv] : TT.turnSpeedMin;
-      const reach = rem / Math.max((car.speed + Math.min(vEnd, car.speed)) / 2, 0.5);
-      // (it must stop where waiting cars stand: front bumper behind the line, clear of the other approaches' curves)
-      const canStop = rem - car.halfL - TT.stopBehindLine - J.edgeStopBack[car.edge] > (car.speed * car.speed) / (2 * TT.brake);
-      if (reach < amberLeft(c) - TT.amberMargin || !canStop) car.commit = true;
-      else if (atLine && car.waitT > 1 && (myType === MOVE_LEFT || myType === MOVE_UTURN)) car.commit = true; // waited for a gap: clears on amber
-      else return HOLD_RED;
+      const stopNeed = (car.speed * car.speed) / (2 * TT.brake); // full braking
+      if (L === LIGHT_RED) {
+        // stop, unless committed on amber and too close (and fast) to stop before the line
+        if (!car.commit || car.speed < TT.redCommitSpeed || rem > stopNeed + 0.3) { car.commit = false; return HOLD_RED; }
+      } else {
+        // amber (asked again every check while approaching): go only if the car reaches the line before red, or
+        // cannot stop where waiting cars stand (front bumper behind the line, clear of the other approaches' curves)
+        const vEnd = mv >= 0 ? J.mvSpeed[mv] : TT.turnSpeedMin; // time to the line while easing to the curve's speed
+        const reach = rem / Math.max((car.speed + Math.min(vEnd, car.speed)) / 2, 0.5);
+        const canStop = rem - car.halfL - TT.stopBehindLine - J.edgeStopBack[car.edge] > stopNeed;
+        if (reach < amberLeft(c) - TT.amberMargin || !canStop) car.commit = true;
+        else if (atLine && car.waitT > 1 && (myType === MOVE_LEFT || myType === MOVE_UTURN)) car.commit = true; // waited for a gap: clears on amber
+        else { car.commit = false; return HOLD_RED; }
+      }
     }
   }
   // ---- stop signs / equal roads: stop (or pause), then first come, first served ----
