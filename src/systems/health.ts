@@ -53,11 +53,11 @@ export function hurtPlayer(w: World, amount: number, dirX = 0, dirZ = 0): void {
     const [hx, hy] = v.spec.halfExtents;
     burstAt.set(hx + 0.05, hy + 0.35, 0.2).applyMatrix4(v.mesh.matrixWorld);
     burstDir.set(1, 0, 0).transformDirection(v.mesh.matrixWorld);
-    hurtBurst(w, burstAt.x, burstAt.y, burstAt.z, strength, burstDir.x + dirX, burstDir.z + dirZ, w.city.heightAt(burstAt.x, burstAt.z), false);
+    hurtBurst(w, burstAt.x, burstAt.y, burstAt.z, strength, burstDir.x + dirX, burstDir.z + dirZ, w.city.heightAt(burstAt.x, burstAt.z, burstAt.y), false);
   } else {
     const m = p.mesh.position;
     const flung = p.knockT > 0; // thrown by a car: the dots go with you
-    hurtBurst(w, m.x, m.y + 1.2, m.z, strength, dirX, dirZ, Math.max(w.city.heightAt(m.x, m.z), m.y), true, flung ? p.knockX : 0, flung ? p.knockZ : 0);
+    hurtBurst(w, m.x, m.y + 1.2, m.z, strength, dirX, dirZ, Math.max(w.city.heightAt(m.x, m.z, m.y), m.y), true, flung ? p.knockX : 0, flung ? p.knockZ : 0);
   }
   if (p.health <= 0) die(w);
 }

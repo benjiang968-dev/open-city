@@ -38,6 +38,10 @@ const RAW = {
     laneHashCell: 32, // metres per cell of the nearest-lane spatial hash (lookup speed only)
     walkHashCell: 32, // metres per cell of the walk-node spatial hash (lookup speed only)
     buildingHashCell: 32, // metres per cell of the building spatial hash (lookup speed only)
+    // levels (bridge decks, elevated roads over other roads; see LEVELS in map/cityMap.ts)
+    levelTolerance: 4, // metres: lane / walk lookups given a height prefer lanes and walk nodes this close above or below it
+    levelSearchRange: 150, // metres: nearestWalk with a height looks this far for a node on that level before taking any level
+    levelStep: 1.2, // metres: heightAt(x, z, y) counts a deck as underfoot if its top is at most this far above y
     minStrongShare: 0.9, // validateCityMap: the largest strongly connected road component must hold this share of lanes
     minWalkShare: 0.95, // validateCityMap: the largest connected walk component must hold this share of walk nodes
   },

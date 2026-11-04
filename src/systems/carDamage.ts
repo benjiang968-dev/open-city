@@ -96,7 +96,7 @@ export function updateCarDamage(w: World, dt: number): void {
       d.obj.rotation.x += d.spin.x * dt;
       d.obj.rotation.y += d.spin.y * dt;
       d.obj.rotation.z += d.spin.z * dt;
-      const ground = w.city.heightAt(d.obj.position.x, d.obj.position.z) + 0.12;
+      const ground = w.city.heightAt(d.obj.position.x, d.obj.position.z, d.obj.position.y) + 0.12;
       if (d.obj.position.y < ground) {
         d.obj.position.y = ground;
         d.landed = true;

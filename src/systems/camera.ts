@@ -85,7 +85,7 @@ export function updateCamera(w: World, dt: number): void {
   const hit = w.physics.castRay(ray, dist, true, R.QueryFilterFlags.EXCLUDE_DYNAMIC | R.QueryFilterFlags.EXCLUDE_KINEMATIC);
   if (hit) dist = Math.max(1.2, hit.timeOfImpact - 0.3);
   cam.position.copy(c.focus).addScaledVector(tmp, dist);
-  const floor = w.city.heightAt(cam.position.x, cam.position.z) + 0.4;
+  const floor = w.city.heightAt(cam.position.x, cam.position.z, cam.position.y) + 0.4;
   if (cam.position.y < floor) cam.position.y = floor;
   cam.lookAt(c.focus);
   const sway = injurySway(w);

@@ -41,8 +41,18 @@
 //
 // Lookups must be cheap (spatial hashes, see MapIndex below) and allocation-free: systems call them every frame.
 //  heightAt(x,z): ground height (terrain; 0 everywhere on the grid). isRoad: inside a carriageway. isWater: river,
-//  canal, bay (NOT piers or bridge decks). isBlocked: inside a building, outside the playable bounds, or water.
+//  canal, bay (NOT piers or bridge decks). waterLevelAt: that water's surface (the C&O canal sits metres above the
+//  river; one waterLevel is not enough). isBlocked: inside a building, outside the playable bounds, or water.
 //  nearestLane / kerbPoint fill a caller-owned result object and return false when nothing is within range.
+//
+// LEVELS (a bridge or an elevated road over another road, a towpath under a bridge): several surfaces can share one
+//  (x, z). Callers that know their own height pass it as the optional `y`:
+//  - heightAt(x, z, y): the surface something at height y stands on: the highest deck (bridge, elevated road, its
+//    pavements) under (x, z) whose top is at most TUNING.map.levelStep above y, else the terrain. Without y: the
+//    terrain. The grid has no decks and ignores y.
+//  - nearestLane / kerbPoint / nearestWalk(…, y): prefer lanes / walk nodes within TUNING.map.levelTolerance of y
+//    (the deck you are on, not the road under it); if none is in range, any level. Without y (or NaN): any level.
+//  Deck surfaces must match the lane pts / walk node y on them, and need their own physics colliders.
 //
 // Coordinates of everything (spawn, parking, POIs) are on the ground: systems add heightAt(x,z) themselves when they
 // place things, so a map only has to get heightAt right.
@@ -203,7 +213,7 @@ export interface CityMap {
   center: { x: number; z: number };
   /** Where the player starts (on the pavement), and which way they face. */
   spawn: { x: number; z: number; heading: number };
-  /** Height of the water surface (bay / river). */
+  /** Height of the main water surface (bay / river): the level of the open water and the waterfront. */
   waterLevel: number;
   roads: { nodes: RoadNode[]; edges: LaneEdge[] };
   walk: { nodes: WalkNode[] };
@@ -212,16 +222,22 @@ export interface CityMap {
   pois: Poi[];
   taxiRanks: Poi[];
   parkingSpots: ParkingSpot[];
-  heightAt(x: number, z: number): number;
+  /** Terrain height; with `y`, the deck (bridge, elevated road) under a point at height y if there is one (see LEVELS). */
+  heightAt(x: number, z: number, y?: number): number;
   isRoad(x: number, z: number): boolean;
   isBlocked(x: number, z: number): boolean;
   isWater(x: number, z: number): boolean;
-  /** Nearest lane centre within maxDist; fills `out` and returns true, or false if none. No allocation. */
-  nearestLane(x: number, z: number, maxDist: number, out: LaneHit): boolean;
-  /** Nearest walk node id (always succeeds). */
-  nearestWalk(x: number, z: number): number;
-  /** Nearest kerbside stopping point (kerbside lane, kerbStopGap from the kerb, outside junction boxes). */
-  kerbPoint(x: number, z: number, out: KerbHit): boolean;
+  /** Water surface height where isWater(x, z): waterLevel for the river / bay, its own level for a canal or pond. */
+  waterLevelAt(x: number, z: number): number;
+  /**
+   * Nearest lane centre within maxDist; fills `out` and returns true, or false if none. No allocation.
+   * `y`: the caller's height: lanes on its level (bridge deck vs the road below) win (see LEVELS).
+   */
+  nearestLane(x: number, z: number, maxDist: number, out: LaneHit, y?: number): boolean;
+  /** Nearest walk node id (always succeeds); `y` prefers nodes on the caller's level. */
+  nearestWalk(x: number, z: number, y?: number): number;
+  /** Nearest kerbside stopping point (kerbside lane, kerbStopGap from the kerb, outside junction boxes); `y` as nearestLane. */
+  kerbPoint(x: number, z: number, out: KerbHit, y?: number): boolean;
   /** Paint the static map (ground, water, parks, buildings, roads, piers) for the minimap. */
   drawMinimapBase(ctx: CanvasRenderingContext2D, opts: MinimapDrawOpts): void;
   // what dayNight / weather / the frame loop drive
@@ -390,8 +406,17 @@ export class MapIndex {
     for (let cz = az; cz <= bz; cz++) for (let cx = ax; cx <= bx; cx++) fn(cz * cols + cx);
   }
 
-  /** Nearest lane centre (kerbside lanes only if `kerbside`). Returns false if nothing within maxDist. */
-  nearestLane(x: number, z: number, maxDist: number, kerbside: boolean, out: LaneHit): boolean {
+  /**
+   * Nearest lane centre (kerbside lanes only if `kerbside`). Returns false if nothing within maxDist. With a finite
+   * `y`, lanes within TUNING.map.levelTolerance of that height win; other levels count only if none is in range.
+   */
+  nearestLane(x: number, z: number, maxDist: number, kerbside: boolean, out: LaneHit, y = NaN): boolean {
+    if (y === y && this.searchLane(x, z, maxDist, kerbside, y, out)) return true;
+    return this.searchLane(x, z, maxDist, kerbside, NaN, out);
+  }
+
+  private searchLane(x: number, z: number, maxDist: number, kerbside: boolean, y: number, out: LaneHit): boolean {
+    const level = y === y, tol = M.levelTolerance;
     const cell = this.lCell, cols = this.lCols, rows = this.lRows;
     const ci = this.cellOf(cell, cols, rows, x, z);
     const cx = ci % cols, cz = (ci / cols) | 0;
@@ -414,7 +439,12 @@ export class MapIndex {
             t = t < 0 ? 0 : t > 1 ? 1 : t;
             const qx = ax + dx * t - x, qz = az + dz * t - z;
             const d2 = qx * qx + qz * qz;
-            if (d2 < best) { best = d2; bestEdge = e.id; bestSeg = seg; }
+            if (d2 >= best) continue;
+            if (level) {
+              const dy = p[a + 1] + (p[a + 4] - p[a + 1]) * t - y;
+              if (dy > tol || dy < -tol) continue; // another level (bridge deck vs the road under it)
+            }
+            best = d2; bestEdge = e.id; bestSeg = seg;
           }
         }
       }
@@ -440,9 +470,9 @@ export class MapIndex {
   }
 
   /** Nearest kerbside stopping point: TUNING.map.kerbStopGap in from the kerb, outside the junction boxes. */
-  kerbPoint(x: number, z: number, out: KerbHit): boolean {
+  kerbPoint(x: number, z: number, out: KerbHit, y = NaN): boolean {
     const h = this.tmpHit;
-    if (!this.nearestLane(x, z, M.kerbSearchRange, true, h)) return false;
+    if (!this.nearestLane(x, z, M.kerbSearchRange, true, h, y)) return false;
     const e = this.edges[h.edge];
     const s0 = Math.min(e.trimStart, e.len * 0.5), s1 = Math.max(e.len - e.trimEnd, s0);
     const s = h.s < s0 ? s0 : h.s > s1 ? s1 : h.s;
@@ -459,13 +489,25 @@ export class MapIndex {
     return true;
   }
 
-  /** Nearest walk node id (searches outward until found). */
-  nearestWalk(x: number, z: number): number {
+  /**
+   * Nearest walk node id (searches outward until found). With a finite `y`, nodes within
+   * TUNING.map.levelTolerance of that height win (the bridge pavement, not the towpath under it), as nearestLane.
+   */
+  nearestWalk(x: number, z: number, y = NaN): number {
+    if (y === y) {
+      const id = this.searchWalk(x, z, y, M.levelSearchRange);
+      if (id >= 0) return id;
+    }
+    return Math.max(0, this.searchWalk(x, z, NaN, Infinity));
+  }
+
+  private searchWalk(x: number, z: number, y: number, maxDist: number): number {
+    const level = y === y, tol = M.levelTolerance;
     const cell = this.wCell, cols = this.wCols, rows = this.wRows;
     const ci = this.cellOf(cell, cols, rows, x, z);
     const cx = ci % cols, cz = (ci / cols) | 0;
-    let best = Infinity, bestId = 0;
-    const maxRing = Math.max(cols, rows);
+    let best = Infinity, bestId = -1;
+    const maxRing = Math.min(Math.max(cols, rows), Math.ceil(maxDist / cell) + 1);
     for (let r = 0; r <= maxRing; r++) {
       for (let iz = cz - r; iz <= cz + r; iz++) {
         if (iz < 0 || iz >= rows) continue;
@@ -476,11 +518,13 @@ export class MapIndex {
           for (let k = this.wStart[c]; k < this.wStart[c + 1]; k++) {
             const n = this.walk[this.wItems[k]];
             const d2 = (n.x - x) * (n.x - x) + (n.z - z) * (n.z - z);
-            if (d2 < best) { best = d2; bestId = n.id; }
+            if (d2 >= best || (level && (n.y - y > tol || y - n.y > tol))) continue;
+            best = d2; bestId = n.id;
           }
         }
       }
-      if (best < Infinity && Math.sqrt(best) <= r * cell) break;
+      if (bestId >= 0 && Math.sqrt(best) <= r * cell) break;
+      if (r * cell > maxDist) break;
     }
     return bestId;
   }

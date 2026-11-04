@@ -27,7 +27,9 @@ const KERB: KerbHit = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
  */
 export function safeSpotNear(w: World, x: number, z: number, out: { x: number; z: number }): void {
   const c = w.city;
-  if (!c.kerbPoint(x, z, KERB)) { out.x = c.spawn.x; out.z = c.spawn.z; return; }
+  // a kerb at ground / water level (the waterfront, not a bridge deck above the river)
+  const level = c.isWater(x, z) ? c.waterLevelAt(x, z) : c.heightAt(x, z);
+  if (!c.kerbPoint(x, z, KERB, level)) { out.x = c.spawn.x; out.z = c.spawn.z; return; }
   // the pavement is to the right of the kerbside lane
   const step = TUNING.map.kerbStopGap + P.rescuePavementStep;
   const px = KERB.x - Math.cos(KERB.heading) * step, pz = KERB.z + Math.sin(KERB.heading) * step;
@@ -95,7 +97,8 @@ export function updatePlayer(w: World, dt: number): void {
     p.mesh.position.copy(v.mesh.position);
     // drove into the water (open water, or sunk under a pier deck): swim back to the nearest pavement
     const vp = v.mesh.position;
-    if (vp.y < w.city.waterLevel - 0.8 && (w.city.isWater(vp.x, vp.z) || vp.y < w.city.heightAt(vp.x, vp.z) - 1.5)) {
+    const wet = w.city.isWater(vp.x, vp.z);
+    if (vp.y < (wet ? w.city.waterLevelAt(vp.x, vp.z) : w.city.waterLevel) - 0.8 && (wet || vp.y < w.city.heightAt(vp.x, vp.z) - 1.5)) {
       v.inWaterTimer += dt;
       if (v.inWaterTimer > 1.5) {
         v.health = 0;

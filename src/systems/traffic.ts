@@ -468,8 +468,9 @@ export function updateTraffic(w: World, dt: number): void {
       // slow for turns and when approaching a stop line
       if (car.phase === 'turn') want = Math.min(want, 6.5);
       else {
+        // (never on a roundabout ring: cars there flow through every node, see waitBefore)
         const to = nodes[e.to];
-        if (to.junction || to.deadEnd || to.roundabout) {
+        if (!e.roundabout && (to.junction || to.deadEnd || to.roundabout)) {
           const remaining = stopLine(e) - car.s;
           want = Math.min(want, Math.sqrt(2 * TT.brake * 0.6 * Math.max(0, remaining)) + 1);
         }

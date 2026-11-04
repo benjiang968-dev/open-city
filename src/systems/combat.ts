@@ -72,12 +72,12 @@ function updateArc(w: World, c: CombatState) {
   for (let i = 0; i < ARC_N; i++) {
     c.arcPts[i * 3] = x; c.arcPts[i * 3 + 1] = y; c.arcPts[i * 3 + 2] = z;
     last = i;
-    if (i > 0 && y < w.city.heightAt(x, z) + 0.05) break;
+    if (i > 0 && y < w.city.heightAt(x, z, y) + 0.05) break;
     x += t.vx * dt; z += t.vz * dt; y += vy * dt; vy -= gravity * dt;
   }
   c.arc.geometry.setDrawRange(0, last + 1);
   (c.arc.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-  c.ring.position.set(c.arcPts[last * 3], w.city.heightAt(c.arcPts[last * 3], c.arcPts[last * 3 + 2]) + 0.06, c.arcPts[last * 3 + 2]);
+  c.ring.position.set(c.arcPts[last * 3], w.city.heightAt(c.arcPts[last * 3], c.arcPts[last * 3 + 2], c.arcPts[last * 3 + 1]) + 0.06, c.arcPts[last * 3 + 2]);
 }
 
 export function updateCombat(w: World, dt: number): void {

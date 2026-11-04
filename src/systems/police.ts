@@ -26,6 +26,8 @@ export interface PoliceState {
   bustTimer: number;
   lastSeenX: number;
   lastSeenZ: number;
+  /** Height of the last known position (NaN if only a reported spot): picks the bridge deck over the road below. */
+  lastSeenY: number;
   sightCheckT: number;
   /** Until this time police know where you are (fresh 911 call) and the escape timer is paused. */
   trackUntil: number;
@@ -34,7 +36,7 @@ export interface PoliceState {
 }
 
 export function createPolice(): PoliceState {
-  return { heat: 0, stars: 0, seen: false, cars: [], pool: [], loseTimer: 0, bustTimer: 0, lastSeenX: 0, lastSeenZ: 0, sightCheckT: 0, trackUntil: 0, searchUntil: 0 };
+  return { heat: 0, stars: 0, seen: false, cars: [], pool: [], loseTimer: 0, bustTimer: 0, lastSeenX: 0, lastSeenZ: 0, lastSeenY: NaN, sightCheckT: 0, trackUntil: 0, searchUntil: 0 };
 }
 
 export function spawnPolicePool(w: World): void {
@@ -63,6 +65,7 @@ export function dispatchTo(w: World, x: number, z: number, amount: number): void
   pol.loseTimer = 0;
   pol.lastSeenX = x;
   pol.lastSeenZ = z;
+  pol.lastSeenY = NaN;
   pol.searchUntil = w.time + TUNING.witness.searchTime;
 }
 
@@ -88,11 +91,12 @@ export function addHeat(w: World, amount: number): void {
   const pp = w.player.mesh.position;
   pol.lastSeenX = pp.x;
   pol.lastSeenZ = pp.z;
+  pol.lastSeenY = pp.y;
 }
 
 /** The lane nearest the last known position of the player (-1 if none near). */
 function goalLane(w: World): number {
-  return w.city.nearestLane(w.police.lastSeenX, w.police.lastSeenZ, P.goalLaneRange, HIT) ? HIT.edge : -1;
+  return w.city.nearestLane(w.police.lastSeenX, w.police.lastSeenZ, P.goalLaneRange, HIT, w.police.lastSeenY) ? HIT.edge : -1;
 }
 
 /**
@@ -174,6 +178,7 @@ export function updatePolice(w: World, dt: number): void {
       const pp = w.player.mesh.position;
       pol.lastSeenX = pp.x;
       pol.lastSeenZ = pp.z;
+      pol.lastSeenY = pp.y;
     }
   }
   if (pol.stars > 0) {
@@ -248,7 +253,7 @@ export function drivePolice(w: World, dt: number): void {
       // rejoin the road network if we left it while chasing
       if (car.stuckT === 0 && car.phase === 'lane') {
         const off = projectOnLane(w.city.roads.edges[car.edge], t.x, t.z, ON).dist;
-        if (off > P.offRoadRejoin) rejoinRoad(w, car, t.x, t.z);
+        if (off > P.offRoadRejoin) rejoinRoad(w, car, t.x, t.y, t.z);
       }
       car.stuckT += dt;
       if (car.stuckT > 4) car.stuckT = 0;
@@ -277,8 +282,8 @@ function bustCheck(w: World, dt: number): void {
  * Rejoin the nearest lane without teleporting: re-target the path from where the car is (the path follower
  * steers it back on). Takes the direction whose far end is nearer the player's last known position.
  */
-function rejoinRoad(w: World, car: AiCar, x: number, z: number): void {
-  if (!w.city.nearestLane(x, z, P.rejoinSearch, HIT)) return;
+function rejoinRoad(w: World, car: AiCar, x: number, y: number, z: number): void {
+  if (!w.city.nearestLane(x, z, P.rejoinSearch, HIT, y)) return;
   const { nodes, edges } = w.city.roads;
   let e = edges[HIT.edge], s = HIT.s;
   if (e.twin >= 0) {

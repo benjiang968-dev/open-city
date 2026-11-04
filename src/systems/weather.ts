@@ -179,7 +179,7 @@ export function updateWeather(w: World, dt: number): void {
 
   // particles follow the camera
   const c = w.camera.position;
-  const ground = w.city.heightAt(c.x, c.z);
+  const ground = w.city.heightAt(c.x, c.z, c.y);
   updateParticles(s.rainPts, c, L.rain, dt, 26, true, ground);
   updateParticles(s.snowPts, c, L.snow, dt, 2.2, false, ground);
   (s.rainPts.material as THREE.LineBasicMaterial).opacity = 0.25 + 0.35 * L.rain;
