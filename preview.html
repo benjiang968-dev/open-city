@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Open City: Georgetown world preview</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0b1026; font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+      #geo { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+      #hud { position: fixed; left: 12px; top: 10px; color: #fff; font: 12px/1.45 ui-monospace, monospace; background: rgba(0,0,0,.55); padding: 8px 10px; border-radius: 6px; white-space: pre; pointer-events: none; }
+      #help { position: fixed; right: 12px; top: 10px; color: #fff; font: 12px/1.45 system-ui, sans-serif; background: rgba(0,0,0,.45); padding: 8px 10px; border-radius: 6px; pointer-events: none; }
+      #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 20px; letter-spacing: .2em; }
+    </style>
+  </head>
+  <body>
+    <canvas id="geo"></canvas>
+    <div id="loading">BUILDING GEORGETOWN</div>
+    <div id="hud"></div>
+    <div id="help">WASD move, Q/E down/up, drag to look, Shift fast<br />1-9 views, L/M/H quality, N night toggle, P hide this panel</div>
+    <script type="module" src="/src/preview/georgetownPreview.ts"></script>
+  </body>
+</html>

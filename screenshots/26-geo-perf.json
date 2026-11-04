@@ -1,0 +1,168 @@
+{
+ "stats": {
+  "bootMs": 1729,
+  "phases": {
+   "terrain": 137,
+   "roads": 65,
+   "raster": 247,
+   "terrainMesh": 297,
+   "roadMesh": 123,
+   "water": 50,
+   "bridges": 28,
+   "buildings": 327,
+   "props": 66,
+   "meshes": 149,
+   "physics": 192
+  },
+  "tris": 1563095,
+  "meshes": 330,
+  "colliders": 10209,
+  "trimeshTris": 291436
+ },
+ "shots": {
+  "26-geo-aerial": {
+   "calls": 283,
+   "tris": 1138718,
+   "frameMs": 37.53891974973497,
+   "cpuMs": 20.468539339721037,
+   "frames": 10,
+   "view": "aerial",
+   "quality": "medium"
+  },
+  "26-geo-mst": {
+   "calls": 97,
+   "tris": 857133,
+   "frameMs": 1262.155917562782,
+   "cpuMs": 105.99888586631255,
+   "frames": 36,
+   "view": "mst",
+   "quality": "medium"
+  },
+  "26-geo-keybridge": {
+   "calls": 92,
+   "tris": 800117,
+   "frameMs": 931.613698081898,
+   "cpuMs": 9.676209517635597,
+   "frames": 61,
+   "view": "keybridge",
+   "quality": "medium"
+  },
+  "26-geo-circle": {
+   "calls": 89,
+   "tris": 695132,
+   "frameMs": 780.1579301990382,
+   "cpuMs": 2.387134481749746,
+   "frames": 87,
+   "view": "circle",
+   "quality": "medium"
+  },
+  "26-geo-canal": {
+   "calls": 96,
+   "tris": 850628,
+   "frameMs": 775.3091192431834,
+   "cpuMs": 2.128298202974969,
+   "frames": 113,
+   "view": "canal",
+   "quality": "medium"
+  },
+  "26-geo-waterfront": {
+   "calls": 81,
+   "tris": 728509,
+   "frameMs": 714.9352463907263,
+   "cpuMs": 2.8378678413971166,
+   "frames": 138,
+   "view": "waterfront",
+   "quality": "medium"
+  },
+  "26-geo-rowhouses": {
+   "calls": 92,
+   "tris": 942455,
+   "frameMs": 705.1104346073452,
+   "cpuMs": 2.7017967249690824,
+   "frames": 164,
+   "view": "rowhouses",
+   "quality": "medium"
+  },
+  "26-geo-night": {
+   "calls": 98,
+   "tris": 889989,
+   "frameMs": 730.197028549908,
+   "cpuMs": 152.1997923903678,
+   "frames": 191,
+   "view": "night",
+   "quality": "medium"
+  },
+  "26-geo-aerial-low": {
+   "calls": 276,
+   "tris": 919754,
+   "frameMs": 857.919825973917,
+   "cpuMs": 66.16983154788005,
+   "frames": 217,
+   "view": "aerial",
+   "quality": "low"
+  }
+ },
+ "perf": [
+  {
+   "view": "mst",
+   "q": "low",
+   "calls": 46,
+   "tris": 393845,
+   "cpuMs": 6.52,
+   "frameMs": 922.5,
+   "switchMs": 0
+  },
+  {
+   "view": "mst",
+   "q": "medium",
+   "calls": 97,
+   "tris": 857133,
+   "cpuMs": 5.21,
+   "frameMs": 871.6,
+   "switchMs": 0
+  },
+  {
+   "view": "mst",
+   "q": "high",
+   "calls": 184,
+   "tris": 1123827,
+   "cpuMs": 3.95,
+   "frameMs": 788.8,
+   "switchMs": 0
+  },
+  {
+   "view": "aerial",
+   "q": "low",
+   "calls": 276,
+   "tris": 919754,
+   "cpuMs": 3.29,
+   "frameMs": 801.9,
+   "switchMs": 0
+  },
+  {
+   "view": "aerial",
+   "q": "medium",
+   "calls": 283,
+   "tris": 1138718,
+   "cpuMs": 3.35,
+   "frameMs": 861.3,
+   "switchMs": 0
+  },
+  {
+   "view": "aerial",
+   "q": "high",
+   "calls": 283,
+   "tris": 1203791,
+   "cpuMs": 3.58,
+   "frameMs": 908.8,
+   "switchMs": 0
+  }
+ ],
+ "rayCheck": {
+  "samples": 36107,
+  "bad": 0,
+  "maxErr": 0.09780597686767578,
+  "lips": 0,
+  "worst": []
+ }
+}

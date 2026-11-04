@@ -590,6 +590,31 @@ const RAW = {
     },
   },
 
+  // Georgetown world generator v2 (src/systems/map/): the physical shape of streets, decks and water that cars,
+  // people and the road graph depend on. Pure looks (colours, window sizes, LOD distances) live in the art files.
+  geo: {
+    laneWidth: 3.3, // m per lane; the map data's carriageway width is lanes x laneWidth
+    minTwoWayWidth: 5.6, // m: a two-way street tagged with 1 lane is widened to this (two narrow lanes)
+    sidewalkWidth: 3, // m from the kerb to the back of the sidewalk (the data's sidewalk lines run 1.5 m from the kerb)
+    kerbHeight: 0.15, // m step from road to sidewalk; car wheels feel it, people step up it
+    cornerRadius: 6, // m kerb radius at street corners
+    maxGrade: 0.075, // steepest grade (rise/run) the generator gives ramps and bridge approaches
+    roadClearance: 5, // m of headroom under a deck that crosses a road
+    pathClearance: 2.6, // m of headroom under a deck that crosses a towpath or trail
+    waterClearance: 2.4, // m from canal / creek water to the underside of a deck
+    freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
+    deckThickness: 1.1, // m from deck surface to its underside
+    parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)
+    riverLevel: 0, // m: the Potomac surface (map heights are metres above the river)
+    canalLevels: [5.2, 4.4, 3.6, 2.8, 2.0], // m: canal water west of lock 4, then after locks 4, 3, 2, 1 (east)
+    canalDepth: 1.6, // m of water in the canal
+    creekDepth: 1.2, // m of water in Rock Creek
+    treeColliderRoadDist: 9, // m: trees closer than this to a carriageway get a trunk collider
+    stallWidth: 2.6, // m: painted parking bay width in car parks
+    stallLength: 5.2, // m: parking bay length
+    lotAisle: 6.6, // m: aisle between bay rows
+  },
+
   quality: {
     default: 'medium', // preset used until the player picks one in the pause menu
     // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player
