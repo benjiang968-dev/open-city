@@ -252,6 +252,7 @@ const ZERO = { x: 0, y: 0, z: 0 };
 function makePooled(w: World, type: CarTypeName): Vehicle {
   const v = spawnVehicle(w, type, w.city.spawn.x, w.city.spawn.z, 0, SENTINEL);
   v.pooled = true;
+  repaintVehicle(v, v.paint); // finds its paint vertices now, at load, not during the first promotion
   goIdle(v);
   w.parked.stats.pool++;
   return v;
@@ -439,7 +440,7 @@ function aheadPoint(w: World): void {
   AHEAD.on = true;
 }
 
-const PROMOTE_PER_FRAME = 6;
+const PROMOTE_PER_FRAME = V.parkedPromotePerFrame;
 /** Per frame: stand-ins for the parked cars around you (and ahead of your car), releases, and the instance draw lists. */
 export function updateParkedCars(w: World, dt: number): void {
   const S = w.parked;

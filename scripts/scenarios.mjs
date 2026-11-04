@@ -1451,7 +1451,9 @@ async function theftRun(page, opts) {
     if (!rec) { // fall back: lock a car and give it an active owner
       rec = w.parked.cars.find((r) => kerbside(r));
       rec.locked = true;
-      rec.owner = w.peds.find((p) => free(p.id) && p.archetype === 'adult' && !w.parked.cars.some((r) => r.owner === p.id)).id;
+      const o = w.peds.find((p) => free(p.id) && p.archetype === 'adult' && !w.parked.cars.some((r) => r.owner === p.id)) ?? w.peds.find((p) => !p.reserved && !p.hidden && p.archetype === 'adult' && !w.parked.cars.some((r) => r.owner === p.id));
+      if (!o.active) { o.active = true; o.solid = true; o.body.setEnabled(true); }
+      rec.owner = o.id;
       rec.ownerLocal = false;
     }
     const owner = w.peds[rec.owner];
@@ -1460,8 +1462,10 @@ async function theftRun(page, opts) {
     const fx = Math.sin(rec.heading), fz = Math.cos(rec.heading);
     // four people on the pavement nearby (elderly and posh/friendly adults are the likeliest to call)
     const rank = (p) => (p.archetype === 'elderly' ? 0 : p.npc.personality === 'posh' || p.npc.personality === 'friendly' ? 1 : 2);
-    const wit = w.peds.filter((p) => p.active && p !== owner && p.followId < 0 && !p.reserved && ['elderly', 'adult', 'parent', 'delivery'].includes(p.archetype))
-      .sort((a, b) => rank(a) - rank(b)).slice(0, 4);
+    // (people out and about first; at a quiet hour someone off-stage is brought out: the crowd follows the map's density)
+    const wit = w.peds.filter((p) => p !== owner && p.followId < 0 && !p.reserved && !p.hidden && p.state !== 'down' && ['elderly', 'adult', 'parent', 'delivery'].includes(p.archetype))
+      .sort((a, b) => (b.active - a.active) || rank(a) - rank(b)).slice(0, 4);
+    for (const p of wit) if (!p.active) { p.active = true; p.solid = true; p.body.setEnabled(true); }
     [-11, -6, 7, 12].forEach((off, i) => {
       const p = wit[i];
       p.pos.set(rec.x + kx * 3.0 + fx * off, window.__mh.gy(rec.x + kx * 3.0 + fx * off, rec.z + kz * 3.0 + fz * off) + 0.02, rec.z + kz * 3.0 + fz * off);

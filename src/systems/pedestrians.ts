@@ -358,7 +358,7 @@ function wander(w: World, ped: Ped): void {
     for (let tries = 0; tries < 12 && nodes.length; tries++) {
       const n = W[nodes[Math.floor(Math.random() * nodes.length)]];
       const d = Math.hypot(n.x - x, n.z - z);
-      if (d > 40 && d < D.outdoorTripRange) { planRoute(w, ped, -1, n.id); return; }
+      if (d > D.outdoorTripMin && d < D.outdoorTripRange) { planRoute(w, ped, -1, n.id); return; }
     }
   }
   const set = KIND_SETS[ped.archetype];

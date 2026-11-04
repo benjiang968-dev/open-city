@@ -248,6 +248,7 @@ const RAW = {
     parkedAheadRadius: 16, // metres around that point ahead
     parkedReleaseRadius: 45, // metres: untouched ones further than this (and not ahead of you) go back to being drawn only
     parkedMustRadius: 9, // metres: a parked car this close always gets a drivable car, even if the pool has to grow
+    parkedPromotePerFrame: 3, // stand-ins handed out per frame beyond parkedMustRadius (spreads the work after a jump across town)
     parkedDrawDistance: { low: 150, medium: 210, high: 300 }, // metres, by quality: parked cars drawn this far from you
     parkedRefresh: 0.25, // seconds between redraws of the far parked cars (sooner after you move 12 m)
     parkedReuseGap: 0.25, // metres: a released car that moved less than this keeps its parking spot's pose
@@ -333,7 +334,8 @@ const RAW = {
       outdoorBoost: { towpath: 8, waterfront: 5, path: 3, plaza: 2 }, // dog walkers and joggers: spawn weight on these path kinds
       outdoorRouteCost: 0.5, // dog walkers and joggers: towpath, waterfront and park paths cost this share of their length (routes prefer them)
       outdoorTripChance: 0.6, // chance a dog walker or jogger heads for a towpath / waterfront spot rather than a park or pier
-      outdoorTripRange: 450, // metres: how far away that spot may be
+      outdoorTripRange: 450, // metres: how far away that spot may be...
+      outdoorTripMin: 40, // ...and how near (a trip, not a step)
       errandChance: 0.55, // chance someone heads to a shop or cafe near them instead of their routine stop
       errandRange: 150, // metres: how far that shop may be
     },
