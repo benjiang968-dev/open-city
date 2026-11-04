@@ -4,6 +4,7 @@
 // spawnMinDist and spawnMaxDist from the player, never inside the camera's view, never on top of another car.
 // The lane's points carry its height, so a car placed on Key Bridge or the Whitehurst Freeway starts on the deck.
 import * as THREE from 'three';
+import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { laneSample, type LanePoint } from './map/cityMap';
@@ -70,6 +71,20 @@ export function inView(P: TrafficPopulation, x: number, y: number, z: number): b
   return (dx * P.fx + dy * P.fy + dz * P.fz) / d > P.cosView;
 }
 
+let RAY: RAPIER.Ray | null = null;
+/** inView, and not hidden behind a building, a hill or a deck (one ray from the camera to the car's roof). */
+export function visible(w: World, x: number, y: number, z: number): boolean {
+  const P = w.trafficPop;
+  if (!inView(P, x, y, z)) return false;
+  const dx = x - P.cx, dy = y + 1.4 - P.cy, dz = z - P.cz;
+  const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (d < 25) return true;
+  if (!RAY) RAY = new w.R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+  RAY.origin.x = P.cx; RAY.origin.y = P.cy; RAY.origin.z = P.cz;
+  RAY.dir.x = dx / d; RAY.dir.y = dy / d; RAY.dir.z = dz / d;
+  return !w.physics.castRay(RAY, d - 2, true, w.R.QueryFilterFlags.ONLY_FIXED);
+}
+
 function pickLane(P: TrafficPopulation): number {
   const r = Math.random() * P.total;
   let lo = 0, hi = P.cum.length - 1;
@@ -103,7 +118,7 @@ export function respawnCar(w: World, car: AiCar, boot = false): boolean {
       if (d < TT.spawnMinDistFromPlayer || d > TT.bootSpawnMaxDist) continue;
     } else {
       if (d < TT.spawnMinDist * (relax ? 0.7 : 1) || (!relax && d > TT.spawnMaxDist)) continue;
-      if (inView(P, LP.x, LP.y, LP.z)) continue;
+      if (visible(w, LP.x, LP.y, LP.z)) continue;
     }
     if (!clear(w, car, LP.x, LP.y, LP.z)) continue;
     placeOnEdge(w, car, id, s - laneStart(e));
@@ -209,6 +224,6 @@ export function updateTrafficPopulation(w: World): void {
     const dx = car.px - pp.x, dz = car.pz - pp.z;
     const far = dx * dx + dz * dz > R2;
     // out of sight, or (a car stranded in the road for good) even in view: a gridlock must not last for ever
-    if ((far || car.respawnWanted) && (!inView(P, car.px, car.py - 0.62, car.pz) || (car.respawnWanted && car.stuckT > 2 * TT.stuckRecycle))) respawnCar(w, car);
+    if ((far || car.respawnWanted) && (!visible(w, car.px, car.py - 0.62, car.pz) || (car.respawnWanted && car.stuckT > 2 * TT.stuckRecycle))) respawnCar(w, car);
   }
 }

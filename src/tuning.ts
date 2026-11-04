@@ -282,10 +282,10 @@ const RAW = {
     spawnMinDistFromPlayer: 25, // metres: at boot no AI car starts closer than this to the player
     // ---- population around the player (trafficPopulation.ts) ----
     countByQuality: { low: 18, medium: 26, high: 34 }, // AI cars driving near the player, by graphics preset (M2 ran 26 everywhere)
-    despawnRadius: 430, // metres: a car farther than this from the player (and out of view) is moved to a lane nearer the player
-    spawnMinDist: 150, // metres: a respawned car starts at least this far from the player and the camera ...
-    spawnMaxDist: 380, // ... and at most this far from the player
-    bootSpawnMaxDist: 420, // metres: at boot cars are spread over lanes up to this far from the spawn
+    despawnRadius: 340, // metres: a car farther than this from the player (and out of sight) is moved to a lane nearer the player
+    spawnMinDist: 110, // metres: a respawned car starts at least this far from the player, out of the camera's sight ...
+    spawnMaxDist: 300, // ... and at most this far from the player
+    bootSpawnMaxDist: 320, // metres: at boot cars are spread over lanes up to this far from the spawn
     spawnViewMargin: 0.3, // radians added to half the camera's field of view: a lane point inside that cone counts as in view
     spawnClearance: 14, // metres: a car never spawns this close to another AI car
     spawnSpeedFraction: 0.7, // a respawned car starts moving at this fraction of its lane's cruise speed

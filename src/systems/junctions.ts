@@ -627,7 +627,8 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
       // time to the line while easing to the junction curve's speed (never faster than now)
       const vEnd = mv >= 0 ? J.mvSpeed[mv] : TT.turnSpeedMin;
       const reach = rem / Math.max((car.speed + Math.min(vEnd, car.speed)) / 2, 0.5);
-      const canStop = rem > (car.speed * car.speed) / (2 * TT.brake);
+      // (it must stop where waiting cars stand: front bumper behind the line, clear of the other approaches' curves)
+      const canStop = rem - car.halfL - TT.stopBehindLine - J.edgeStopBack[car.edge] > (car.speed * car.speed) / (2 * TT.brake);
       if (reach < amberLeft(c) - TT.amberMargin || !canStop) car.commit = true;
       else if (atLine && car.waitT > 1 && (myType === MOVE_LEFT || myType === MOVE_UTURN)) car.commit = true; // waited for a gap: clears on amber
       else return HOLD_RED;

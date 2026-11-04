@@ -6,7 +6,7 @@ import type { World } from '../world';
 import { emit } from '../world';
 import { createAiCar, driveAlongPath, stunCheck, syncAi, placeOnEdge, yawQuat, velXZ, pickNext, anyLane, laneStart, stopLine, type AiCar } from './traffic';
 import { isTrafficLane } from './junctions';
-import { inView } from './trafficPopulation';
+import { visible } from './trafficPopulation';
 import { exitVehicle } from './player';
 import { toast } from './hud';
 import type RAPIER from '@dimforge/rapier3d-compat';
@@ -188,7 +188,7 @@ function spawnCar(w: World): void {
       const e = edges[eid];
       if (!isTrafficLane(e) || stopLine(e) - laneStart(e) < 12) continue;
       laneSample(e, laneStart(e) + 5, LP);
-      if (pass === 0 && inView(w.trafficPop, LP.x, LP.y, LP.z)) continue; // never appear in front of the camera
+      if (pass === 0 && visible(w, LP.x, LP.y, LP.z)) continue; // never appear in sight of the camera
       if (goal >= 0 && e.to !== edges[goal].from && router.path(e.to, edges[goal].from) < 0) continue; // no way there
       bestScore = score;
       best = eid;
