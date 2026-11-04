@@ -1,63 +1,83 @@
 # WORKING TITLE: Open City (rename me)
 
 ## What this game is
-A browser-based open-world sandbox in the spirit of GTA free-roam, with NO story, NO cutscenes and NO scripted missions. The city, its economy and its people ARE the game. The player is dropped into a coastal city with a little cash and total freedom. Everything you do earns, costs or changes something.
+A browser-based open-world life sandbox in the spirit of GTA free-roam crossed with a life simulator, with NO story campaign and NO compulsory missions. The city, its economy and its people ARE the game. The player starts in a realistic, 1:1-scale city district (Georgetown, Washington DC) with a home, a little cash and total freedom. Almost everything solid is solid, almost anything hand-sized can be picked up, every building can be entered, and the world remembers what you did. Everything you do earns, costs or changes something.
+
+The full phased plan, its status and open decisions live in docs/ROADMAP.md. Read it before starting a stage.
 
 ## Design pillars (check every feature against these)
-1. Freedom first. The player chooses what to do; the game never forces a path.
-2. Driving and boating must feel great: responsive, weighty, fun to drift and dock. Vehicle feel is the number one polish priority.
-3. Many ways to earn money, legit and risky, on land and water. Money buys vehicles, property and access, which opens more ways to earn.
+1. Freedom first. The player chooses what to do; the game never forces a path. Needs (hunger, energy) nudge, never block.
+2. Driving and boating must feel great: responsive, weighty, fun to drift and dock. Vehicle feel stays the number one polish priority.
+3. Many ways to earn money, legit and risky. Money buys food, goods, vehicles and property, which opens more ways to earn.
 4. A living world of small details: NPC routines, traffic, weather, day and night, shops that open and close, things that react to the player.
-5. Talk to anyone. Every NPC can be approached and spoken to in free text. They remember you and can offer work, refuse, gossip or call the police.
+5. Talk to anyone. Every NPC can be approached and spoken to in free text. They remember you across days, form relationships, and can offer work, refuse, gossip or call the police.
+6. Real systems, not fakes. Solid things collide; loose hand-sized things can be picked up, carried, stored and dropped as the same physical object; doors open; shelves hold real products with prices and owners. No decorative buttons or placeholder animations standing in for gameplay.
+7. The world remembers. Inventory, moved objects, property, relationships, NPC memories and game time persist across sessions.
 
 ## Non-goals
-- No story campaign, no cutscenes, no trailer-style intro. The game opens straight into the world.
-- No copying names, logos, maps, characters or assets from any existing game. All content is original.
-- No photorealism. Clean, colourful low-poly built in code.
+- No story campaign, no trailer-style intro. The game opens straight into the world. Short contextual animations (3 to 5 s, always skippable: eating, sleeping, arrest, arriving at jail, finishing a job) are allowed; long or story cutscenes are not. (Changed 2026-11-05 at the owner's request; previously "no cutscenes".)
+- No copying names, logos, maps, characters or assets from any existing game. Real street names are kept; real business names and brand colours are never used (shops get original names from src/data/poiNames.ts).
+- No Google Maps imagery or 3D models extracted, scraped or repurposed as game assets.
+- No graphic gore and no realistic weapon or escape procedures; action and crime stay stylised and fictional.
 - No multiplayer in v1.
 
-## Core loop
-Explore -> spot an opportunity (NPC, notice board, phone, world event) -> do it (drive, boat, walk, deliver, race, tow, fish) -> get paid -> spend (vehicles, upgrades, property) -> more of the city and more jobs open up.
+## Look
+- Realistic, physically based rendering (PBR materials, image-based lighting, soft shadows, weather, night lighting) that reads like a real city, on a browser budget. (Changed 2026-11-05 at the owner's request; previously low-poly vertex colours.)
+- Textures are generated in code (procedural PBR maps) or come from appropriately licensed sources (CC0 preferred). Every non-procedural asset is listed with its source and licence in assets/LICENSES.md.
+- Graphics quality presets (Low, Medium, High) in the pause menu; Low must stay smooth on a mid-range laptop.
 
-## Money systems (roadmap, build in this order)
-1. Taxi: pick up an NPC, drive to their destination, paid by distance and time. [Day 1]
-2. Courier: package from A to B, bonus if undamaged. [Day 1 if time]
-3. Boat taxi across the bay. [Day 2]
-4. Towing: find broken-down cars, tow them to a garage.
-5. Fishing: from the pier or a boat, sell the catch at market; prices move with supply.
-6. Street racing: entry fee, winnings, police attention.
-7. Scrap and salvage: wrecks you cause become sellable salvage.
-8. Property: buy a garage, then a shop; passive income and upgrades.
-9. Risky work: night smuggling runs by boat; high pay, high police heat.
-Each system lives in its own file under src/systems/economy/ and registers with a JobManager. All payouts and prices live in src/tuning.ts.
+## Core loop
+Explore -> spot an opportunity (NPC, notice board, phone, world event, shop, need) -> do it (drive, walk, deliver, shop, cook, work, race) -> get paid or fed or rested -> spend (food, goods, vehicles, property) -> more of the city and more activities open up.
+
+## Money systems
+Taxi (done), courier, restaurant and shop work, deliveries, office job with a maths test, towing, fishing, street racing, salvage, property income, risky night runs. Each system lives in its own file under src/systems/economy/ and registers with the JobManager. All payouts and prices live in src/tuning.ts or in data files under src/data/ (item catalogue, menus).
 
 ## NPC system
-- Every NPC has: name, job, home, daily routine, mood, a relationship score with the player (-100 to 100), and a memory of the last 5 notable things the player did near them.
-- Walk up and press E to talk. The player types free text. The NPC replies with text AND an optional structured action: offerJob, acceptRide, refuse, giveTip, callPolice, trade.
-- Dialogue goes through a provider interface in src/npc/providers/. V1 uses ScriptedProvider: hand-written personality templates plus keyword matching, zero API cost. An LLMProvider (Claude or OpenAI) is added later behind a small server proxy. Never put an API key in client code.
+- Every NPC has: name, job, home, workplace, daily schedule, personality, interests, mood, a relationship with the player (score -100 to 100 plus a state: stranger, acquaintance, friend, close friend), short-term memory (recent events) and long-term memory (summarised facts from past conversations and deeds).
+- Walk up and press E to talk. The player types free text (quick-reply buttons for touch). The NPC replies with text AND an optional structured action: offerJob, acceptRide, refuse, giveTip, callPolice, trade, sell, invite.
+- Dialogue goes through a provider interface in src/npc/providers/. ScriptedProvider (personality templates, memory-aware, zero cost) is the always-available offline fallback. An LLMProvider (Claude or OpenAI) may be added only with the owner's permission, behind a small server proxy. Never put an API key in client code. Do not introduce paid APIs without permission.
+- Distant NPCs run a cheap schedule simulation; only nearby NPCs are fully simulated.
 
 ## World
-- A coastal city generated from a fixed seed: downtown grid, beach strip, marina, industrial dock, highways between them. V1 is one district of roughly 1 km squared; the generator must be able to scale 10x later.
-- Day and night cycle (24 real minutes = 1 game day), weather (clear, rain), traffic AI on a road graph, pedestrians with routines.
-- Police respond to crime with a heat level of 1 to 5 stars. They lose you when you break line of sight and change vehicle.
+- Georgetown and the Potomac waterfront, Washington DC, at 1:1 scale (1 unit = 1 m), about 2 km across, built from legal open data: road network, sidewalks, buildings and places from Overture Maps (OpenStreetMap-derived, ODbL; places CDLA-Permissive-2.0) and terrain from public elevation tiles, with attribution in the pause menu and README. The older hand-authored approximation (scripts/georgetownFromSpec.mjs) and the grid city (?map=grid) remain as fallbacks.
+- The generator (src/systems/map/) turns the data into roads with lanes, kerbs, crossings, signals, parking, terrain, water, bridges and buildings with facades. Roads are smooth enough to drive; terrain keeps its natural hills.
+- Every building has a working entrance and a deterministic interior generated from its persistent building id (same layout on every visit). Interiors are built only near the player.
+- Day and night cycle (24 real minutes = 1 game day), weather, traffic AI on the road graph with signals and the roundabout rule, pedestrians on the walk graph with routines, shops and restaurants with opening hours.
+- Police respond to crime with a heat level of 1 to 5 stars. They lose you when you break line of sight and change vehicle. Caught: fine or arrest; serious or repeated offences mean jail, a separate scene.
+- GPS routes are drawn ONLY on the minimap and the big map. Never place route lines, arrows or markers in the 3D world for navigation.
+
+## Objects, items and persistence
+- Three object classes through one component registry: static (roads, buildings, stairs, fixed structures: accurate static colliders), dynamic (loose props: Rapier bodies that sleep and are only simulated near the player), interactive (doors, drawers, cupboards, switches, appliances, beds, counters).
+- Items are data-driven: one catalogue of item definitions (name, icon, category, mass, size, stack size, value, use effect) and many item instances (persistent id, definition, owner, container, transform, condition). One pickup / drop / store code path serves every instance; never write a per-product script.
+- If a loose object is small and light enough to hold in one hand, it should be pickable. Picking it up removes it from the world; dropping it puts the same instance back with physics.
+- Ownership: player, NPC, business or public. Buying transfers ownership; leaving a shop with unpaid goods is a crime the witness and police systems handle.
+- Saves are versioned with migrations (IndexedDB, with localStorage only for settings). Persist player state, inventory, moved objects, property, NPC memories and relationships, completed activities, game time and world changes.
+
+## Controls (keyboard and mouse first; touch must stay possible)
+- WASD / arrows move or drive, Shift run, Space jump / handbrake, mouse look (click to lock).
+- E interact: enter or leave a car, talk, pick up, open doors, use furniture, buy at a counter.
+- I inventory (mouse to select, inspect, use, move between containers), G drop the held item, 1-9 or wheel hotbar, left click use / throw / swing.
+- M or clicking the minimap opens the big map (search, destinations, GPS). Mute lives in the pause menu.
+- F3 debug overlay; F4 physics debug view (collision shapes near the player). Esc pause.
 
 ## Tech stack (do not change without asking)
 - TypeScript, Vite, three.js, Rapier physics (@dimforge/rapier3d-compat). No game framework on top.
-- All art generated in code (BufferGeometry, simple materials, vertex colours). No downloaded models or textures in v1.
-- Must hold 60 fps at 1080p in Chrome on a mid-range laptop.
+- Static build (npm run build) deployable to GitHub Pages with npm run deploy. Anything needing a server (an LLM proxy) is optional and off by default.
+- Must hold 60 fps at 1080p in Chrome on a mid-range laptop on the Medium preset: chunk streaming, LOD, instancing, frustum culling, texture compression, physics activation zones and NPC simulation distance are how we pay for the look.
 - Desktop keyboard and mouse first. Touch controls come later; do not block them architecturally.
-- Static build (npm run build) deployable to GitHub Pages with npm run deploy.
 
 ## Code rules
 - One system per file under src/systems/. Shared state in a typed World object. No globals.
-- Every tunable number (speed, grip, payouts, prices, spawn rates) lives in src/tuning.ts with a comment. Never hard-code a gameplay number anywhere else.
+- Every tunable number (speed, grip, payouts, prices, spawn rates, needs rates) lives in src/tuning.ts with a comment, or in a typed data file under src/data/. Never hard-code a gameplay number anywhere else.
 - Keep the game playable after every change. If a change breaks play, revert it.
-- F3 toggles a debug overlay: fps, player position, vehicle speed, current job, heat level.
-- The world seed comes from the URL (?seed=123) so bugs can be reproduced.
+- F3 toggles a debug overlay: fps, player position, vehicle speed, current job, heat level, people target/active.
+- The world seed comes from the URL (?seed=123) so bugs can be reproduced. The seed may vary cars, people, shop names and interiors' contents, never the map.
+- Do not run two incompatible versions of a system (rendering, physics, AI, saves). Extend the existing one or replace it fully.
 
 ## Working agreement with Claude Code
 - Before anything bigger than a tweak: write a short plan (files, steps, biggest risk), ask at most 5 questions, then build.
 - After each feature: run npm run build, open the game in a headless browser (Playwright), save a screenshot to /screenshots/, check the console for errors, fix what you see, then report.
-- Keep DEVLOG.md updated: date, what changed, what to test, known issues.
+- Keep DEVLOG.md updated: date, what changed, what to test, known issues. Keep the status column of docs/ROADMAP.md honest (done / partial / not started).
 - Commit after each working feature with a clear message.
 - When feedback arrives as a measurement ("car spins out above 80 km/h"), change only the named tuning value. Do not refactor unrelated systems.
+- Never claim something was tested if it was not; say what is complete and what is partial.
