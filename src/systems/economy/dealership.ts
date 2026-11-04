@@ -56,6 +56,13 @@ function slotSpot(poi: Poi, i: number): { x: number; z: number } {
   return { x: poi.curbX - nx * D.kerbNudge + fx * off, z: poi.curbZ - nz * D.kerbNudge + fz * off };
 }
 
+/** Kerb display slot `i` of a showroom at `poi` keeps clear of other places' taxi stops and of the traffic lanes. */
+function kerbSlotOk(city: CityMap, poi: Poi, i: number): boolean {
+  const { x, z } = slotSpot(poi, i);
+  if (city.pois.some((q) => q.id !== poi.id && Math.hypot(q.curbX - x, q.curbZ - z) < D.slotClearance)) return false;
+  return !blocksTraffic(city, x, z);
+}
+
 /** The car park (index) with at least lotMinBays bays nearest `poi` within lotSearch, or -1. */
 function lotNear(city: CityMap, poi: Poi): number {
   const bays = new Map<number, { n: number; d: number }>();
@@ -88,31 +95,37 @@ function lotSlots(city: CityMap, lot: number, poi: Poi, n: number): ParkingSpot[
  * car parks (used-car lots), then garages, then shops. A site shows its cars in a car park if one is close, else
  * along its kerb (where at least the first two display slots must keep out of the traffic lanes).
  */
-export function pickDealershipPois(city: CityMap): number[] {
+export function pickDealershipPois(city: CityMap): DealershipSite[] {
   const max = D.maxSites[city.id] ?? D.maxSites.grid;
-  const out: Poi[] = [];
-  // the biggest car park away from the river is the one used-car lot (the waterfront ones stay full of parked cars)
-  const water = city.walk.nodes.filter((n) => n.kind === 'waterfront' || n.kind === 'plaza');
-  const bays = (p: Poi) => { const lot = lotNear(city, p); return lot < 0 ? 0 : city.parkingSpots.filter((s) => s.lot === lot).length; };
-  const usedCarLot = city.pois
-    .filter((p) => p.kind === 'parking' && bays(p) > 0 && !water.some((n) => Math.hypot(n.x - p.x, n.z - p.z) < TUNING.vehicles.waterfrontLotRange))
-    .sort((a, b) => bays(b) - bays(a))[0];
-  const tiers: ((p: Poi) => boolean)[] = [
-    (p) => p.cat === 'shop=car',
-    (p) => p === usedCarLot,
-    (p) => p.kind === 'garage',
-    (p) => p.kind === 'shop',
+  const out: DealershipSite[] = [];
+  // the biggest car park is the one used-car lot (a row of its bays; the rest stays a car park)
+  const lotOf = (p: Poi) => lotNear(city, p);
+  const bays = (lot: number) => (lot < 0 ? 0 : city.parkingSpots.filter((s) => s.lot === lot).length);
+  const usedCarLot = city.pois.filter((p) => p.kind === 'parking' && lotOf(p) >= 0).sort((a, b) => bays(lotOf(b)) - bays(lotOf(a)))[0];
+  // a car dealer and the used-car lot show their cars in the car park; garages and shops at their kerb
+  const tiers: { take: (p: Poi) => boolean; lot: boolean }[] = [
+    { take: (p) => p.cat === 'shop=car', lot: true },
+    { take: (p) => p === usedCarLot, lot: true },
+    { take: (p) => p.kind === 'garage', lot: false },
+    { take: (p) => p.kind === 'shop', lot: false },
   ];
   for (const tier of tiers) {
     for (const p of city.pois) {
       if (out.length >= max) break;
-      if (!tier(p) || out.includes(p)) continue;
-      if (out.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < D.minSiteSpacing)) continue;
-      if (lotNear(city, p) < 0 && (blocksTraffic(city, slotSpot(p, 0).x, slotSpot(p, 0).z) || blocksTraffic(city, slotSpot(p, 1).x, slotSpot(p, 1).z))) continue;
-      out.push(p);
+      if (!tier.take(p) || out.some((s) => s.poiId === p.id)) continue;
+      if (out.some((s) => Math.hypot(city.pois[s.poiId].x - p.x, city.pois[s.poiId].z - p.z) < D.minSiteSpacing)) continue;
+      const lot = tier.lot ? lotOf(p) : -1;
+      if (lot < 0 && (!kerbSlotOk(city, p, 0) || !kerbSlotOk(city, p, 1))) continue;
+      out.push({ poiId: p.id, lot });
     }
   }
-  return out.map((p) => p.id);
+  return out;
+}
+
+/** A dealership's place, and the car park its display cars stand in (-1: at its kerb). */
+export interface DealershipSite {
+  poiId: number;
+  lot: number;
 }
 
 export class DealershipJob implements JobSystem {
@@ -124,10 +137,10 @@ export class DealershipJob implements JobSystem {
   private rng: Rng;
 
   /** Plans a showroom at each POI (display slots in its car park, or along its kerb). Cars are parked by `stockShowrooms`. */
-  constructor(w: World, poiIds: number[]) {
+  constructor(w: World, sitesToPlan: DealershipSite[]) {
     this.rng = new Rng(w.seed ^ 0xdea1);
     const city = w.city;
-    poiIds.forEach((poiId, k) => {
+    sitesToPlan.forEach(({ poiId, lot }, k) => {
       const poi = city.pois[poiId];
       // f: along the kerb, the way traffic in the kerbside lane drives (parked cars face that way);
       // n: from the pavement out into the road (the pavement is on the lane's right-hand side)
@@ -135,15 +148,12 @@ export class DealershipJob implements JobSystem {
       const nx = Math.cos(heading), nz = -Math.sin(heading);
       const stock = D.stock[k % D.stock.length];
       const slots: DisplaySlot[] = [];
-      const lot = lotNear(city, poi);
       if (lot >= 0) {
         lotSlots(city, lot, poi, stock.length).forEach((s, i) => slots.push({ x: s.x, y: s.y, z: s.z, heading: s.heading, type: stock[i], car: null, soldAt: -Infinity }));
       } else {
         stock.forEach((type, i) => {
+          if (!kerbSlotOk(city, poi, i)) return;
           const { x, z } = slotSpot(poi, i);
-          // keep other POIs' taxi stops free, and the traffic lanes
-          if (city.pois.some((q) => q.id !== poiId && Math.hypot(q.curbX - x, q.curbZ - z) < D.slotClearance)) return;
-          if (blocksTraffic(city, x, z)) return;
           slots.push({ x, y: city.heightAt(x, z), z, heading, type, car: null, soldAt: -Infinity });
         });
       }

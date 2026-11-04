@@ -1923,7 +1923,7 @@ export async function geolife(page, S) {
     for (const k of Object.keys(kerbM)) per100[k] = +((cars[k] ?? 0) / kerbM[k] * 100).toFixed(1);
     const street = (name) => { let m = 0, n = 0; for (const s of c.parkingSpots) if (s.street === name) m += s.span ?? 13; for (const r of P.cars) if (r.street === name) n++; return m ? +(n / m * 100).toFixed(1) : null; };
     const lots = {};
-    for (const s of c.parkingSpots) if (s.cls === 'lot') { lots[s.lot] ??= { bays: 0, cars: 0, at: [Math.round(s.x), Math.round(s.z)] }; lots[s.lot].bays++; }
+    for (const s of c.parkingSpots) if (s.cls === 'lot') { lots[s.lot] ??= { bays: 0, cars: 0, at: [Math.round(s.x), Math.round(s.z)], waterfront: P.stats.waterfrontLots.includes(s.lot) }; lots[s.lot].bays++; }
     for (const r of P.cars) if (r.cls === 'lot' && lots[r.lot]) lots[r.lot].cars++;
     // drive into a parked car on M St from 40 m back along its parking lane at ~50 km/h
     const target = P.cars.find((r) => r.street === 'M St NW' && !r.v && !P.cars.some((o) => o !== r && o.street === r.street && Math.hypot(o.x - r.x, o.z - r.z) < 45 && ((o.x - r.x) * Math.sin(r.heading) + (o.z - r.z) * Math.cos(r.heading)) < 0));
@@ -2012,7 +2012,14 @@ export async function geolife(page, S) {
     const bought = { owned: v.owned, forSale: !!v.forSale, paid: 5000 - w.cash };
     window.__ocFrames(3, true);
     const minimap = { ownedCars: window.__ocMinimap.ownedCars, dealerships: window.__ocMinimap.dealerships };
-    // the slot restocks later (out of the parked-car pool: the car list does not grow)
+    // drive it off the showroom (the bought car keeps the slot until it leaves); the slot restocks later out of the
+    // parked-car pool, so the car list does not grow
+    w.input.pressed.add('KeyE'); run(0.3);
+    const drove = { inCar: w.player.vehicle === v, from: [v.px, v.pz] };
+    w.input.keys.add('KeyW'); run(1.6); w.input.keys.delete('KeyW'); run(2);
+    drove.metres = Math.round(Math.hypot(v.px - drove.from[0], v.pz - drove.from[1]));
+    if (w.player.vehicle) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.4); w.input.pressed.add('KeyE'); run(0.3); }
+    if (Math.hypot(v.px - slot.x, v.pz - slot.z) < 6) { window.__mh.put(v.body, slot.x + Math.sin(slot.heading) * 25, slot.z + Math.cos(slot.heading) * 25, 1); run(0.5); } // in case it got stuck
     const slotIdx = site.slots.indexOf(slot);
     slot.soldAt = w.time - 10000;
     window.__mh.put(w.player.body, site.x + 300, site.z, 1.2); run(1.2);
@@ -2022,7 +2029,7 @@ export async function geolife(page, S) {
     const sx = (site.slots[0].x + site.slots[site.slots.length - 1].x) / 2, sz = (site.slots[0].z + site.slots[site.slots.length - 1].z) / 2;
     const fx = Math.sin(site.slots[0].heading), fz = Math.cos(site.slots[0].heading);
     window.__Dcam = { px: sx + fx * 16 + kx * 3, py: 5, pz: sz + fz * 16 + kz * 3, lx: sx, ly: 1.2, lz: sz };
-    return { sites, car: `${v.type} #${v.id}`, player, prompt, bought, minimap, restocked, vehiclesBefore: vehicles0, vehiclesAfter: w.vehicles.length };
+    return { sites, car: `${v.type} #${v.id}`, player, prompt, bought, minimap, drove, restocked, vehiclesBefore: vehicles0, vehiclesAfter: w.vehicles.length, pool: w.parked.stats.pool };
   });
   await frozenShot(page, 'screenshots/29-life-dealer.png', await page.evaluate(() => window.__Dcam));
 
@@ -2035,11 +2042,12 @@ async function lifeShot(page, path, place, f3) {
     const w = window.__oc, c = w.city;
     const p = typeof place === 'string' ? window.__mh.place(place) : place;
     const n = c.walk.nodes[c.nearestWalk(p.x, p.z, p.y ?? NaN)];
-    // along the street: the walk link with the longest run from here
-    let dx = 1, dz = 0;
-    if (n.nbrs.length) { const m = c.walk.nodes[n.nbrs[0]]; const l = Math.hypot(m.x - n.x, m.z - n.z) || 1; dx = (m.x - n.x) / l; dz = (m.z - n.z) / l; }
+    // along the street (a named place: its lane's direction, from above the kerb), else along a walk link
+    let dx = 1, dz = 0, ox = p.x, oz = p.z;
+    if (typeof place === 'string' && p.edge >= 0) { dx = Math.sin(p.heading); dz = Math.cos(p.heading); ox = p.x - Math.cos(p.heading) * 4; oz = p.z + Math.sin(p.heading) * 4; }
+    else if (n.nbrs.length) { const m = c.walk.nodes[n.nbrs[0]]; const l = Math.hypot(m.x - n.x, m.z - n.z) || 1; dx = (m.x - n.x) / l; dz = (m.z - n.z) / l; ox = n.x; oz = n.z; }
     w.debugVisible = f3;
-    return { px: n.x - dx * 16 - dz * 4, py: 7, pz: n.z - dz * 16 + dx * 4, lx: n.x + dx * 20, ly: 0.8, lz: n.z + dz * 20 };
+    return { px: ox - dx * 14, py: 4.5, pz: oz - dz * 14, lx: ox + dx * 30, ly: 1.0, lz: oz + dz * 30 };
   }, [place, f3]);
   await frozenShot(page, path, cam);
   await page.evaluate(() => { window.__oc.debugVisible = false; });

@@ -301,7 +301,7 @@ const RAW = {
 
   peds: {
     maxPopulation: 60, // people created at load (the quality preset's pedBudget caps how many are active: 30 / 45 / 60)
-    recycleDistance: 140, // metres: walkers further than this (and out of view) are moved back near you, to a busy spot
+    recycleDistance: 100, // metres: walkers further than this (and out of view) are moved back near you, to a busy spot (just past the density radius)
     // Crowd density from the map (pedDensity.ts): every walk link gets people-per-metre from the road beside it (or
     // its path kind), the shops / cafes / restaurants / bars near it and the hour; the links around you add up to a
     // real-world head count, which is scaled to the quality budget. People appear and leave out of view to follow it.

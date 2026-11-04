@@ -12,7 +12,7 @@
 import * as THREE from 'three';
 import { TUNING, type CarTypeName } from '../tuning';
 import type { World } from '../world';
-import type { ParkingSpot } from './map/cityMap';
+import type { CityMap, ParkingSpot } from './map/cityMap';
 import { spawnVehicle, repaintVehicle, rideHeight, syncVehicleMesh, type Vehicle } from './vehicles';
 import { buildCarBody, carMaterial } from '../art/car';
 import { Rng } from '../rng';
@@ -69,7 +69,7 @@ export interface ParkedState {
   lastX: number;
   lastZ: number;
   dirty: boolean;
-  stats: { cars: number; kerb: number; lot: number; byClass: Record<string, number>; live: number; drawn: number; poolGrown: number; promoted: number; released: number; pool: number };
+  stats: { cars: number; kerb: number; lot: number; byClass: Record<string, number>; live: number; drawn: number; poolGrown: number; promoted: number; released: number; pool: number; waterfrontLots: number[] };
 }
 
 // ------------------------------------------------------------------------------------------- instanced meshes
@@ -150,6 +150,27 @@ function setPose(w: World, r: ParkedCar): void {
 }
 
 /**
+ * Car parks by the river: those whose bays' middle is within waterfrontLotRange of the waterfront promenade or a
+ * plaza (a Set of car park indices). Shared by the parked-car fill and the dealerships (which leave them alone).
+ */
+export function waterfrontLots(c: CityMap): Set<number> {
+  const sum = new Map<number, { x: number; z: number; n: number }>();
+  for (const s of c.parkingSpots) {
+    if (s.lot < 0) continue;
+    const m = sum.get(s.lot) ?? { x: 0, z: 0, n: 0 };
+    m.x += s.x; m.z += s.z; m.n++;
+    sum.set(s.lot, m);
+  }
+  const water = c.walk.nodes.filter((n) => n.kind === 'waterfront' || n.kind === 'plaza');
+  const out = new Set<number>();
+  for (const [lot, m] of sum) {
+    const x = m.x / m.n, z = m.z / m.n;
+    if (water.some((n) => Math.hypot(n.x - x, n.z - z) < V.waterfrontLotRange)) out.add(lot);
+  }
+  return out;
+}
+
+/**
  * Fill the map's parking spots: kerbside spots by street class at parkedCarsPer100m (a spot stands for its span of
  * kerb), car park bays at lotFill (waterfront car parks at waterfrontLotFill), clear of `keep` (your starting cars,
  * dealership showrooms) and of the spawn. Then the pool of drivable stand-ins and the instanced meshes.
@@ -161,16 +182,8 @@ export function createParkedCars(w: World, keep: readonly { x: number; z: number
   const lotFill = V.lotFill[c.id] ?? 0;
   const start = c.spawn;
   // car parks by the water fill up
-  const waterNodes = c.walk.nodes.filter((n) => n.kind === 'waterfront' || n.kind === 'plaza');
-  const lotIsWaterfront = new Map<number, boolean>();
-  const waterfrontLot = (s: ParkingSpot) => {
-    let v = lotIsWaterfront.get(s.lot);
-    if (v === undefined) {
-      v = waterNodes.some((n) => Math.hypot(n.x - s.x, n.z - s.z) < V.waterfrontLotRange);
-      lotIsWaterfront.set(s.lot, v);
-    }
-    return v;
-  };
+  const wlots = waterfrontLots(c);
+  const waterfrontLot = (s: ParkingSpot) => wlots.has(s.lot);
   const weights = V.parkedTypeWeights as Record<CarTypeName, number>;
   const wSum = TYPES.reduce((a, t) => a + weights[t], 0);
   const pickType = () => {
@@ -219,7 +232,7 @@ export function createParkedCars(w: World, keep: readonly { x: number; z: number
   }
   const S: ParkedState = {
     cars, free, meshes, minX, minZ, cols, rows, start: startIdx, items, refreshT: 0, lastX: Infinity, lastZ: Infinity, dirty: true,
-    stats: { cars: cars.length, kerb, lot, byClass, live: 0, drawn: 0, poolGrown: 0, promoted: 0, released: 0, pool: 0 },
+    stats: { cars: cars.length, kerb, lot, byClass, live: 0, drawn: 0, poolGrown: 0, promoted: 0, released: 0, pool: 0, waterfrontLots: [...wlots] },
   };
   w.parked = S;
   // the pool of drivable stand-ins (idle until a parked car near you needs one)
