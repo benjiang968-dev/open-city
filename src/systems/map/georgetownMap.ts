@@ -122,7 +122,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     }
     const info = { fwd: [] as number[], bwd: [] as number[], parkR, parkL, cls };
     polyLanes.push(info);
-    const tA = passThrough(P.nodeA) ? 0 : P.trimA, tB = passThrough(P.nodeB) ? 0 : P.trimB;
+    // trims: none at pass-through nodes; at a dead end (mostly roads leaving the map) room to turn round before it
+    const trimAt = (node: number, t: number) => (passThrough(node) ? 0 : nodes[node].deadEnd ? Math.max(t, M.deadEndTurnRoom) : t);
+    const tA = trimAt(P.nodeA, P.trimA), tB = trimAt(P.nodeB, P.trimB);
     const speed = P.maxspeed ? P.maxspeed / 3.6 : M.classSpeed[cls];
     // the junction surface is flat at the node's height over the plateau at each end (the exported profile keeps
     // following the terrain there): lane points inside the plateaus take the node height

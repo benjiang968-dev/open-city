@@ -51,6 +51,7 @@ const RAW = {
     parkingCrossingGap: 5, // metres of kerb kept free either side of a pedestrian crossing
     parkingRankGap: 18, // metres of kerb kept free either side of a taxi rank
     parkingBusStopGap: 12, // metres of kerb kept free either side of a bus stop
+    deadEndTurnRoom: 12, // metres before a dead end (a road leaving the map) where cars turn round (real maps)
     parkingLaneCost: 3, // RoadRouter: driving along a parking lane costs this many times its travel time (routes keep out)
     // walk graph building (real maps)
     walkNodeSpacing: 12, // metres between walk nodes along sidewalks and paths
@@ -268,6 +269,7 @@ const RAW = {
     swerveSpeed: 14, // m/s
     swerveOffset: 2.4, // metres sideways when swerving
     sideGap: 0.15, // metres: another car counts as in our path if the gap between the two bodies' sides is less than this
+    bodyRound: 0.3, // metres: AI car bodies (pitch locked) have edges this round, so they ride over kerbs and grade changes
     spawnMinDistFromPlayer: 25,
   },
 
