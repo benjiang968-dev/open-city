@@ -12,10 +12,11 @@ import { laneSample, projectOnLane, type LaneEdge, type LaneHit, type LanePoint 
 import { makeAiCarGeometry, carMaterial } from '../art/car';
 import { GROUPS } from '../physicsGroups';
 import {
-  TURN_SEGS, laneStart, stopLine, isUTurn, isTrafficLane, turnCurve, findMove, junctionHold, exitHasSpace, ringBlocked, updateJunctions,
-  HOLD_GO, CTL_NONE, CTL_SIGNALS, CTL_RING, LIGHT_RED,
+  TURN_SEGS, laneStart, stopLine, isUTurn, isTrafficLane, turnCurve, findMove, junctionHold, exitHasSpace, ringBlocked, updateJunctions, boxBlocked,
+  HOLD_GO, HOLD_BOX, CTL_NONE, CTL_SIGNALS, CTL_RING, LIGHT_RED,
 } from './junctions';
 import { auditTraffic, type TrafficStats, createTrafficStats } from './trafficAudit';
+import { inView } from './trafficPopulation';
 
 export { laneStart, stopLine, isUTurn };
 
@@ -55,6 +56,8 @@ export interface AiCar {
   holdT: number;
   /** Committed to cross on amber (too close to stop). */
   commit: boolean;
+  /** Given the go while waiting short of the line: drives on and crosses unless the junction box is taken. */
+  cleared: boolean;
   /** Metres to the right of its lane's centre line the car still is (a lane change in progress); eases to 0. */
   latOff: number;
   /** Lane the car is changing toward before the junction (-1: none) and the move it plans from there. */
@@ -248,7 +251,7 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
   const car: AiCar = {
     id: kind === 'police' ? w.police?.cars?.length ?? 0 : w.traffic.length, kind, type, body, collider, mesh, meshYOffset: rideY - halfH, halfW: hx, halfL: hz,
     edge, next: -1, move: -1, phase: 'lane', s: 0, turnPts: new Float32Array((TURN_SEGS + 1) * 2), turnCum: new Float32Array(TURN_SEGS + 1), turnLen: 0.01,
-    speed: 0, heading: 0, waitT: 0, stopT: 0, arriveT: 0, hold: HOLD_GO, holdT: 0, commit: false, latOff: 0, target: -1, planMove: -1, lcCool: 0,
+    speed: 0, heading: 0, waitT: 0, stopT: 0, arriveT: 0, hold: HOLD_GO, holdT: 0, commit: false, cleared: false, latOff: 0, target: -1, planMove: -1, lcCool: 0,
     honkCd: 0, blockedT: 0, swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, py: 0, pz: 0, lastSetHeading: NaN,
     active: true, respawnWanted: false, respawns: 0, searchEdge: -1,
   };
@@ -407,11 +410,12 @@ function turnPathDist(w: World, car: AiCar): void {
 export function obstacleAhead(w: World, car: AiCar, look: number): { dist: number; player: boolean } {
   const px = car.px, py = car.py, pz = car.pz, fx = Math.sin(car.heading), fz = Math.cos(car.heading), half = car.halfL, side = car.halfW + TT.sideGap;
   const lg = TT.levelGap, gr = TT.levelGrade, turning = car.phase === 'turn';
+  const nudge = turning && car.stuckT > TT.boxNudgeTime; // stuck in the junction: other AI cars no longer hold it back
   let best = Infinity, isPlayer = false;
   const traffic = w.traffic;
   for (let i = 0; i < traffic.length; i++) {
     const o = traffic[i];
-    if (o === car) continue;
+    if (o === car || (turning && (o.phase === 'wait' || nudge))) continue; // a car waiting at its line stands clear of the box
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
     if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW || Math.abs(o.py - py) > lg + along * gr) continue;
     if (turning) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
@@ -421,7 +425,7 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
   const police = w.police.cars;
   for (let i = 0; i < police.length; i++) {
     const o = police[i];
-    if (o === car) continue;
+    if (o === car || nudge) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
     if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW || Math.abs(o.py - py) > lg + along * gr) continue;
     if (turning) { PL[0] = o.px; PL[1] = o.pz; turnPathDist(w, car); if (PL[2] > side + o.halfW) continue; } // clear of the curve
@@ -489,6 +493,7 @@ function enterNext(w: World, car: AiCar, extra: number, isTraffic: boolean, rng:
   car.hold = HOLD_GO;
   car.holdT = 0;
   car.commit = false;
+  car.cleared = false;
   if (isTraffic && !car.chooser) planMove(w, car, rng);
 }
 
@@ -531,7 +536,7 @@ function startCrossing(w: World, car: AiCar, extra: number, isTraffic: boolean, 
   buildTurn(w, car);
 }
 
-/** Stand at the stop line and wait for the junction (junctionHold is asked again every 0.1 s). */
+/** Stand at the stop line (front bumper at it) and wait for the junction (junctionHold is asked again every 0.1 s). */
 function toWait(w: World, car: AiCar): void {
   car.phase = 'wait';
   car.holdT = 0.1;
@@ -539,7 +544,8 @@ function toWait(w: World, car: AiCar): void {
   car.stopT = 0;
   car.arriveT = w.time;
   car.commit = false;
-  car.s = stopLine(w.city.roads.edges[car.edge]);
+  car.cleared = false;
+  car.s = Math.min(car.s, stopLine(w.city.roads.edges[car.edge]));
 }
 
 /** Steers the body along its lane at `want` m/s. Handles lane/junction transitions. */
@@ -556,7 +562,9 @@ export function driveAlongPath(w: World, car: AiCar, want: number, dt: number, r
       chooseNext(w, car, rng);
       if (car.next < 0) car.s = stop; // nowhere to go (broken data): stand at the stop line
       else {
-        const hold = isTraffic ? junctionHold(w, car, car.speed < 0.5) : HOLD_GO;
+        // (a car given the go short of the line only checks that the junction box is still clear)
+        const hold = !isTraffic ? HOLD_GO : car.cleared ? (boxBlocked(w, car) ? HOLD_BOX : HOLD_GO) : junctionHold(w, car, car.speed < 0.5);
+        if (hold !== HOLD_GO && car.cleared) w.trafficSim.stats.clearedHeld++;
         if (hold !== HOLD_GO) {
           car.hold = hold;
           toWait(w, car);
@@ -756,7 +764,8 @@ export function updateTraffic(w: World, dt: number): void {
       continue;
     }
     if (car.respawnWanted) {
-      // shoved off the road or gridlocked: stand still until the population manager moves it out of sight
+      // shoved off the road, gridlocked or leaving the map: stand still until the population manager moves it
+      car.stuckT += dt;
       car.speed = 0;
       const lv = car.body.linvel();
       car.body.setLinvel(velXZ(lv.x * 0.8, lv.y, lv.z * 0.8), true);
@@ -776,10 +785,17 @@ export function updateTraffic(w: World, dt: number): void {
         car.hold = junctionHold(w, car, true);
         if (car.hold === HOLD_GO) {
           const mv = car.move;
-          startCrossing(w, car, 0, true, rng);
-          e = edges[car.edge];
-          const turning = (car.phase as AiCar['phase']) === 'turn';
-          want = turning ? (mv >= 0 ? J.mvSpeed[mv] : TT.turnSpeedMin) : e.speed;
+          if (stopLine(e) - car.s > 0.5) {
+            // standing short of the line (bumper at it): drive up and cross
+            car.phase = 'lane';
+            car.cleared = true;
+            want = mv >= 0 ? J.mvSpeed[mv] : TT.turnSpeedMin;
+          } else {
+            startCrossing(w, car, 0, true, rng);
+            e = edges[car.edge];
+            const turning = (car.phase as AiCar['phase']) === 'turn';
+            want = turning ? (mv >= 0 ? J.mvSpeed[mv] : TT.turnSpeedMin) : e.speed;
+          }
         }
       }
     } else if (car.phase === 'turn') {
@@ -791,16 +807,19 @@ export function updateTraffic(w: World, dt: number): void {
       if (e.roundabout && car.next >= 0 && stopLine(e) - car.s < 20) ringExitCheck(w, car);
       const rem = stopLine(e) - car.s;
       let vEnd = car.move >= 0 ? J.mvSpeed[car.move] : car.target >= 0 ? e.speed : TT.turnSpeedMin;
-      if (c.kind !== 0 && car.next >= 0) {
+      let remStop = rem;
+      if (c.kind !== 0 && car.next >= 0 && !car.cleared) {
         if (rem < (car.speed * car.speed) / (2 * TT.approachDecel) + TT.decideDist) {
           car.holdT -= dt;
           if (car.holdT <= 0) { car.holdT = 0.15; car.hold = junctionHold(w, car, false); }
         } else car.hold = HOLD_GO;
-        if (car.hold !== HOLD_GO) vEnd = 0;
+        if (car.hold !== HOLD_GO) { vEnd = 0; remStop = rem - car.halfL - TT.stopBehindLine - J.edgeStopBack[car.edge]; } // front bumper at the line
       }
-      want = Math.min(want, Math.sqrt(vEnd * vEnd + 2 * TT.approachDecel * Math.max(0, rem)));
+      // a road leaving the map: the car drives off it (moved near the player again once out of sight)
+      if (J.mapEdge[e.to] && rem < 10 && !car.keep && !inView(w.trafficPop, car.px, car.py - 0.62, car.pz)) { car.respawnWanted = true; w.trafficSim.stats.leftMap++; }
+      want = Math.min(want, Math.sqrt(vEnd * vEnd + 2 * TT.approachDecel * Math.max(0, remStop)));
       if (car.speed < 0.5) car.commit = false;
-      if (car.hold !== HOLD_GO && rem < 1.5 && car.speed < 1) toWait(w, car); // pulled up at the line: wait there
+      if (car.hold !== HOLD_GO && remStop < 1 && car.speed < 1) toWait(w, car); // pulled up at the line: wait there
     }
     const ob = obstacleAhead(w, car, TT.followGap + car.speed * 1.2);
     if (ob.dist < Infinity) want = Math.min(want, Math.max(0, (ob.dist - 2.5) * 0.9));

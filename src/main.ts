@@ -13,8 +13,8 @@ import { createPlayer, updatePlayer } from './systems/player';
 import { spawnInitialVehicles, updateVehicles, detectCrashes, wreckMaterial } from './systems/vehicles';
 import { createHud, showHud, updateHud } from './systems/hud';
 import { createDebug, updateDebug } from './systems/debug';
-import { spawnTraffic, updateTraffic, syncTraffic, placeOnEdge } from './systems/traffic';
-import { createJunctions } from './systems/junctions';
+import { spawnTraffic, updateTraffic, syncTraffic, placeOnEdge, type AiCar } from './systems/traffic';
+import { createJunctions, findMove, ringDist, turnCurve, TURN_SEGS } from './systems/junctions';
 import { placeInitialTraffic, updateTrafficPopulation } from './systems/trafficPopulation';
 import { createSignalHeads, updateSignalHeads } from './systems/signalHeads';
 import { resetTrafficStats } from './systems/trafficAudit';
@@ -138,7 +138,13 @@ async function boot() {
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
-  (window as unknown as { __ocTraffic: unknown }).__ocTraffic = { placeOnEdge: (car: Parameters<typeof placeOnEdge>[1], edge: number, s0: number) => placeOnEdge(w, car, edge, s0), resetStats: () => resetTrafficStats(w.trafficSim.stats) };
+  (window as unknown as { __ocTraffic: unknown }).__ocTraffic = {
+    placeOnEdge: (car: AiCar, edge: number, s0: number) => placeOnEdge(w, car, edge, s0),
+    resetStats: () => resetTrafficStats(w.trafficSim.stats),
+    findMove: (a: number, b: number) => findMove(w.junctions, a, b),
+    ringDist: (car: AiCar, node: number) => ringDist(w, car, node),
+    turnCurve: (a: number, b: number) => { const P = new Float32Array(2 * (TURN_SEGS + 1)), C = new Float32Array(TURN_SEGS + 1); turnCurve(w.city.roads.edges[a], w.city.roads.edges[b], P, C); return Array.from(P); },
+  };
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {

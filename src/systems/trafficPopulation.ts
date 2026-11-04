@@ -208,6 +208,7 @@ export function updateTrafficPopulation(w: World): void {
     if (car.keep) continue;
     const dx = car.px - pp.x, dz = car.pz - pp.z;
     const far = dx * dx + dz * dz > R2;
-    if ((far || car.respawnWanted) && !inView(P, car.px, car.py - 0.62, car.pz)) respawnCar(w, car);
+    // out of sight, or (a car stranded in the road for good) even in view: a gridlock must not last for ever
+    if ((far || car.respawnWanted) && (!inView(P, car.px, car.py - 0.62, car.pz) || (car.respawnWanted && car.stuckT > 2 * TT.stuckRecycle))) respawnCar(w, car);
   }
 }

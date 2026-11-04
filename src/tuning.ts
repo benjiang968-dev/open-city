@@ -304,10 +304,17 @@ const RAW = {
     gapTime: 4, // seconds: a car with priority this close (in time) to the junction blocks a crossing or turning move
     gapDist: 70, // metres: cars with priority farther than this are ignored by gap acceptance
     maxYieldWait: 12, // seconds: after waiting this long at a give-way line, only cars under 1.5 s away hold a car back
-    conflictDist: 1.7, // metres: two junction paths that come closer than this conflict (cross or merge)
+    conflictDist: 2.9, // metres: two junction paths that come closer than this conflict (two car widths and some slack: cars lag their curve a little)
     exitSpace: 3, // metres of free lane needed beyond a car's length past the junction before it enters (never block the box)
+    boxReserveTime: 1.2, // seconds: a car given the go this close to its stop line counts as in the junction already
     exitSpaceSpeed: 3, // m/s: a car on the exit lane slower than this counts as queuing there
     amberMargin: 0.3, // seconds: on amber a car goes only if it reaches the stop line this long before red
+    stopBehindLine: 0.5, // metres between a waiting car's front bumper and the stop line
+    stopClearance: 2.3, // metres: a waiting car stands back until its front is this far from every other approach's junction curve ...
+    stopBackMax: 8, // ... but never more than this many metres behind the line
+    boxNudgeTime: 6, // seconds stopped inside a junction after which other AI cars no longer hold a car back (breaks a mutual block)
+    uTurnReach: 2.5, // metres a U-turn's curve reaches forward beyond the width it turns across (dead ends)
+    mapEdgeRange: 40, // metres: a dead end this close to the map's edge is a road leaving the map (cars drive off it)
     // roundabout (Washington Circle): entering cars yield to circulating ones
     ringYieldDist: 34, // metres along the ring: circulating cars closer than this to an entry ...
     ringYieldTime: 3.6, // ... and under this many seconds away make entering cars wait
@@ -324,8 +331,13 @@ const RAW = {
     stuckReport: 20, // seconds stopped that count as stuck (gridlock) in the audit
   },
   signals: {
-    green: 15, // seconds of green for the phase carrying a junction's biggest road
-    greenSide: 9, // seconds of green for every other phase
+    // actuated: detector loops at the stop lines (AI cars and your car) call a phase and keep it green while traffic comes
+    green: 18, // seconds: longest green for a phase carrying a junction's biggest road
+    greenSide: 10, // seconds: longest green for every other phase
+    minGreen: 6, // seconds: shortest green
+    detectDist: 70, // metres: a car this close to a red stop line calls its phase
+    passageDist: 30, // metres: a car still driving toward a green stop line within this keeps the green (up to the longest green)
+    checkEvery: 0.5, // seconds between detector checks during a green
     amber: 3, // seconds of amber
     allRed: 1.5, // seconds of all-red between phases
     pedPhase: 7, // seconds of all-red (people cross) at a signal with only one traffic phase (a mid-block crossing)

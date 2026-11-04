@@ -10,7 +10,7 @@
 // Built once per map from the CityMap road graph (any map: the grid has only all-way and priority junctions).
 import { TUNING } from '../tuning';
 import type { World } from '../world';
-import { laneSample, type CityMap, type LaneEdge, type LanePoint } from './map/cityMap';
+import { laneSample, type CityMap, type LaneEdge, type LaneHit, type LanePoint } from './map/cityMap';
 import type { AiCar } from './traffic';
 
 const TT = TUNING.traffic;
@@ -80,8 +80,8 @@ export function turnCurve(e: LaneEdge, n: LaneEdge, P: Float32Array, C: Float32A
   const cross = d1x * d2z - d1z * d2x, dot = d1x * d2x + d1z * d2z;
   let cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
   if (dot < -0.5) {
-    cx += d1x * gap * 0.9;
-    cz += d1z * gap * 0.9;
+    cx += d1x * (gap * 0.9 + TT.uTurnReach);
+    cz += d1z * (gap * 0.9 + TT.uTurnReach);
   } else if (Math.abs(cross) > 0.05) {
     const t = (rx * d2z - rz * d2x) / cross;
     if (t > 0 && t < gap * 2) { cx = a.x + d1x * t; cz = a.z + d1z * t; }
@@ -118,6 +118,8 @@ export interface NodeCtl {
   phase: number;
   stage: number; // 0 green, 1 amber, 2 all-red
   t: number; // seconds into the stage
+  /** Seconds until the green is checked again (detectors: is anyone else waiting, is traffic still coming?). */
+  checkT: number;
 }
 
 export interface JunctionState {
@@ -140,11 +142,22 @@ export interface JunctionState {
   edgeLanes: Int8Array;
   /** Group id (same from, to, road): the rightmost lane's id. */
   edgeGroup: Int32Array;
+  /**
+   * Metres further back than the stop line a car waiting in this lane stands, so that its body stays clear of the
+   * other approaches' junction curves (tight or skewed junctions, where the curves cut past the stop lines).
+   */
+  edgeStopBack: Float32Array;
   /** Light shown to this lane at its `to` node (LIGHT_*). */
   light: Uint8Array;
   /** Set when any light changed (signalHeads.ts redraws, then clears it). */
   lightsChanged: boolean;
   signalNodes: number[];
+  /** The lane the player's car is driving toward a junction on (-1: none) and how far along it: signals detect it too. */
+  playerEdge: number;
+  playerS: number;
+  playerCheck: number;
+  /** Per node: a dead end at the edge of the map (a road leaving it): traffic drives off there instead of turning round. */
+  mapEdge: Uint8Array;
 }
 
 // ------------------------------------------------------------------------------------------- build
@@ -220,7 +233,7 @@ export function createJunctions(map: CityMap): JunctionState {
   }
   // ---- moves ----
   const mvIn: number[] = [], mvOut: number[] = [], mvType: number[] = [], mvOk: number[] = [], mvSpeed: number[] = [], mvNode: number[] = [];
-  const edgeM0 = new Int32Array(E), edgeMN = new Uint8Array(E);
+  const edgeM0 = new Int32Array(E), edgeMN = new Uint8Array(E), edgeStopBack = new Float32Array(E);
   const ctls: NodeCtl[] = [];
   const P = new Float32Array(2 * (TURN_SEGS + 1)), C = new Float32Array(TURN_SEGS + 1);
   const rankOf = (e: LaneEdge) => TT.classRank[e.cls];
@@ -298,6 +311,28 @@ export function createJunctions(map: CityMap): JunctionState {
         conflict[i * nm + j] = conflict[j * nm + i] = c;
       }
     }
+    // ---- where waiting cars stand: back from the line until clear of the other approaches' curves ----
+    for (const id of node.in) {
+      const a = edges[id];
+      if (!isTrafficLane(a) || node.deadEnd) continue;
+      const f = laneSample(a, Math.max(laneStart(a), stopLine(a) - TT.stopBehindLine), LA);
+      const fx = f.x, fz = f.z, dx = Math.sin(f.heading), dz = Math.cos(f.heading);
+      let back = 0;
+      for (; back < TT.stopBackMax; back += 0.5) {
+        // the front of a waiting car: from its bumper `back` metres behind the line to 4 m further back
+        const ax = fx - dx * back, az = fz - dz * back, bx = ax - dx * 4, bz = az - dz * 4;
+        let clear = true;
+        for (let i = 0; i < nm && clear; i++) {
+          if (edgeAp[mvIn[m0 + i]] === edgeAp[id]) continue; // our own approach's moves start beside us
+          const o = i * 2 * (TURN_SEGS + 1);
+          for (let j = 0; j < TURN_SEGS && clear; j++) {
+            if (segSegDist(ax, az, bx, bz, curves[o + j * 2], curves[o + j * 2 + 1], curves[o + j * 2 + 2], curves[o + j * 2 + 3]) < TT.stopClearance) clear = false;
+          }
+        }
+        if (clear) break;
+      }
+      edgeStopBack[id] = Math.min(back, Math.max(0, stopLine(a) - laneStart(a) - 6));
+    }
     // ---- control ----
     const apCount = apKeys.length;
     const apRank = Int8Array.from(apRankL), apHeading = Float32Array.from(apHeadL);
@@ -329,10 +364,12 @@ export function createJunctions(map: CityMap): JunctionState {
         greensL.push(apRankL[a] === majorRank && ph === 0 ? SG.green : SG.greenSide);
       }
       if (phases === 1) { pedPhase = true; phases = 2; greensL.push(SG.pedPhase); }
+      // a phase carrying the junction's biggest road gets the long green
+      for (let p = 0; p < phases; p++) if (!(pedPhase && p === phases - 1) && apRankL.some((r, a) => apPhase[a] === p && r === majorRank)) greensL[p] = SG.green;
     }
     const ctl: NodeCtl = {
       id: node.id, kind, m0, nm, conflict, apCount, apRank, apHeading, majorRank,
-      phases, pedPhase, apPhase, greens: Float32Array.from(greensL), phase: 0, stage: 0, t: 0,
+      phases, pedPhase, apPhase, greens: Float32Array.from(greensL), phase: 0, stage: 0, t: 0, checkT: 0,
     };
     ctls.push(ctl);
   }
@@ -340,16 +377,21 @@ export function createJunctions(map: CityMap): JunctionState {
     nodes: ctls,
     mvIn: Int32Array.from(mvIn), mvOut: Int32Array.from(mvOut), mvType: Uint8Array.from(mvType), mvOk: Uint8Array.from(mvOk),
     mvSpeed: Float32Array.from(mvSpeed), mvNode: Int32Array.from(mvNode),
-    edgeM0, edgeMN, edgeAp, edgeRank, edgeLanes, edgeGroup,
-    light: new Uint8Array(E).fill(LIGHT_NONE), lightsChanged: true,
+    edgeM0, edgeMN, edgeAp, edgeRank, edgeLanes, edgeGroup, edgeStopBack,
+    light: new Uint8Array(E).fill(LIGHT_NONE), lightsChanged: true, playerEdge: -1, playerS: 0, playerCheck: 0,
     signalNodes: ctls.filter((c) => c.kind === CTL_SIGNALS).map((c) => c.id),
+    mapEdge: Uint8Array.from(nodes, (n) => {
+      const b = map.bounds, m = TT.mapEdgeRange;
+      return n.deadEnd && (n.x < b.minX + m || n.x > b.maxX - m || n.z < b.minZ + m || n.z > b.maxZ - m) ? 1 : 0;
+    }),
   };
-  // stagger the cycles: each signal starts at its own point of the cycle (from its id, never the seed)
+  // signals start green for their biggest road; fixed-time crossings are staggered (from the id, never the seed)
   for (const id of J.signalNodes) {
     const c = ctls[id];
     let cycle = 0;
     for (let p = 0; p < c.phases; p++) cycle += c.greens[p] + (c.pedPhase && p === c.phases - 1 ? 0 : SG.amber + SG.allRed);
-    advanceSignal(c, ((id * 7919) % 1000) / 1000 * cycle);
+    if (c.pedPhase) advanceFixed(c, ((id * 7919) % 1000) / 1000 * cycle);
+    else c.t = ((id * 7919) % 1000) / 1000 * SG.minGreen;
     setLights(J, map, c);
   }
   return J;
@@ -360,8 +402,8 @@ function stageTime(c: NodeCtl): number {
   const ped = c.pedPhase && c.phase === c.phases - 1;
   return c.stage === 0 ? c.greens[c.phase] : ped ? 0 : c.stage === 1 ? SG.amber : SG.allRed;
 }
-/** Advance a signal's clock; returns true if its stage changed. */
-function advanceSignal(c: NodeCtl, dt: number): boolean {
+/** Advance a fixed-time signal's clock (a mid-block crossing: traffic, then the walk phase); true if its stage changed. */
+function advanceFixed(c: NodeCtl, dt: number): boolean {
   c.t += dt;
   let changed = false;
   for (let guard = 0; guard < 16 && c.t >= stageTime(c); guard++) {
@@ -382,13 +424,87 @@ function setLights(J: JunctionState, map: CityMap, c: NodeCtl): void {
     if (J.light[e] !== L) { J.light[e] = L; J.lightsChanged = true; }
   }
 }
-/** Run the signal clocks (every simulation step). */
+/**
+ * Is there traffic for this phase: a car on one of its approaches within `near` metres of the stop line (with
+ * `moving`: still driving toward it, or already close), or the player's car? (detector loops at the stop lines)
+ */
+function phaseDemand(w: World, J: JunctionState, c: NodeCtl, phase: number, near: number, moving: boolean): boolean {
+  const edges = w.city.roads.edges;
+  const t = w.traffic;
+  for (let i = 0; i < t.length; i++) {
+    const o = t[i];
+    if (o.phase === 'turn' || o.respawnWanted) continue;
+    const e = edges[o.edge];
+    if (e.to !== c.id) continue;
+    const ap = J.edgeAp[o.edge];
+    if (ap < 0 || c.apPhase[ap] !== phase) continue;
+    const rem = stopLine(e) - o.s;
+    if (rem > near || (moving && o.speed < 1 && rem > 8)) continue;
+    return true;
+  }
+  if (J.playerEdge >= 0) {
+    const e = edges[J.playerEdge], ap = J.edgeAp[J.playerEdge];
+    if (e.to === c.id && ap >= 0 && c.apPhase[ap] === phase && stopLine(e) - J.playerS < near) return true;
+  }
+  return false;
+}
+
+/**
+ * Actuated signal: green for at least minGreen, then held while traffic keeps coming on it (up to its maximum) or
+ * while nobody waits elsewhere; amber; all-red; then the next phase that has traffic waiting (else the main road).
+ * Returns true if the lights changed.
+ */
+function stepSignal(w: World, J: JunctionState, c: NodeCtl, dt: number): boolean {
+  if (c.pedPhase) return advanceFixed(c, dt);
+  c.t += dt;
+  if (c.stage === 0) {
+    if (c.t < SG.minGreen) return false;
+    c.checkT -= dt;
+    if (c.checkT > 0) return false;
+    c.checkT = SG.checkEvery;
+    let other = false;
+    for (let p = 0; p < c.phases && !other; p++) if (p !== c.phase && phaseDemand(w, J, c, p, SG.detectDist, false)) other = true;
+    if (!other) return false; // nobody waiting elsewhere: rest in green
+    if (c.t < c.greens[c.phase] && phaseDemand(w, J, c, c.phase, SG.passageDist, true)) return false; // traffic still coming
+    c.stage = 1;
+    c.t = 0;
+    return true;
+  }
+  if (c.stage === 1) {
+    if (c.t < SG.amber) return false;
+    c.stage = 2;
+    c.t = 0;
+    return true;
+  }
+  if (c.t < SG.allRed) return false;
+  let next = -1;
+  for (let k = 1; k <= c.phases && next < 0; k++) {
+    const p = (c.phase + k) % c.phases;
+    if (phaseDemand(w, J, c, p, SG.detectDist, false)) next = p;
+  }
+  c.phase = next >= 0 ? next : 0;
+  c.stage = 0;
+  c.t = 0;
+  c.checkT = 0;
+  return true;
+}
+
+const PH: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+/** Run the signals (every simulation step). */
 export function updateJunctions(w: World, dt: number): void {
   const J = w.junctions;
+  // the player's car on the detectors (a few times a second)
+  J.playerCheck -= dt;
+  if (J.playerCheck <= 0) {
+    J.playerCheck = 0.1;
+    J.playerEdge = -1;
+    const v = w.player.vehicle;
+    if (v && w.city.nearestLane(v.px, v.pz, 5, PH, v.py - 0.5) && Math.cos(PH.heading - v.heading) > 0.5) { J.playerEdge = PH.edge; J.playerS = PH.s; }
+  }
   const ids = J.signalNodes;
   for (let i = 0; i < ids.length; i++) {
     const c = J.nodes[ids[i]];
-    if (advanceSignal(c, dt)) setLights(J, w.city, c);
+    if (stepSignal(w, J, c, dt)) setLights(J, w.city, c);
   }
 }
 /** Seconds of amber left at this signal (0 if it is not amber). */
@@ -463,7 +579,28 @@ export function exitHasSpace(w: World, car: AiCar): boolean {
 
 /** True if `o` is crossing node c (its junction curve) on a move that conflicts with `mv`. */
 function inBox(w: World, J: JunctionState, c: NodeCtl, o: AiCar, mv: number): boolean {
-  return o.phase === 'turn' && w.city.roads.edges[o.edge].to === c.id && movesConflict(J, c, mv, o.move);
+  if (o.respawnWanted) return false;
+  const e = w.city.roads.edges[o.edge];
+  if (e.to !== c.id) return false;
+  if (o.phase === 'turn') return movesConflict(J, c, mv, o.move);
+  // about to cross: given the go and too close to stop for us
+  if (o.phase === 'lane' && o.hold === HOLD_GO && o.next >= 0 && o.speed > 2 && !(c.kind === CTL_RING && e.roundabout)) {
+    const rem = stopLine(e) - o.s;
+    if (rem < o.speed * TT.boxReserveTime + 1) return movesConflict(J, c, mv, o.move);
+  }
+  return false;
+}
+
+/** Is a car crossing the junction ahead of `car` on a move that conflicts with its own (or has its light turned red)? */
+export function boxBlocked(w: World, car: AiCar): boolean {
+  const J = w.junctions;
+  const c = J.nodes[w.city.roads.edges[car.edge].to];
+  if (c.kind === CTL_SIGNALS && J.light[car.edge] === LIGHT_RED && !car.commit) return true;
+  const traffic = w.traffic;
+  for (let i = 0; i < traffic.length; i++) { const o = traffic[i]; if (o !== car && inBox(w, J, c, o, car.move)) return true; }
+  const pol = w.police.cars;
+  for (let i = 0; i < pol.length; i++) if (inBox(w, J, c, pol[i], car.move)) return true;
+  return false;
 }
 
 /**
@@ -492,6 +629,7 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
       const reach = rem / Math.max((car.speed + Math.min(vEnd, car.speed)) / 2, 0.5);
       const canStop = rem > (car.speed * car.speed) / (2 * TT.brake);
       if (reach < amberLeft(c) - TT.amberMargin || !canStop) car.commit = true;
+      else if (atLine && car.waitT > 1 && (myType === MOVE_LEFT || myType === MOVE_UTURN)) car.commit = true; // waited for a gap: clears on amber
       else return HOLD_RED;
     }
   }
@@ -501,7 +639,7 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
     const traffic = w.traffic;
     for (let i = 0; i < traffic.length; i++) {
       const o = traffic[i];
-      if (o === car || o.phase !== 'wait' || edges[o.edge].to !== c.id) continue;
+      if (o === car || o.phase !== 'wait' || o.respawnWanted || edges[o.edge].to !== c.id) continue;
       if ((o.arriveT < car.arriveT || (o.arriveT === car.arriveT && o.id < car.id)) && movesConflict(J, c, mv, o.move)) return HOLD_STOP;
     }
   }
@@ -534,14 +672,14 @@ function yieldTo(w: World, J: JunctionState, c: NodeCtl, car: AiCar, mv: number,
   const edges = w.city.roads.edges;
   for (let i = 0; i < list.length; i++) {
     const o = list[i];
-    if (o === car || o.phase !== 'lane') continue;
+    if (o === car || o.phase !== 'lane' || o.respawnWanted) continue;
     const oe = edges[o.edge];
     if (oe.to !== c.id) continue;
     const ap = J.edgeAp[o.edge];
     if (ap === myAp) continue;
     const oType = o.move >= 0 ? J.mvType[o.move] : MOVE_STRAIGHT;
     let prio: boolean;
-    if (c.kind === CTL_SIGNALS) prio = J.light[o.edge] !== LIGHT_RED && (oType === MOVE_STRAIGHT || oType === MOVE_RIGHT);
+    if (c.kind === CTL_SIGNALS) prio = J.light[o.edge] !== LIGHT_RED && o.hold !== HOLD_RED && (oType === MOVE_STRAIGHT || oType === MOVE_RIGHT);
     else if (mode === 2) prio = c.apRank[ap] > myRank || (c.apRank[ap] === myRank && (myType === MOVE_LEFT || myType === MOVE_UTURN) && (oType === MOVE_STRAIGHT || oType === MOVE_RIGHT));
     else prio = c.apRank[ap] >= myRank && (oType === MOVE_STRAIGHT || oType === MOVE_RIGHT);
     if (!prio) continue;
@@ -565,7 +703,7 @@ function ringScan(w: World, J: JunctionState, c: NodeCtl, car: AiCar, mv: number
   const edges = w.city.roads.edges;
   for (let i = 0; i < list.length; i++) {
     const o = list[i];
-    if (o === car) continue;
+    if (o === car || o.respawnWanted) continue;
     const d = ringDist(w, o, c.id);
     if (d > dist) continue;
     // leaving here (or crossing here) on a move clear of ours
