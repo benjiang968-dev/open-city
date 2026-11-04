@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { TUNING, type CarTypeName } from '../../tuning';
 import type { World } from '../../world';
-import type { CityMap, Poi } from '../map/cityMap';
+import type { CityMap, LaneHit, Poi } from '../map/cityMap';
 import type { JobSystem, JobMarker } from './jobManager';
 import { spawnVehicle, type Vehicle } from '../vehicles';
 import { toast } from '../hud';
@@ -34,7 +34,24 @@ export interface Dealership {
   slots: DisplaySlot[];
 }
 
-/** Grid city: two garage POIs far apart (shops if there aren't enough garages). */
+const HIT: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
+/**
+ * Would a car parked at (x, z) stand in a lane traffic drives in? (Real maps stop taxis in the kerbside lane; a
+ * display car there would block a one-lane street for good. A parking lane with another lane beside it is fine.)
+ */
+function blocksTraffic(city: CityMap, x: number, z: number): boolean {
+  if (!city.nearestLane(x, z, D.laneClearance, HIT, city.heightAt(x, z))) return false;
+  const e = city.roads.edges[HIT.edge];
+  return !(e.parking && e.lanesSameDir > 1);
+}
+/** Where display car `i` of a showroom at `poi` stands (along the kerb, nudged off the taxi-stop line). */
+function slotSpot(poi: Poi, i: number): { x: number; z: number } {
+  const heading = poi.kerbHeading, off = D.slotOffsets[i % D.slotOffsets.length];
+  const fx = Math.sin(heading), fz = Math.cos(heading), nx = Math.cos(heading), nz = -Math.sin(heading);
+  return { x: poi.curbX - nx * D.kerbNudge + fx * off, z: poi.curbZ - nz * D.kerbNudge + fz * off };
+}
+
+/** Garage POIs far apart (shops if there aren't enough garages) whose kerb has room for display cars. */
 export function pickDealershipPois(city: CityMap): number[] {
   const out: Poi[] = [];
   for (const kind of ['garage', 'shop']) {
@@ -42,6 +59,8 @@ export function pickDealershipPois(city: CityMap): number[] {
       if (out.length >= D.maxSites) break;
       if (p.kind !== kind) continue;
       if (out.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < D.minSiteSpacing)) continue;
+      // at least the first two display slots must keep out of the traffic lanes
+      if (blocksTraffic(city, slotSpot(p, 0).x, slotSpot(p, 0).z) || blocksTraffic(city, slotSpot(p, 1).x, slotSpot(p, 1).z)) continue;
       out.push(p);
     }
   }
@@ -64,15 +83,14 @@ export class DealershipJob implements JobSystem {
       // f: along the kerb, the way traffic in the kerbside lane drives (parked cars face that way);
       // n: from the pavement out into the road (the pavement is on the lane's right-hand side)
       const heading = poi.kerbHeading;
-      const fx = Math.sin(heading), fz = Math.cos(heading);
       const nx = Math.cos(heading), nz = -Math.sin(heading);
       const stock = D.stock[k % D.stock.length];
       const slots: DisplaySlot[] = [];
       stock.forEach((type, i) => {
-        const off = D.slotOffsets[i % D.slotOffsets.length];
-        const x = poi.curbX - nx * D.kerbNudge + fx * off, z = poi.curbZ - nz * D.kerbNudge + fz * off;
-        // keep other POIs' taxi stops free
+        const { x, z } = slotSpot(poi, i);
+        // keep other POIs' taxi stops free, and the traffic lanes
         if (w.city.pois.some((q) => q.id !== poiId && Math.hypot(q.curbX - x, q.curbZ - z) < D.slotClearance)) return;
+        if (blocksTraffic(w.city, x, z)) return;
         slots.push({ x, z, heading, type, car: null, soldAt: -Infinity });
       });
       // a place whose name is already on its shop sign keeps it; otherwise it gets a dealership name

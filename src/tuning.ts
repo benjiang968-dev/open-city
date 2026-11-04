@@ -344,6 +344,7 @@ const RAW = {
       kerbNudge: 0.3, // metres from a POI's taxi-stop line out to the parking lane, so traffic passes display cars
       signOut: 1.2, // metres from the dealership door towards the kerb where its sign stands
       restockSeconds: 600, // real seconds before a sold display car is replaced
+      laneClearance: 2, // metres: a display slot this close to the centre of a lane traffic uses would block it (left out)
       restockMinDistance: 60, // metres: restocking only happens while you are at least this far away
       maxSites: 2, // dealerships placed on the grid city
       minSiteSpacing: 200, // metres between the two grid dealerships
