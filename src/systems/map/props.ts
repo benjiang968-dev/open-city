@@ -192,7 +192,9 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     const e = A.edge;
     return A.atStart ? e.bwd : e.fwd;
   };
-  const sigSpots: { x: number; y: number; z: number; ux: number; uz: number; len: number; heads: number[] }[] = [];
+  /** Per signal head: x, y, z (the head's top), yaw, node id, and the arm direction ux, uz (away from the node). */
+  let signalHeads = new Float32Array(0);
+  const sigSpots: { x: number; y: number; z: number; ux: number; uz: number; len: number; heads: number[]; node: number }[] = [];
   const stopSpots: { x: number; y: number; z: number; ux: number; uz: number }[] = [];
   for (const n of net.nodes) {
     if (!n.signals && !n.stop) continue;
@@ -215,7 +217,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         const lw = (2 * e.hw) / e.lanes.length;
         const heads: number[] = [];
         for (let k = 0; k < nIn; k++) heads.push(off - e.hw + (k + 0.5) * lw);
-        sigSpots.push({ x: px, y, z: pz, ux, uz, len: off - e.hw + nIn * lw + 0.3, heads });
+        sigSpots.push({ x: px, y, z: pz, ux, uz, len: off - e.hw + nIn * lw + 0.3, heads, node: n.id });
       } else stopSpots.push({ x: px, y, z: pz, ux, uz });
       phys.cylinder(px, y, pz, 0.12, 3);
     }
@@ -229,9 +231,11 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     const headG = new MeshBuf();
     headG.box(-0.2, -1.05, -0.17, 0.2, 0, 0.17, lin(0x2a2c1e));
     headG.box(-0.24, -1.09, -0.02, 0.24, 0.04, 0.0, lin(0xd9b52b));
-    const lens = [0xd62f24, 0xe0a321, 0x2fbf5a];
+    // unlit lenses (dark glass): the live light is drawn over them by signalHeads.ts from the traffic signal state
+    const lens = [0x3a1512, 0x3a2c10, 0x12301c];
     lens.forEach((c, k) => headG.box(-0.11, -0.3 - k * 0.32, -0.24, 0.11, -0.08 - k * 0.32, -0.17, lin(c), shade(lin(c), 0.5)));
     const nHeads = sigSpots.reduce((s, p) => s + p.heads.length, 0);
+    signalHeads = new Float32Array(nHeads * 7);
     const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.2 });
     const poles = inst(poleG.toGeometry(), mat, sigSpots.length);
     const arms = inst(armG.toGeometry(), mat, sigSpots.length);
@@ -252,7 +256,9 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         const yawH = Math.atan2(-p.ux, -p.uz);
         q.setFromAxisAngle(up, yawH);
         m.compose(v.set(hx, p.y + 5.85, hz), q, sc.set(1, 1, 1));
-        heads.setMatrixAt(h++, m);
+        heads.setMatrixAt(h, m);
+        signalHeads.set([hx, p.y + 5.85, hz, yawH, p.node, p.ux, p.uz], h * 7);
+        h++;
       }
     });
     poles.name = 'signal-poles'; arms.name = 'signal-arms'; heads.name = 'signal-heads';
@@ -365,6 +371,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
 
   return {
     lampPositions,
+    signalHeads,
     tris,
     treeCount: trees.length,
     setTreeShare(f: number) {

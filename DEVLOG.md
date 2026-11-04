@@ -348,3 +348,174 @@ Format: date · what changed · what to test · known issues.
       - **Trees on footpaths:** trees and lamps stand on the footpath centre lines on Dumbarton St and Potomac St, blocking 114 walk links for a person.
       - **Low bridges:** the camera goes inside the deck of the low canal bridges when you walk under them.
     - **Merge note:** merging `m3-geo-art-review` conflicts in `georgetownWorld.ts` (keep both `droppedBuildings` and `audit`; that branch already adds its street-clipped drops to the same set) and in DEVLOG.md.
+
+
+- **M3 traffic and police on Georgetown's road graph (step C1, branch `m3-geo-traffic`, on top of `m3-geo-citymap`):** traffic now follows junction rules, keeps to its lanes, changes lane before a turn and follows the player around; police dispatch and search on the directed graph. Both maps (`?map=grid` keeps its scenarios passing).
+  - **Junction control (`src/systems/junctions.ts`, new), built once per map from the CityMap:**
+    - **Moves and lane discipline:** every lane-to-lane move through every node, typed straight / right / left / U-turn. Right turns go kerbside lane to kerbside lane, left turns inside lane to inside lane, straight on keeps to the lane that carries on. Parking lanes on multi-lane roads are not traffic lanes. This also stops cars cutting across lanes inside junctions.
+    - **Conflicts:** two moves conflict if their junction curves come within `traffic.conflictDist` (2.9 m) or they merge into one lane. A car never starts across a junction while a conflicting move is in it, or while a car given the go is within `boxReserveTime` of its line on one, or while its exit lane is queued (`exitSpace`).
+    - **Control per node:** signals, all-way stop, priority (different road classes: `traffic.classRank`, the lower gives way), all-way give way (equal roads: a 0.9 s pause, then first come, first served), ring, dead end, pass-through. Georgetown: 57 signals, 53 stop, 3 priority, 3 all-way, 8 ring, 23 dead ends, 19 pass-through. Grid: 60 all-way, 10 priority (the bay boulevard).
+    - **Signals (`TUNING.signals`):** head-on approaches share a phase; the phase with the junction's biggest road gets the long green. Actuated: detectors at the stop lines (AI cars and your car) call a phase; green lasts at least 6 s, is held while traffic keeps coming (up to 18 s, 10 s for side phases) or while nobody waits elsewhere; then amber 3 s and all-red 1.5 s. The two K St mid-block crossings keep a fixed walk phase. (Fixed-time cycles had side streets waiting 33 s at K St / Whitehurst.)
+    - **Amber:** asked again every check while approaching. A car goes only if it reaches the line before red (`amberMargin`) or can't stop where waiting cars stand. On red, anyone who can still stop does (`redCommitSpeed`). A left turner that waited at the line clears on amber.
+    - **Waiting position:** front bumper `stopBehindLine` behind the line, further back where another approach's curve passes close (`stopClearance` 2.3 m, at most `stopBackMax` 8 m). At tight Georgetown junctions, turning cars were clipping waiting ones.
+    - **Roundabout:** entering cars yield to circulating cars heading for their entry (closer than 34 m along the ring and under 3.6 s away, or within 10 m), except ones leaving there on a clear move. Circulating cars never wait at the ring's nodes, run at most `ringSpeed` 8.5 m/s, and go round again rather than exit into a queue. The data flags the circle's entries as signals; the ring rule wins (`props.ts` already drew no heads there).
+  - **Signal lights (`src/systems/signalHeads.ts`, new):** the world already drew poles and heads (`props.ts`). Their lenses are now dark glass, and one InstancedMesh of small glowing squares lights the lens each approach is shown. Only heads whose light changed are rewritten, without allocation; 1 extra draw call. `GeoWorld.signalHeads` exports each head's place, yaw, junction and arm.
+  - **Traffic (`src/systems/traffic.ts`):**
+    - **Planning:** on entering a lane, a car picks a random allowed move at the next junction. If that move leaves from another lane, it changes lanes first (`laneChangeMinRoom`, `laneChangeGapAhead/Behind`, sideways at `laneChangeRate`), else it picks a move its own lane may make.
+    - **Approach:** it asks `junctionHold` within braking distance + `decideDist`, then brakes (`approachDecel`) for its waiting spot or for the curve's speed (`turnLatAccel`, `turnSpeedMin`).
+    - **Pass-through nodes:** where the lanes shift sideways, the car drifts across, not round a curve over no distance.
+    - **Map edges:** dead ends within `mapEdgeRange` of the map's edge are roads leaving it, so cars drive off there (out of sight) instead of U-turning.
+    - **Box nudge:** a car stuck in a junction for `boxNudgeTime` stops being held by AI cars not on its own way out.
+  - **CityMap:** `LaneEdge.left` / `right` (same from, to and road, lane ± 1), filled by `linkLaneNeighbours` in both maps and checked by `validateCityMap`. `RoadNode.stop` added (the grid sets false).
+  - **Population (`src/systems/trafficPopulation.ts`, new):**
+    - **Count:** `traffic.countByQuality` gives low 18 / medium 26 (as M2) / high 34 cars. All 34 are built at boot, and the extras wait out of the world. The pause-menu switch takes effect live.
+    - **Moving cars:** these cars are moved, at most one per frame, to a lane 110–300 m from the player:
+      - cars more than `despawnRadius` 340 m from the player
+      - stranded cars (shoved off the road, gridlocked, or driven off the map)
+    - **Where they go:** the lane is picked by length × `densityByClass`. It is never in sight (view cone plus one ray against buildings and hills) and never within `spawnClearance` of another car, and the car starts already moving.
+    - **Stranded in sight:** a car stranded in sight is moved after 50 s anyway.
+  - **Police (`src/systems/police.ts`):**
+    - **Dispatch:** onto a traffic lane about `spawnDistance` away, behind the camera when possible, never in sight, and with a directed route to your last known lane.
+    - **Search:** once there with no sight of you, they cruise to lanes within `searchRadius` 160 m of it.
+    - **Direct chase:** they drive straight at you only within `directChaseLevelGap` 3 m of your height.
+    - **Sight rays:** these reuse one Ray instead of a new one per check.
+    - **Losing them:** unchanged.
+  - **Audit (`src/systems/trafficAudit.ts`, new):**
+    - **Always on:** signal crossings, red-light runs, ring entries and entries that did not yield, lane changes, recycles, respawns, cars driven off the map.
+    - **With `w.trafficSim.measure` on (tests):** a per-step check of every AI car:
+      - against its lane
+      - off its intended path (beyond a lane change's offset)
+      - off its level
+      - AI cars overlapping
+      - still for more than 20 s
+      - stopped on the ring
+    - **F3:** a new traffic line (at red, giving way, lane changes, red runs, ring entries).
+  - **New scenario `geodrive`** (`MAP=georgetown node scripts/shot.mjs x geodrive`):
+    - **The drive:** your car drives Key Bridge → M St east → Pennsylvania Ave → once round Washington Circle (outer lane) → K St west to Thomas Jefferson St (3.39 km). It is one teleport at the start, then a pure-pursuit autopilot pressing only W/A/S/D/Space.
+    - **Driving rules:** it takes the inside lane where it may and changes lanes along the road where it must. It stops for red lights and at stop signs, yields entering the circle and keeps its distance.
+    - **What it measures:** the route, everything above, an independent check of every AI car's lane-to-lane moves, CPU per frame and the traffic / police profiler sections.
+    - **Screenshots:** `28-traffic-{keybridge,mst,signals,circle}`.
+  - **Other scenario changes:**
+    - `mapcheck`: a lane change is not a choice, off-lane is measured beyond the lane-change offset, and the followed car is kept.
+    - `geoplay`: places its ring cars with `__ocTraffic.placeOnEdge`.
+    - **Test hooks:** `window.__ocTraffic`, `w.trafficSim`, `w.junctions`.
+  - **Test:** `npm run build`, then `node scripts/shot.mjs x <scenario>` (`MAP=georgetown` for Georgetown). All runs below exited 0 with a clean console.
+    - **geodrive, final code:**
+      - The route was completed in 401 s with no damage and no red-light runs by your car.
+      - AI cars:
+        - 0 wrong-way moves, and 0 illegal moves out of 579 checked.
+        - 0 red-light runs out of 340 signal crossings.
+        - 0 of 18 circle entries failed to yield; 0 stops on the ring.
+        - 2 cars still for more than 20 s, both at red lights (longest 22.6 s, at the 3-phase signals at I St / 24th St / New Hampshire Ave and at K St / Whitehurst).
+        - 1.26 m at most off their path.
+        - 0 AI collisions.
+        - 1 car off its level (see known issues).
+        - 72 lane changes.
+      - Profiler, unthrottled: traffic 0.18 ms per frame, police 0.05, traffic-ctl 0.01.
+    - **geodrive, earlier runs:** two runs on the same rules (before the last steering fix) took 414 and 464 s. They had 0 red-light runs out of 339 and 386 crossings, 0 of 24 and 0 of 33 circle entries failing to yield, 2 and 8 AI collisions, and 1 and 4 cars still for more than 20 s not at a red light. The second run's wrong-way move (a car that pulled up past its lane's end and steered back to it) is what the last fix cured.
+    - **Georgetown:**
+      - mapcheck: 4 of 4 runs passed. Each made 30 choices with 0–1 recycles and 0.42–1.23 m off lane.
+      - geoplay: 6 cars flowing round the circle at 31 km/h; police first saw you at 22–29 s and you lost them by 47–48 s; the attribution and quality switch are fine.
+      - Others: taxi (3 of 3 fares), theft (unseen: 0 stars; witnessed: 1 star, 2 calls), witness, police (no stars, as on C0: no witness called), crashspikes.
+    - **Quality presets:** traffic switches between 18, 34 and 26 cars live.
+    - **Grid:** traffic2, police (seen at 7–13 s, lost by 45–60 s), witness, gate2, crashspikes and mapcheck pass (30 choices, 0 jumps, 0.15–0.65 m off lane).
+    - **handling (grid):** the runs that got into the car gave numbers identical to the C0 build's, every snapshot. 2 of 4 runs on this branch never got into the car: the prompt was empty with no person, item or other car near, which means the game hadn't started yet or the player was down. I didn't confirm which. The traffic now gathers round the player, who stands in a live lane of the boulevard in that test.
+  - **Performance against M2 (529a13c):** 4x CPU throttle, Medium, 3 interleaved rounds, using the C0 reviewer's perfab2 method. The machine was shared at load average 13–16 on 4 cores, so frames over 33 ms show up in every build, M2 included.
+
+    | CPU ms per frame, no render | M2 grid | C0 Georgetown | this branch, Georgetown | this branch, grid |
+    |---|---|---|---|---|
+    | median on foot | 5.9–6.4 | 6.4–8.6 | 7.4–7.6 (one run 1.9, an outlier) | 5.2–6.0 |
+    | median driving | 5.8–6.3 | 7.2–10.1 | 8.5–9.2 | 5.1–6.0 |
+    | traffic on foot / driving | 0.43–0.82 / 0.61–1.11 | 0.55–0.75 / 0.51–0.75 | 0.55–0.69 / 0.66–0.77 | 0.54–0.86 / 0.66–1.46 |
+    | traffic-ctl (new: population, signal lights) | – | – | 0.07–0.11 | 0.07–0.10 |
+    | police section (witnesses, police, health) | 0.24–0.35 | 0.19–0.52 | 0.18–0.28 | 0.19–0.95 |
+    | physics on foot | 2.7–2.9 | 4.2–5.8 | 4.0–4.3 | 2.4–3.0 |
+    | frames over 33 ms per 600, on foot | 8–16 | 5–14 | 6–12 | 1–10 |
+    | garbage per frame on foot | 65–70 KB | 65–67 KB | 65–71 KB | 57–62 KB |
+    | draw calls / triangles | 135–151 / 188–193k | 638–643 / ~1.0M | 626–635 / ~1.0M | 161–190 / 192–195k |
+
+    - **Result:** traffic and police CPU is the same as before within the noise. Georgetown as a whole is still well above M2 (physics, draw calls and triangles from the world, as reported in C0). Software GL gives no fps figure.
+  - **Known issues:**
+    - **Pennsylvania Ave bridge, east deck end (473, 233):** a kerb corner stands about 1 m into the eastbound kerbside lane 229. AI cars there get thrown up 2.5 m (the one "off its level" per run), and your car stalls on it in that lane. This is world geometry (the C0 builder listed it); the autopilot keeps to the inside lane there.
+    - **Washington Circle's K St entry (849, 447):** the K St lane is 25 m long, too short to wait clear of the ring's curve. Circulating cars clip cars waiting there (5 of the 8 collisions in one run, 0 in the final run).
+    - **3-phase signals:** at 5-arm junctions, a side road can wait just over 20 s at red: 22.6 s at most, seen at I St / 24th St / New Hampshire Ave and at K St / Whitehurst.
+    - **Other collisions:** in tight turns and on the Rock Creek Parkway under the bridges (static geometry in the lanes, as C0 reported), 0–8 AI collisions in 6–8 minutes of driving.
+    - **M St:** effectively one traffic lane each way, since C0 made the kerbside lane the parking lane, so M St has no lane changes. Lane changes happen on Key Bridge, Pennsylvania Ave, K St, the freeway, the parkway and L St.
+    - **Key Bridge / M St / Whitehurst Freeway (node 5):** not signalised in the data, so it runs as an all-way give way. It is a busy junction for that.
+    - **Sparse traffic:** 26 cars around the player (the M2 budget) look thin on Georgetown's longer streets, and `28-traffic-circle` caught few cars on the circle.
+    - **Spikes:** unthrottled frames over 33 ms land in random sections (physics, peds, hud, traffic), on a machine at load 12–16. The interleaved A/B shows them in M2 as well, so they can't be pinned on traffic here. This needs a quiet machine.
+    - **Gaps:** traffic doesn't pull over for police, and people don't obey signals.
+
+- **M3 traffic and police review (step C1 review, branch `m3-geo-traffic`):** an independent check of the entry above, with my own probes and fixes. Most of it holds up. Stress tests found collisions at Washington Circle's K St links, police that could not reach a player on Key Bridge, and cul-de-sacs that jammed.
+  - **What I checked:**
+    - **Signal phases (static, all 57 signals):** only head-on approaches share a phase. Within a phase, 99 pairs of moves count as conflicting, all head-on straight or right turns against straight on narrow streets, where the two curves pass within `conflictDist` 2.9 m. That makes cars wait for the box to clear more than they need to; it never lets crossing flows go together. Left turns on green give way to oncoming traffic.
+    - **One-way streets:** the map's own one-way check passes on every boot, and no geodrive or stress run showed a traffic car driving against its lane.
+    - **Washington Circle at high density (`ring` probe, 300 s, 18 or 30 cars kept round the circle and fed back in on the approaches):** an independent check of every entry against the circulating cars in the same or an outer lane found 0 entries with such a car under 1.2 s away, as built and after my changes. The yield rule works. The collisions were elsewhere at the circle: see the fixes.
+    - **Decks (`deck` probe, 30 cars kept on Key Bridge, the Whitehurst Freeway and the other decks and on the roads under them, 180 s):** 55,808 car-steps, 33,348 of them on decks. There was 1 car off its level, at the known Pennsylvania Ave kerb (476, 233); 0 collisions, 0 wrong-way, 0 stuck.
+    - **Police on Georgetown (`pol` probe, 2 stars):** dispatch, sight, routing, search and losing them, on foot on M St and on the Key Bridge deck.
+  - **Fixes (8 commits on the branch):**
+    - **Washington Circle, K St links:** the two links from K St onto the circle are 25 m long, between the underpass junctions (nodes 113 and 114, signals) and the ring, and leave 2–3 m of lane.
+      - They were treated as narrow streets with parking, so their two lanes ran 2.3 m apart. A link onto a roundabout now gets no parking (`georgetownMap.ts`), and its lanes are 3.4 m apart.
+      - Cars were told to give way on the link at speed and stopped in the ring lane. Lanes too short to stop on are now marked at build (`junctions.shortLane`). A car crosses into one before a roundabout no faster than `ringEntryCreep` 3.5 m/s, and stops at the entry if the ring is busy. It enters one before a signal only on green (with `shortLaneGreenLeft` 3 s left at a fixed-time crossing). A circulating car doesn't leave into one while that light isn't green; it goes round again.
+    - **Washington Circle, entries and exits:**
+      - Every roundabout entry is approached at `ringEntryCreep` at most, so a circulating car that turns up late can still be given way to.
+      - A car given the go while standing back from an entry looks at the ring again before it joins.
+      - A car leaving from an inner lane goes round again when a car in an outer lane is level with it or up to `ringExitGap` 10 m behind. Inner-lane exits used to cut across the outer lane.
+      - A circulating car's choice to leave or go round is final `ringExitFreeze` 4 m before the node, and entering cars only rely on an exit plan from there.
+    - **Turning cars:**
+      - A car waiting on our exit lane is now an obstacle (it was skipped like any waiting car).
+      - In a turn, the car ahead is found near our curve, not in the straight-ahead band (rear-ends in tight turns), plus anything straight ahead within `turnTouchGap` 1.5 m.
+      - The exit lane's heading is cached with the curve, so checking every object ahead against the curve makes no garbage.
+    - **Police dispatch and routing:** with you standing on the Key Bridge deck at 2 stars, both cars went to the same spot on Water St, on top of each other, or to the fallback lane 1.2 km away. The route to the nearest lane started at the Virginia end, a 1.9 km drive. They never got near, and you lost both stars in 33 s by standing still.
+      - Police now route to the nearest lane or the lane the other way along the same road, whichever is the shorter drive, and reaching either counts.
+      - Dispatch takes lanes in the band clear of other cars. The best `spawnRouteChecks` 8 out of sight get a route check, and the drive length counts against them.
+      - If the best drive is over `spawnMaxDrive` 700 m, dispatch looks out to 3 × `spawnDistance`, then accepts a spot in view.
+    - **Cul-de-sacs:** with four cars sent in to turn round at each of the three dead ends inside the map, 1 of 12 got out in 60 s. The car that had turned saw the queue in the other lane (2.3 m away on a narrow street) as in its way, and the queue waited for it.
+      - Traffic no longer turns into a cul-de-sac (`junctions.culDeSac`) while another move is open.
+      - An oncoming car whose side clears ours by `passGap` 0.05 m is passing, not an obstacle.
+      - After the fix, N St and 24th St cleared; Water St still jams when four cars are put there.
+    - **Test harness:**
+      - `S.start` in `shot.mjs` now waits until the game has started. On a loaded machine the first frame after Enter can take longer than the 1.5 s wait, and E pressed before it did nothing. That was the handling scenario's "never got into the car".
+      - geodrive's autopilot stops for the signal at the end of a lane too short to stop on. It no longer holds once over the line: it had stopped in the circle's entry and the ring stopped for it.
+      - It counts people only in the road (AI traffic's 1.7 m band).
+      - It logs each hit your car takes (`damageEvents`).
+  - **Test:** `npm run build`, then `node scripts/shot.mjs` (`MAP=georgetown` for Georgetown). Every run below exited 0 with a clean console.
+    - **Probes:** run with `node probe.mjs <dist> <file.js> georgetown`. The probe files are in the review scratchpad, not the repo.
+    - **ring, as built → reviewed (same probe):**
+      - With 18 cars: collisions 8 → 0, circle entries 108 → 99 in 300 s, longest wait 27 → 58 s.
+      - With 30 cars: collisions 6 → 0 (3 runs), entries 138 → 101–108, longest wait 27 → 94–235 s.
+      - Red-light runs 0 and wrong-way 0 throughout. Under saturation the circle is safer now, but slower.
+    - **Police:** seen at 7.4 s and 3.7 s on M St, and at 12.4 s and 14.1 s on the Key Bridge deck (never before). After moving out of sight, you lose them in 19–27 s.
+    - **geodrive, as built:** done in 430 s; AI 5 collisions, red 0 of 359, circle 16 of 16 yielded, 3 cars still for more than 20 s (all at red, longest 30 s).
+    - **geodrive, final code, 3 runs:**
+      - Done in 367–414 s with no damage, and 1 red run by your car in one run.
+      - AI: 0 wrong-way, 0 illegal moves of 528–644, 0 red-light runs of 298–355, all 15–29 circle entries yielded.
+      - 0–3 collisions and 2–4 cars still for more than 20 s (longest 25–46 s).
+    - **geodrive, earlier on the review:** one run stalled 60 s behind a person at the kerb edge at Key Bridge's north end (-766, 179), who kept walking into the stopped car (screenshot in the scratchpad).
+    - **Georgetown:** mapcheck, geoplay, taxi (3 fares), theft, witness, crashspikes and police all pass.
+    - **Grid:** traffic2, police, witness, gate2, crashspikes and mapcheck pass. handling: 2 runs with the harness fix, both in the car, every snapshot identical to the build as made. One run before the fix never got in.
+  - **Performance against M2 (529a13c):** 4x CPU throttle, Medium, the C0 reviewer's perfab2 method, 3 interleaved rounds per build. The machine was quiet for this pass (load 4.4–4.8 on 4 cores); an earlier pass at load 19–37 gave the same picture with more noise.
+
+    | CPU ms per frame, no render | M2 grid | C1 as built, Georgetown | reviewed, Georgetown | reviewed, grid |
+    |---|---|---|---|---|
+    | median on foot / driving | 4.9–5.4 / 4.7–5.8 | 6.5–7.7 / 6.4–7.9 | 7.0–7.6 / 6.3–7.6 | 4.7–5.1 / 4.3–5.0 |
+    | traffic on foot / driving | 0.34–0.43 / 0.33–0.55 | 0.51–0.60 / 0.46–0.67 | 0.57–0.70 / 0.52–0.75 | 0.50–0.54 / 0.51–0.81 |
+    | traffic-ctl on foot | – | 0.09–0.12 | 0.07–0.08 | 0.07–0.10 |
+    | police section on foot / driving | 0.20–0.22 / 0.16–0.27 | 0.22–0.25 / 0.21–0.30 | 0.24–0.25 / 0.19–0.25 | 0.20–0.25 / 0.14–0.20 |
+    | frames over 33 ms per 600, on foot | 0–2 | 1 | 0 | 0–1 |
+    | garbage per frame, on foot / driving | 70–71 / 73–85 KB | 66–74 / 73–80 KB | 66–73 / 71–81 KB | 53–61 / 69–73 KB |
+    | draw calls / triangles | 124–136 / 188k | 631–634 / 997k | 632–634 / 997k | 169 / 192k |
+
+    - **Traffic CPU:** the review's extra checks cost about 0.05 ms per frame at 4x throttle over the build as made (within the run-to-run spread). The C1 traffic costs about 0.2 ms more than M2's, about 0.05 ms unthrottled.
+    - **Garbage:** a sim-only A/B (1800 fixed steps, high preset) first showed the review adding 5–6 KB per step; caching the exit heading brought it back level with the build as made (30–33 vs 31–36 KB).
+    - **Police dispatch:** the worst frame (5 stars, one car dispatched per frame, 4x throttle, loaded machine) was 5.4–15.7 ms as built and 9.5–16.4 ms with 12 route checks, before they were capped at 8.
+    - **Georgetown overall:** still above M2 (physics, draw calls, triangles: the world, as C0 reported). Software GL gives no fps, so whether it holds the M2 frame rate on your laptop is still unmeasured.
+  - **Known issues:**
+    - **Pennsylvania Ave deck kerb (473, 233):** still throws AI cars up 2.5 m, 0–5 times per geodrive. It is world geometry; `m3-geo-art-review` has a "deck ends meet their junctions" fix that may cover it, and needs checking after the merge. Cars on the Rock Creek Parkway under K St (379, 439) were also thrown once.
+    - **Saturation:** with 30 cars kept round the circle, queues back up through Pennsylvania Ave's junctions (nodes 104–107) and cars wait in the box for minutes. In play, `stuckRecycle` moves them after 25 s.
+    - **Lane drops:** 9 places where two lanes merge into one; 4 of them are uncontrolled (nodes 16, 94, 142, 143), so two cars can merge side by side.
+    - **Other collisions:** at tight turns where two cars leave one lane on different moves, or where two junction curves pass closer than the cars' bodies allow.
+    - **Water St cul-de-sac (-911, 266):** still jams if several cars are placed in it; traffic no longer drives in, but respawns can put one there.
+    - **Narrow streets:** opposing straight moves count as conflicting at junctions, so cars cross one at a time.
+    - **Lane discipline:** Key Bridge lane 606 has no allowed move at node 5, so a car on it takes any move.
+    - **geodrive:** it reports `stuck` without failing the run (the harness fails only on console errors), so read its `completed` field.

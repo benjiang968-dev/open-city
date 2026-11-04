@@ -46,6 +46,9 @@ const S = {
   async start() {
     await page.keyboard.press('Enter');
     await page.waitForTimeout(1500);
+    // the keypress starts the game on the next rendered frame: on a loaded machine (software GL) that can take longer
+    // than the wait above, and a scenario that pressed E before it went nowhere (handling's "never got into the car")
+    await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
   },
 };
 const run = mod[scenario] ?? S[scenario];

@@ -263,23 +263,95 @@ const RAW = {
   },
 
   traffic: {
-    count: 26, // AI cars on the road graph
     cruiseSpeed: 11, // m/s (~40 km/h): the grid city's speed limit (real maps use maxspeed or map.classSpeed)
     accel: 4, // m/s²
     brake: 9, // m/s²
     followGap: 9, // metres kept to the car ahead
-    intersectionWait: 0.9, // seconds stopped at each junction
+    intersectionWait: 0.9, // seconds a car pauses at an uncontrolled junction of equal roads before going (first come, first served)
     laneOffset: 3.1, // metres right of the centre line: the grid city's (innermost) lane centre
     honkDistance: 10, // player within this in front of a stopped AI car = honk
     honkCooldown: 3, // seconds between honks per car
     swerveDistance: 16, // player car approaching faster than swerveSpeed within this triggers a swerve
     swerveSpeed: 14, // m/s
     swerveOffset: 2.4, // metres sideways when swerving
+    turnTouchGap: 1.5, // metres: a car crossing a junction stops for anything straight ahead this close, even off its curve (two cars leaving one lane on different turns)
+    passGap: 0.05, // metres: an oncoming car whose side clears ours by this much is passing, not in our way (narrow two-way streets)
     sideGap: 0.15, // metres: another car counts as in our path if the gap between the two bodies' sides is less than this
     bodyRound: 0.3, // metres: AI car bodies (pitch locked) have edges this round, so they ride over kerbs and grade changes
     levelGap: 3, // metres: something this far above or below a car (plus levelGrade per metre ahead) is on another level, not in its way
     levelGrade: 0.25, // height change per metre ahead a street can account for (steep hills) before it counts as another level
-    spawnMinDistFromPlayer: 25,
+    spawnMinDistFromPlayer: 25, // metres: at boot no AI car starts closer than this to the player
+    // ---- population around the player (trafficPopulation.ts) ----
+    countByQuality: { low: 18, medium: 26, high: 34 }, // AI cars driving near the player, by graphics preset (M2 ran 26 everywhere)
+    despawnRadius: 340, // metres: a car farther than this from the player (and out of sight) is moved to a lane nearer the player
+    spawnMinDist: 110, // metres: a respawned car starts at least this far from the player, out of the camera's sight ...
+    spawnMaxDist: 300, // ... and at most this far from the player
+    bootSpawnMaxDist: 320, // metres: at boot cars are spread over lanes up to this far from the spawn
+    spawnViewMargin: 0.3, // radians added to half the camera's field of view: a lane point inside that cone counts as in view
+    spawnClearance: 14, // metres: a car never spawns this close to another AI car
+    spawnSpeedFraction: 0.7, // a respawned car starts moving at this fraction of its lane's cruise speed
+    populationChecksPerFrame: 3, // cars checked per frame for being far away (round robin)
+    respawnsPerFrame: 1, // at most this many cars are moved per frame (each move tries lanes and casts sight rays)
+    spawnTries: 50, // lanes tried for one move (the last 30% at any distance out of sight)
+    // relative cars per lane-metre by road class (a respawn picks a lane by length x this)
+    densityByClass: { primary: 1, secondary: 0.85, parkway: 0.8, tertiary: 0.6, residential: 0.22, service: 0.06 },
+    stuckRecycle: 25, // seconds stopped (not at a junction) before a car is moved away (gridlock fallback)
+    // ---- junction rules (junctions.ts) ----
+    classRank: { primary: 5, parkway: 5, secondary: 4, tertiary: 3, residential: 2, service: 1 }, // at an uncontrolled junction the lower rank gives way
+    approachDecel: 3.2, // m/s²: comfortable braking toward a stop line or into a junction curve
+    decideDist: 12, // metres beyond the braking distance at which a car starts checking whether it may enter the junction ahead
+    turnLatAccel: 2.6, // m/s² sideways on a junction curve: sets the speed of each turn
+    turnSpeedMin: 3.5, // m/s: slowest junction curve speed (tight corners, U-turns)
+    stopSignWait: 1.1, // seconds stopped at a stop sign before going (then first come, first served)
+    yieldPause: 0.25, // seconds a car giving way stands at the line before pulling out into a gap
+    gapTime: 4, // seconds: a car with priority this close (in time) to the junction blocks a crossing or turning move
+    gapDist: 70, // metres: cars with priority farther than this are ignored by gap acceptance
+    maxYieldWait: 12, // seconds: after waiting this long at a give-way line, only cars under 1.5 s away hold a car back
+    conflictDist: 2.9, // metres: two junction paths that come closer than this conflict (two car widths and some slack: cars lag their curve a little)
+    exitSpace: 3, // metres of free lane needed beyond a car's length past the junction before it enters (never block the box)
+    boxReserveTime: 1.2, // seconds: a car given the go this close to its stop line counts as in the junction already
+    exitSpaceSpeed: 3, // m/s: a car on the exit lane slower than this counts as queuing there
+    amberMargin: 0.3, // seconds: on amber a car goes only if it reaches the stop line this long before red
+    redCommitSpeed: 3, // m/s: a car that went for an amber but is slower than this at the line when it turns red stops
+    stopBehindLine: 0.5, // metres between a waiting car's front bumper and the stop line
+    stopClearance: 2.3, // metres: a waiting car stands back until its front is this far from every other approach's junction curve ...
+    stopBackMax: 8, // ... but never more than this many metres behind the line
+    boxNudgeTime: 6, // seconds stopped inside a junction after which other AI cars no longer hold a car back (breaks a mutual block)
+    uTurnReach: 2.5, // metres a U-turn's curve reaches forward beyond the width it turns across (dead ends)
+    mapEdgeRange: 40, // metres: a dead end this close to the map's edge is a road leaving the map (cars drive off it)
+    // roundabout (Washington Circle): entering cars yield to circulating ones
+    ringSpeed: 8.5, // m/s (31 km/h): top speed on the roundabout ring and through its nodes
+    ringYieldDist: 34, // metres along the ring: circulating cars closer than this to an entry ...
+    ringYieldTime: 3.6, // ... and under this many seconds away make entering cars wait
+    ringYieldNear: 10, // metres: a circulating car this close to the entry always makes entering cars wait
+    ringConflictDist: 16, // metres (audit): an entry with a circulating car this close ...
+    ringConflictTime: 2, // ... and under this many seconds away counts as a failure to yield
+    shortLaneGreenLeft: 3, // seconds: a car enters a lane too short to stop on before a fixed-time signal only with this much green left (else it reaches the line on red)
+    ringEntryCreep: 3.5, // m/s: top speed at a roundabout entry line (and reaching it through a lane too short to stop on, K St at the circle): a car can still stop there
+    ringExitFreeze: 4, // metres before a ring node: a circulating car's choice to leave or go round again is final from here (entering cars rely on it)
+    ringExitDecide: 9, // metres before a ring node: a car leaving the ring from an inner lane checks the lanes outside it from here ...
+    ringExitGap: 10, // ... and goes round again if a car in an outer lane is level with it or up to this many metres behind
+    // lane changes (multi-lane roads: Key Bridge, Pennsylvania Ave, K St, the freeway, the circle)
+    laneChangeRate: 1.5, // m/s sideways while changing lanes
+    laneChangeMinRoom: 16, // metres before the stop line: a lane change not started by here is given up (turn from the lane you are in)
+    laneChangeGapAhead: 4, // metres kept to a car ahead in the target lane (plus 0.6 s at our speed)
+    laneChangeGapBehind: 5, // metres kept to a car behind in the target lane (plus 1.2 s of its closing speed)
+    // audit (trafficAudit.ts, only when tests switch it on)
+    wrongLevelGap: 2.5, // metres: an AI car this far above or below its lane is on the wrong level
+    stuckReport: 20, // seconds stopped that count as stuck (gridlock) in the audit
+  },
+  signals: {
+    // actuated: detector loops at the stop lines (AI cars and your car) call a phase and keep it green while traffic comes
+    green: 18, // seconds: longest green for a phase carrying a junction's biggest road
+    greenSide: 10, // seconds: longest green for every other phase
+    minGreen: 6, // seconds: shortest green
+    detectDist: 70, // metres: a car this close to a red stop line calls its phase
+    passageDist: 30, // metres: a car still driving toward a green stop line within this keeps the green (up to the longest green)
+    checkEvery: 0.5, // seconds between detector checks during a green
+    amber: 3, // seconds of amber
+    allRed: 1.5, // seconds of all-red between phases
+    pedPhase: 7, // seconds of all-red (people cross) at a signal with only one traffic phase (a mid-block crossing)
+    oppositeAngle: 2.4, // radians: two approaches this close to head-on share a phase
   },
 
   peds: {
@@ -366,9 +438,16 @@ const RAW = {
     carsPerStar: 1, // police cars per star
     maxCars: 5,
     spawnDistance: 160, // metres from player they spawn
+    spawnLanesLooked: 24, // dispatch: at most this many of the best spawn lanes (by distance and camera) are looked at (a sight ray each) ...
+    spawnRouteChecks: 8, // ... and the best this many of them out of sight get a route check ...
+    spawnRoutePenalty: 400, // ... and every this many metres of driving to your last known position counts as much as being in front of the camera vs behind it
+    spawnMaxDrive: 700, // metres: a dispatch spot whose drive to you is longer than this is only used if none further out (or in view) is shorter
+    spawnFarFactor: 3, // ... looking out to this many times spawnDistance
     chaseSpeed: [0, 14, 17, 20, 23, 26], // m/s by star level
     accel: 7, // m/s²
-    directChaseRange: 45, // metres: drive straight at the player when visible this close
+    directChaseRange: 45, // metres: drive straight at the player when visible this close ...
+    directChaseLevelGap: 3, // ... and no more than this many metres above or below (a deck over the road is out of reach)
+    searchRadius: 160, // metres: after reaching your last known position, police cruise to lanes within this of it
     offRoadRejoin: 10, // metres off its lane (after a direct chase) before a police car rejoins the nearest lane
     rejoinSearch: 80, // metres: how far a police car looks for a lane to rejoin
     goalLaneRange: 400, // metres: police route to the lane nearest your last known position within this distance

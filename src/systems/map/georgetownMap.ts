@@ -13,7 +13,7 @@ import { buildGeorgetownWorld, type GeoQuality, type GeoRoadPoly, type GeoWorld 
 import { SIGN_CATS } from './facades';
 import { K } from './terrain';
 import {
-  MapIndex, laneSample,
+  MapIndex, laneSample, linkLaneNeighbours,
   type Building, type CityMap, type KerbHit, type LaneEdge, type LaneHit, type LanePoint, type MinimapDrawOpts,
   type ParkingSpot, type Poi, type RoadClass, type RoadNode, type StreetLine, type WalkKind, type WalkNode,
 } from './cityMap';
@@ -116,7 +116,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     });
   }
   const nodes: RoadNode[] = J.map((j) => ({
-    id: j.id, x: j.x, y: j.y, z: j.z, out: [], in: [], roundabout: j.roundabout, signals: j.signals,
+    id: j.id, x: j.x, y: j.y, z: j.z, out: [], in: [], roundabout: j.roundabout, signals: j.signals, stop: j.stop,
     deadEnd: j.degree <= 1, junction: j.degree >= 3 || ((j.signals || j.stop) && j.degree >= 2) || cornerAt[j.id] === 1,
   }));
   const passThrough = (id: number) => !nodes[id].junction && !nodes[id].deadEnd;
@@ -139,7 +139,10 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
       // only along a kerb with a pavement (people get in and out there; Canal Rd and the like have none)
       if (fwdL.length >= 2 && P.sidewalkR) parkR = true; // the kerbside lane is the parking lane
       if (bwdL.length >= 2 && P.sidewalkL) parkL = true;
-      if (fwdL.length === 1 && bwdL.length === 1 && hw >= M.parkingMinHalfWidth && (P.sidewalkL || P.sidewalkR)) {
+      // (not on a link onto a roundabout, like K St's at Washington Circle: moved over for parking, its two lanes ran
+      // 2.3 m apart and cars leaving the ring brushed cars waiting to join it)
+      const ringLink = J[P.nodeA].roundabout || J[P.nodeB].roundabout;
+      if (fwdL.length === 1 && bwdL.length === 1 && hw >= M.parkingMinHalfWidth && (P.sidewalkL || P.sidewalkR) && !ringLink) {
         // narrow two-way street: park on one kerb (the same kerb along the whole street) and move both lanes over
         const pick = hashStr(P.roadId) & 1 ? 1 : -1;
         const side = (pick === 1 ? P.sidewalkR : P.sidewalkL) ? pick : -pick;
@@ -174,7 +177,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
           id: edges.length, from: dir === 1 ? P.nodeA : P.nodeB, to: dir === 1 ? P.nodeB : P.nodeA, pts, cum, len: cum[cum.length - 1],
           trimStart: dir === 1 ? tA : tB, trimEnd: dir === 1 ? tB : tA, speed, cls, name: P.name || null, roadId: P.roadId,
           lane: k, lanesSameDir: offs.length, offset: dir === 1 ? off : -off, oneway: P.oneway !== 0, roundabout: ring,
-          bridge: P.deck, halfWidth: hw, twin: -1,
+          bridge: P.deck, halfWidth: hw, twin: -1, left: -1, right: -1,
           parking: k === 0 && (dir === 1 ? parkR : parkL),
         };
         edges.push(e);
@@ -186,6 +189,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     for (let k = 0; k < info.fwd.length; k++) if (info.bwd.length) edges[info.fwd[k]].twin = info.bwd[Math.min(k, info.bwd.length - 1)];
     for (let k = 0; k < info.bwd.length; k++) if (info.fwd.length) edges[info.bwd[k]].twin = info.fwd[Math.min(k, info.fwd.length - 1)];
   });
+  linkLaneNeighbours(edges);
   const oneWayCheck = checkOneWays(doc, polys, edges, polyLanes);
   const ringCheck = checkRing(polys, roadById, edges, polyLanes);
   const tRoads = performance.now();

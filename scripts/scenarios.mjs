@@ -1599,14 +1599,22 @@ export async function mapcheck(page, S) {
     // ---- 1) drive ----
     const hit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
     const car = w.traffic.find((t) => t.phase === 'lane') ?? w.traffic[0];
-    let prev = car.edge, streak = 0, best = 0, jumps = 0, maxOff = 0, uTurns = 0;
+    car.keep = true; // followed round the whole map: never moved nearer the player
+    let prev = car.edge, streak = 0, best = 0, jumps = 0, maxOff = 0, uTurns = 0, laneChanges = 0;
     const visited = new Set([prev]), path = [];
     const simStart = w.time;
     while (streak < 30 && w.time - simStart < 900) {
       window.__ocRun(0.1, 30);
-      if (car.phase === 'lane' && car.stunT <= 0) maxOff = Math.max(maxOff, M.projectOnLane(E[car.edge], car.px, car.pz, hit).dist);
+      if (car.phase === 'lane' && car.stunT <= 0) {
+        // off its lane beyond the sideways offset of a lane change it is making (car.latOff)
+        const h = M.projectOnLane(E[car.edge], car.px, car.pz, hit);
+        const lat = (car.px - h.x) * -Math.cos(h.heading) + (car.pz - h.z) * Math.sin(h.heading);
+        maxOff = Math.max(maxOff, Math.abs(lat - (car.latOff ?? 0)));
+      }
       if (car.edge === prev) continue;
-      const from = E[prev], legal = N[from.to].out.includes(car.edge);
+      const from = E[prev];
+      if (from.left === car.edge || from.right === car.edge) { laneChanges++; visited.add(car.edge); prev = car.edge; continue; } // a lane change, not a choice
+      const legal = N[from.to].out.includes(car.edge);
       if (legal) {
         streak++;
         if (car.edge === from.twin && !N[from.to].deadEnd) uTurns++;
@@ -1616,7 +1624,8 @@ export async function mapcheck(page, S) {
       visited.add(car.edge);
       prev = car.edge;
     }
-    const drive = { choices: best, jumps, uTurnsNotAtDeadEnds: uTurns, maxOffLaneM: +maxOff.toFixed(2), simSeconds: Math.round(w.time - simStart), lanesVisited: visited.size, route: path.slice(0, 12).join(' > ') };
+    car.keep = false;
+    const drive = { choices: best, jumps, laneChanges, uTurnsNotAtDeadEnds: uTurns, maxOffLaneM: +maxOff.toFixed(2), simSeconds: Math.round(w.time - simStart), lanesVisited: visited.size, route: path.slice(0, 12).join(' > ') };
     // ---- 2) walks ----
     const router = M.walkRouter(), W = c.walk.nodes;
     let ok = 0, fail = 0, badLink = 0, hops = 0, metres = 0;
@@ -1720,9 +1729,10 @@ export async function geoplay(page, S) {
     const ring = E.filter((e) => e.roundabout);
     if (!ring.length) return { skipped: 'no roundabout on this map' };
     const lp = { x: 0, y: 0, z: 0, heading: 0 };
-    // six traffic cars onto the ring (as traffic.placeOnEdge does)
+    // six traffic cars onto the ring
     w.traffic.slice(0, 6).forEach((car, k) => {
       const e = ring[(k * 5) % ring.length];
+      if (window.__ocTraffic) { window.__ocTraffic.placeOnEdge(car, e.id, 2); car.speed = 4; return; }
       car.edge = e.id; car.next = -1; car.phase = 'lane'; car.s = Math.min(e.len - e.trimEnd - 1, e.trimStart + 2);
       window.__ocMap.laneSample(e, car.s, lp);
       car.heading = lp.heading; car.lastSetHeading = NaN; car.speed = 4; car.stunT = 0; car.stuckT = 0;
@@ -1817,5 +1827,306 @@ export async function geoplay(page, S) {
     w.input.pressed.add('Escape'); window.__ocFrames(1, true);
     return { paused, attrib, attribMatchesData: geo ? attrib === w.city.attribution : null, quality: q, resumed: !w.paused };
   });
+  return out;
+}
+
+// Gate drive on the real graph (MAP=georgetown node scripts/shot.mjs x geodrive): your car drives Key Bridge -> M St
+// east -> Pennsylvania Ave -> once round Washington Circle -> K St west to the waterfront, steered by a simple
+// autopilot that only presses W/A/S/D/Space (no teleports after the start), stopping at red lights, waiting at stop
+// signs, yielding on entering the circle and keeping its distance; traffic runs at the preset's density meanwhile.
+// Measures the route and every AI car (window.__oc.trafficSim.stats with the audit on, plus an independent check of
+// each car's lane-to-lane moves), CPU per frame and the traffic / police profiler sections. Screenshots
+// 28-traffic-{keybridge,mst,signals,circle}.png.
+export async function geodrive(page, S) {
+  await S.start(page);
+  const out = {};
+  out.route = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, E = c.roads.edges, N = c.roads.nodes, J = w.junctions, T = window.__ocTraffic;
+    const router = window.__ocMap.roadRouter();
+    const lStart = (e) => Math.min(e.trimStart, e.len * 0.5), lStop = (e) => Math.max(lStart(e), e.len - e.trimEnd);
+    const namesAt = (n) => new Set([...n.in, ...n.out].map((i) => E[i].name));
+    const nodeWith = (a, b) => N.find((n) => !n.roundabout && namesAt(n).has(a) && namesAt(n).has(b));
+    const traffic = (e) => J.edgeRank[e.id] >= 0;
+    const kb = E.find((e) => e.bridge && /Key Bridge/.test(e.name ?? '') && e.pts[e.pts.length - 1] < e.pts[2] && J.edgeRank[e.id] === 0);
+    if (!kb) return { error: 'no Key Bridge (run with MAP=georgetown)' };
+    const route = [kb.id];
+    const go = (node) => {
+      const at = E[route[route.length - 1]].to;
+      if (at === node) return true;
+      const n = router.path(at, node);
+      if (n <= 0) return false;
+      for (let i = 0; i < n; i++) route.push(router.edges[i]);
+      return true;
+    };
+    const wps = [nodeWith('M St NW', 'Wisconsin Ave NW'), nodeWith('M St NW', 'Pennsylvania Ave NW'), nodeWith('Pennsylvania Ave NW', '24th St NW')];
+    for (const n of wps) if (!n || !go(n.id)) return { error: `no route to ${n ? n.id : '?'}`, route };
+    // into the circle from Pennsylvania Ave (the entry nearest the end of the route so far)
+    const here = N[E[route[route.length - 1]].to];
+    const entry = N.filter((n) => n.roundabout && namesAt(n).has('Pennsylvania Ave NW')).sort((a, b) => Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z))[0];
+    if (!entry || !go(entry.id)) return { error: 'no way into the circle', route };
+    // once round (outer lane) and on to the K St exit on the west side
+    const kExit = N.filter((n) => n.roundabout && namesAt(n).has('K St NW')).sort((a, b) => a.x - b.x)[0];
+    let at = entry.id, ringSteps = 0;
+    for (let k = 0; k < 20; k++) {
+      const e = E.find((q) => q.roundabout && q.from === at && J.edgeRank[q.id] === 0);
+      route.push(e.id); ringSteps++; at = e.to;
+      if (ringSteps >= 8 && at === kExit.id) break;
+    }
+    const kOut = N[kExit.id].out.map((i) => E[i]).find((e) => !e.roundabout && e.name === 'K St NW' && traffic(e));
+    if (!kOut) return { error: 'no K St exit', route };
+    route.push(kOut.id);
+    const tj = nodeWith('K St NW', 'Thomas Jefferson St NW');
+    if (!go(tj.id)) return { error: 'no route to the waterfront', route };
+    const last = N[tj.id].out.map((i) => E[i]).find((e) => e.name === 'K St NW' && traffic(e) && N[e.to].x < N[tj.id].x);
+    route.push(last.id);
+    // lanes (lane discipline): on each road the lane furthest from the kerb that may make the move onto the next road
+    // (clear of kerbside clutter, as most drivers going straight on), the outer lane round the circle and into it;
+    // the car enters each road in the lane its move leads into and changes lanes along the road where they differ
+    const groupOf = (id) => J.edgeGroup[id];
+    const enter = [route[0]], chosen = [];
+    for (let i = 0; i < route.length; i++) {
+      const e = E[route[i]];
+      const nextG = i < route.length - 1 ? groupOf(route[i + 1]) : -1;
+      const outer = e.roundabout || (i < route.length - 1 && E[route[i + 1]].roundabout && !e.roundabout);
+      let hi = e; while (hi.left >= 0) hi = E[hi.left];
+      let pick = -1, pickOut = -1;
+      for (let l = hi; l && pick < 0; l = l.right >= 0 ? E[l.right] : null) {
+        if (!traffic(l)) continue;
+        if (nextG < 0) { pick = l.id; break; }
+        const m0 = J.edgeM0[l.id], mn = J.edgeMN[l.id];
+        for (let m = m0; m < m0 + mn; m++) {
+          if (!J.mvOk[m] || groupOf(J.mvOut[m]) !== nextG) continue;
+          if (outer && J.edgeRank[J.mvOut[m]] !== 0) continue; // the circle: its outer lane
+          pick = l.id; pickOut = J.mvOut[m]; break;
+        }
+      }
+      if (pick < 0) { pick = route[i]; pickOut = i < route.length - 1 ? route[i + 1] : -1; }
+      chosen.push(pick);
+      if (i < route.length - 1) enter.push(pickOut);
+    }
+    // the path: lane centre lines from start to stop line (easing across where the entry lane is not the chosen one),
+    // junction curves between
+    const P = [], edgeOf = [], stopIdx = [];
+    const lp = { x: 0, y: 0, z: 0, heading: 0 }, lq = { x: 0, y: 0, z: 0, heading: 0 };
+    chosen.forEach((id, k) => {
+      const e = E[id], a = E[enter[k]];
+      const s0 = k === 0 ? e.len * 0.3 : lStart(e), s1 = k === chosen.length - 1 ? Math.min(lStop(e), lStart(e) + 45) : lStop(e);
+      const sB = Math.max(s0 + 4, s1 - 22), sA = Math.max(s0, sB - 30);
+      for (let s = s0; s <= s1 + 0.01; s = s >= s1 ? s1 + 1 : Math.min(s1, s + 2)) {
+        window.__ocMap.laneSample(e, s, lp);
+        if (a.id !== e.id && s < sB) {
+          window.__ocMap.laneSample(a, Math.min(s, a.len), lq);
+          const t = s <= sA ? 0 : (s - sA) / (sB - sA), u = t * t * (3 - 2 * t);
+          lp.x = lq.x + (lp.x - lq.x) * u; lp.z = lq.z + (lp.z - lq.z) * u;
+        }
+        P.push(lp.x, lp.y, lp.z); edgeOf.push(k);
+      }
+      stopIdx.push(edgeOf.length - 1);
+      if (k < chosen.length - 1) {
+        const cv = T.turnCurve(id, enter[k + 1]);
+        for (let j = 1; j < cv.length / 2 - 1; j++) { P.push(cv[j * 2], NaN, cv[j * 2 + 1]); edgeOf.push(k); }
+      }
+    });
+    route.splice(0, route.length, ...chosen);
+    const n = P.length / 3, cum = new Float64Array(n);
+    for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(P[i * 3] - P[i * 3 - 3], P[i * 3 + 2] - P[i * 3 - 1]);
+    window.__gd = { route, P, edgeOf, stopIdx, cum, n, idx: 0, maxDev: 0, t0: 0, frames: 0, cpu: [], slow: [], seen: {}, sec: {}, stopT: 0, stoppedAt: -1, playerRedRuns: 0, stuckT: 0, illegal: 0, illegalWhere: '', moves: 0, last: new Map(), hp0: 0 };
+    const names = []; for (const id of route) { const nm = E[id].name ?? E[id].roadId; if (names[names.length - 1] !== nm) names.push(nm); }
+    return { edges: route.length, metres: Math.round(cum[n - 1]), roads: names.join(' > '), ringLanes: ringSteps, lanes: route.map((id, k) => `${E[id].name}#${id}L${E[id].lane}${enter[k] !== id ? `(from L${E[enter[k]].lane})` : ''}`).join(' ') };
+  });
+  if (out.route.error) return out;
+  // put your car at the start (the one teleport): on Key Bridge's northbound kerb lane, 30% along, at rest
+  out.start = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, G = window.__gd, E = w.city.roads.edges;
+    let v = w.player.vehicle;
+    if (!v) {
+      v = w.vehicles.find((q) => q.owned) ?? w.vehicles[0];
+      window.__mh.put(w.player.body, v.px - Math.cos(v.heading) * 2.2, v.pz + Math.sin(v.heading) * 2.2, 1.2);
+      run(0.2); w.input.pressed.add('KeyE'); run(0.2);
+    }
+    v = w.player.vehicle;
+    const x = G.P[0], y = G.P[1], z = G.P[2], h = Math.atan2(G.P[3] - x, G.P[5] - z);
+    v.body.setTranslation({ x, y: y + 0.9, z }, true);
+    v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0);
+    w.cam.yaw = h + Math.PI;
+    w.dayNight.hour = 13.5;
+    run(1.5); // traffic gathers round the new spot
+    w.trafficSim.measure = true; window.__ocTraffic.resetStats();
+    G.t0 = w.time; G.hp0 = v.health; G.hpLast = v.health; G.dmg = [];
+    for (const car of w.traffic) G.last.set(car, [car.edge, car.respawns]);
+    // the autopilot: one 60 Hz frame per step, keys only
+    const J = w.junctions, CTL = { SIGNALS: 1, STOP: 2, PRIORITY: 3, ALLWAY: 4, RING: 5 };
+    const SEC = ['traffic', 'police-drive', 'police', 'traffic-ctl', 'physics', 'peds'];
+    const secIdx = SEC.map((n) => w.prof.names.indexOf(n));
+    const keys = ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'Space'];
+    window.__gdStep = (maxFrames, until) => {
+      const N = w.city.roads.nodes;
+      for (let f = 0; f < maxFrames; f++) {
+        const v = w.player.vehicle;
+        if (!v) return { status: 'out of car' };
+        const px = v.px, pz = v.pz;
+        // progress along the path
+        let best = G.idx, bd = Infinity;
+        for (let i = G.idx; i < Math.min(G.n, G.idx + 50); i++) { const d = Math.hypot(G.P[i * 3] - px, G.P[i * 3 + 2] - pz); if (d < bd) { bd = d; best = i; } }
+        G.idx = best;
+        if (bd > G.maxDev) { G.maxDev = bd; G.maxDevAt = `${E[G.route[G.edgeOf[best]]].name} (${Math.round(px)}, ${Math.round(pz)})`; }
+        if (G.idx >= G.n - 3) { for (const key of keys) w.input.keys.delete(key); return { status: 'done' }; }
+        const k = G.edgeOf[G.idx], eid = G.route[k], e = E[eid];
+        // steering: pure pursuit on a point Ld ahead
+        const sp = Math.max(0, v.speed);
+        const Ld = 6 + 0.45 * sp;
+        let li = G.idx; while (li < G.n - 1 && G.cum[li] - G.cum[G.idx] < Ld) li++;
+        const tx = G.P[li * 3], tz = G.P[li * 3 + 2];
+        const bearing = Math.atan2(tx - px, tz - pz);
+        const alpha = Math.atan2(Math.sin(bearing - v.heading), Math.cos(bearing - v.heading));
+        const wb = v.spec.wheelZFront - v.spec.wheelZRear;
+        const want = Math.atan((2 * wb * Math.sin(alpha)) / Ld);
+        // speed: road speed, curves ahead, red lights, stop signs, the circle, cars and people ahead
+        let target = Math.min(e.speed, 14);
+        for (let i = G.idx + 1; i < G.n - 4 && G.cum[i] - G.cum[G.idx] < 60; i++) {
+          const a0 = Math.atan2(G.P[i * 3] - G.P[i * 3 - 3], G.P[i * 3 + 2] - G.P[i * 3 - 1]);
+          let j = i; while (j < G.n - 1 && G.cum[j] - G.cum[i] < 8) j++;
+          const a1 = Math.atan2(G.P[j * 3] - G.P[j * 3 - 3], G.P[j * 3 + 2] - G.P[j * 3 - 1]);
+          const bend = Math.abs(Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)));
+          if (bend < 0.05) continue;
+          const vc = Math.sqrt(3.2 * Math.max(4, (G.cum[j] - G.cum[i]) / bend));
+          target = Math.min(target, Math.sqrt(vc * vc + 2 * 3 * (G.cum[i] - G.cum[G.idx])));
+        }
+        const dStop = G.cum[G.stopIdx[k]] - G.cum[G.idx];
+        const c = J.nodes[e.to];
+        let hold = false;
+        if (k < G.route.length - 1 && dStop < 70 && dStop > -0.5) { // (once over the line, carry on: holding in the box blocked the ring)
+          if (c.kind === CTL.SIGNALS) {
+            const L = J.light[eid];
+            if (L === 2 || (L === 1 && dStop > (sp * sp) / 8 + 3)) hold = true;
+          } else if (c.kind === CTL.STOP || c.kind === CTL.ALLWAY || (c.kind === CTL.PRIORITY && c.apRank[J.edgeAp[eid]] < c.majorRank)) {
+            if (G.stoppedAt !== e.to) hold = true;
+          } else if (c.kind === CTL.RING && !e.roundabout) {
+            for (const o of w.traffic) { const d = window.__ocTraffic.ringDist(o, e.to); if (d < 34 && (d < 10 || d / Math.max(o.speed, 0.5) < 3.6)) hold = true; }
+          }
+        }
+        // the next lane is too short to stop on (K St off Washington Circle, 2 m before a signal): stop for that
+        // signal from here, as the AI cars do (they go round the ring again instead)
+        if (!hold && k + 1 < G.route.length - 1 && J.shortLane[G.route[k + 1]] && J.nodes[E[G.route[k + 1]].to].kind === CTL.SIGNALS && J.light[G.route[k + 1]] !== 0) {
+          const d2 = G.cum[G.stopIdx[k + 1]] - G.cum[G.idx];
+          if (d2 < 70) { hold = true; target = Math.min(target, Math.sqrt(2 * 3 * Math.max(0, d2 - 3))); }
+        }
+        if (hold) target = Math.min(target, Math.sqrt(2 * 3 * Math.max(0, dStop - 3)));
+        G.why = hold ? `hold at node ${e.to} (kind ${c.kind}) dStop ${dStop.toFixed(1)}` : '';
+        // stop signs: a full second at the line, then the junction box must be clear
+        if (hold && G.stoppedAt !== e.to && (c.kind === CTL.STOP || c.kind === CTL.ALLWAY || c.kind === CTL.PRIORITY) && dStop < 6 && sp < 0.4) {
+          G.stopT += 1 / 60;
+          const busy = w.traffic.some((o) => o.phase === 'turn' && !o.respawnWanted && E[o.edge].to === e.to && (o.speed > 0.5 || Math.hypot(o.px - px, o.pz - pz) < 15));
+          if (G.stopT > 1 && !busy) { G.stoppedAt = e.to; G.stopT = 0; }
+        }
+        // anything ahead in our way
+        const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+        const ahead = (ox, oy, oz, half, what, latMax = 2.4) => { const rx = ox - px, rz = oz - pz, al = rx * fx + rz * fz, lat = Math.abs(rx * fz - rz * fx); if (al > 0 && al < 45 && lat < latMax && Math.abs(oy - v.py) < 3) { const t = Math.max(0, (al - half - 5) * 0.7); if (t < target) { target = t; G.why = `${what} ${al.toFixed(1)} m ahead`; } } };
+        for (const o of w.traffic) ahead(o.px, o.py, o.pz, o.halfL, `car ${o.id} (${o.phase}, hold ${o.hold})`);
+        for (const o of w.police.cars) ahead(o.px, o.py, o.pz, o.halfL, 'police');
+        // people: in the road only (AI traffic's band); a wider one stopped us for someone on the Key Bridge pavement
+        for (const p of w.peds) if (p.active && !p.hidden && p.state !== 'down') ahead(p.pos.x, p.pos.y, p.pos.z, 0.5, `person ${p.id} (${p.state})`, 1.7);
+        // keys
+        for (const key of keys) w.input.keys.delete(key);
+        if (want > v.steer + 0.01) w.input.keys.add('KeyA');
+        else if (want < v.steer - 0.01) w.input.keys.add('KeyD');
+        if (target < 0.3 && Math.abs(v.speed) < 1.5) w.input.keys.add('Space');
+        else if (v.speed < target - 0.3) w.input.keys.add('KeyW');
+        else if (v.speed > target + 0.8 && v.speed > 1.2) w.input.keys.add('KeyS');
+        // our own red-light crossings
+        if (G.lastK !== undefined && G.lastK !== k && J.nodes[E[G.route[G.lastK]].to].kind === CTL.SIGNALS && J.light[G.route[G.lastK]] === 2) G.playerRedRuns++;
+        G.lastK = k;
+        // one frame
+        const fr = window.__ocFrames(1, false)[0];
+        G.frames++;
+        G.cpu.push(fr.cpu);
+        if (fr.cpu > 33 && G.slow.length < 12) G.slow.push(`${fr.cpu.toFixed(0)} ms: ${fr.top}`);
+        for (let s = 0; s < SEC.length; s++) G.sec[SEC[s]] = (G.sec[SEC[s]] ?? 0) + w.prof.cur[secIdx[s]];
+        // independent check of every AI car's moves: lane -> next lane out of its junction, or a neighbour lane
+        for (const car of w.traffic) {
+          const l = G.last.get(car);
+          if (!l) { G.last.set(car, [car.edge, car.respawns]); continue; }
+          if (l[0] !== car.edge) {
+            if (l[1] === car.respawns) {
+              const a = E[l[0]];
+              G.moves++;
+              if (!N[a.to].out.includes(car.edge) && a.left !== car.edge && a.right !== car.edge) { G.illegal++; G.illegalWhere = `car ${car.id} ${a.name}#${a.id} -> ${E[car.edge].name}#${car.edge}`; }
+            }
+            l[0] = car.edge;
+          }
+          l[1] = car.respawns;
+        }
+        if (v.health < G.hpLast - 0.5 && G.dmg.length < 8) {
+          // what hit us (or what we hit): the nearest AI car
+          let near = null, nd = Infinity;
+          for (const o of w.traffic.concat(w.police.cars)) { const d = Math.hypot(o.px - px, o.pz - pz); if (d < nd) { nd = d; near = o; } }
+          G.dmg.push(`t ${(w.time - G.t0).toFixed(1)} -${(G.hpLast - v.health).toFixed(0)} hp at (${Math.round(px)}, ${Math.round(pz)}) on ${e.name} v ${(sp * 3.6).toFixed(0)} km/h; nearest ${near ? `${near.kind} ${near.id} ${near.phase} ${E[near.edge].name}#${near.edge} ${nd.toFixed(1)} m` : '-'}; ${G.why}`);
+        }
+        G.hpLast = v.health;
+        if (sp < 0.3) G.stuckT += 1 / 60; else G.stuckT = 0;
+        if (G.stuckT > 60) return { status: 'stuck', at: [Math.round(px), Math.round(pz)], edge: e.name, why: G.why, target: +target.toFixed(2), keys: [...w.input.keys].join(' '), speed: +v.speed.toFixed(2), steer: +v.steer.toFixed(2) };
+        if (until) { const cp = until(G, v, e, k); if (cp && !G.seen[cp]) { G.seen[cp] = 1; return { status: 'checkpoint', name: cp }; } }
+      }
+      return { status: 'running' };
+    };
+    return { x: Math.round(x), y: +y.toFixed(1), z: Math.round(z), heading: +h.toFixed(2), inCar: !!w.player.vehicle };
+  });
+  const step = (n, until) => page.evaluate(([n, u]) => window.__gdStep(n, u ? new Function('G', 'v', 'e', 'k', u) : null), [n, until ?? null]);
+  const pos = () => page.evaluate(() => { const v = window.__oc.player.vehicle, G = window.__gd; return { t: +(window.__oc.time - G.t0).toFixed(1), x: Math.round(v.px), y: +v.py.toFixed(1), z: Math.round(v.pz), kmh: Math.round(v.speed * 3.6), road: window.__oc.city.roads.edges[G.route[G.edgeOf[G.idx]]].name, donePct: +(G.cum[G.idx] / G.cum[G.n - 1] * 100).toFixed(1) }; });
+  out.progress = [];
+  // Key Bridge: a few seconds in, on the deck
+  let r = await step(60 * 6);
+  out.progress.push({ ...(await pos()), status: r.status });
+  await frozenShot(page, 'screenshots/28-traffic-keybridge.png', null);
+  // the rest, with three checkpoints for screenshots on the way: M St past Wisconsin Ave, standing at a red light, on the circle
+  const until = [
+    "if (/M St/.test(e.name || '') && v.px > -100) return 'mst';",
+    "const J = window.__oc.junctions; if (J.nodes[e.to].kind === 1 && J.light[e.id] === 2 && v.speed < 0.3 && G.cum[G.stopIdx[k]] - G.cum[G.idx] < 12) return 'signals';",
+    // the circle: on the ring with at least 4 AI cars round it (else on the last ring lane before the exit)
+    "const E = window.__oc.city.roads.edges; if (k > 0 && E[G.route[k]].roundabout && G.cum[G.idx] - G.cum[G.stopIdx[k - 1]] > 10) { const ring = window.__oc.city.roads.nodes.filter((n) => n.roundabout); const cx = ring.reduce((s, n) => s + n.x, 0) / ring.length, cz = ring.reduce((s, n) => s + n.z, 0) / ring.length; const near = window.__oc.traffic.filter((o) => Math.hypot(o.px - cx, o.pz - cz) < 75).length; if (near >= 4 || !E[G.route[k + 1]].roundabout) return 'circle'; }",
+    'return null;',
+  ].join('\n');
+  for (let k = 0; k < 60 && r.status !== 'done' && r.status !== 'stuck' && r.status !== 'out of car'; k++) {
+    r = await step(60 * 30, until);
+    if (r.status === 'checkpoint') {
+      out.progress.push({ ...(await pos()), status: r.name });
+      if (r.name === 'mst') await frozenShot(page, 'screenshots/28-traffic-mst.png', null);
+      if (r.name === 'signals') {
+        const cam = await page.evaluate(() => { const v = window.__oc.player.vehicle, h = v.heading; return { px: v.px - Math.sin(h) * 9 + Math.cos(h) * 3, py: 6, pz: v.pz - Math.cos(h) * 9 - Math.sin(h) * 3, lx: v.px + Math.sin(h) * 28, ly: 3.5, lz: v.pz + Math.cos(h) * 28 }; });
+        await frozenShot(page, 'screenshots/28-traffic-signals.png', cam);
+      }
+      if (r.name === 'circle') {
+        const cam = await page.evaluate(() => { const c = window.__oc.city, ring = c.roads.nodes.filter((n) => n.roundabout); const cx = ring.reduce((s, n) => s + n.x, 0) / ring.length, cz = ring.reduce((s, n) => s + n.z, 0) / ring.length; return { px: cx - 10, py: 60, pz: cz + 95, lx: cx, ly: 0, lz: cz }; });
+        await frozenShot(page, 'screenshots/28-traffic-circle.png', cam);
+      }
+    } else if (k % 3 === 0) out.progress.push({ ...(await pos()), status: r.status });
+  }
+  out.progress.push({ ...(await pos()), status: r.status, why: r.at ? `${r.edge} at ${r.at}: ${r.why} target ${r.target} keys ${r.keys} v ${r.speed} steer ${r.steer}` : undefined });
+  out.result = await page.evaluate((status) => {
+    const w = window.__oc, G = window.__gd, st = w.trafficSim.stats, v = w.player.vehicle;
+    const cpu = [...G.cpu].sort((a, b) => a - b);
+    const q = (p) => +cpu[Math.min(cpu.length - 1, Math.floor(cpu.length * p))].toFixed(2);
+    const per = (n) => +(G.sec[n] / G.frames).toFixed(3);
+    for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'Space']) w.input.keys.delete(k);
+    w.trafficSim.measure = false;
+    return {
+      completed: status === 'done', status, routeSeconds: +(w.time - G.t0).toFixed(1), routeMetres: Math.round(G.cum[G.n - 1]), maxOffPathM: +G.maxDev.toFixed(2), maxOffPathAt: G.maxDevAt,
+      playerDamage: Math.round(G.hp0 - (v ? v.health : 0)), damageEvents: G.dmg, playerRedRuns: G.playerRedRuns,
+      ai: {
+        cars: w.traffic.length, wrongWayMoves: st.wrongWay, lastWrongWay: st.lastWrongWay, illegalLaneMoves: G.illegal, illegalWhere: G.illegalWhere, laneMovesChecked: G.moves,
+        redLightRuns: st.redRuns, signalCrossings: st.signalCrossings, lastRedRun: st.lastRedRun,
+        ringEntries: st.ringEntries, ringEntriesNotYielding: st.yieldFails, lastYieldFail: st.lastYieldFail, ringStops: st.ringStops, ringGoRound: st.ringGoRound,
+        stuckOver20s: st.stuck, stuckOver20sAtRed: st.stuckAtRed, stuckWhere: st.stuckWhere, longestStillS: +st.stillMax.toFixed(1),
+        maxOffLaneM: +st.offLaneMax.toFixed(2), offLaneWhere: st.offLaneWhere, carStepsOver2m: st.offLaneOver2, offLaneEvents: st.offLaneEvents,
+        wrongLevel: st.wrongLevel, lastWrongLevel: st.lastWrongLevel, aiCollisions: st.aiContacts, lastContact: st.lastContact,
+        laneChanges: st.laneChanges, laneChangeAborts: st.laneChangeAborts, recycled: st.recycled, respawned: st.respawned, leftMap: st.leftMap, clearedHeld: st.clearedHeld,
+        contactWhere: st.contactWhere,
+      },
+      cpu: { frames: G.frames, medianMs: q(0.5), p99Ms: q(0.99), maxMs: q(1), over33ms: cpu.filter((x) => x > 33).length, slowFrames: G.slow, perFrameMs: { traffic: per('traffic'), policeDrive: per('police-drive'), police: per('police'), trafficCtl: per('traffic-ctl'), physics: per('physics'), peds: per('peds') } },
+      f3SpikesWindow: w.prof.spikes(w.time),
+      near: status === 'done' ? undefined : w.traffic.filter((o) => Math.hypot(o.px - v.px, o.pz - v.pz) < 60).map((o) => { const E = w.city.roads.edges, e = E[o.edge]; return `${o.id} ${o.phase} hold${o.hold} ${e.name}#${o.edge}->${o.next >= 0 ? E[o.next].name + '#' + o.next : -1} node${e.to} s${o.s.toFixed(1)}/${(e.len - e.trimEnd).toFixed(1)} v${o.speed.toFixed(1)} rw${o.respawnWanted ? 1 : 0} stuck${o.stuckT.toFixed(0)} (${o.px.toFixed(0)},${o.pz.toFixed(0)})`; }),
+    };
+  }, r.status);
   return out;
 }
