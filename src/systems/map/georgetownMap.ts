@@ -24,7 +24,7 @@ const G = TUNING.geo;
 // ------------------------------------------------------------------------------------------- layout (map data)
 /** Player start: on the M St pavement a block east of the Key Bridge landing (past 35th St, where your car is parked on
  * M St itself rather than up a steep side street), facing east. */
-const SPAWN = { street: 'M St NW', cross: '35th St NW', along: 45, heading: Math.PI / 2 };
+const SPAWN = { street: 'M St NW', cross: '35th St NW', along: 54, heading: Math.PI / 2 }; // 54 m: between street trees, so the camera starts clear of them
 /**
  * Taxi ranks: on `street`, `along` metres from its junction with `cross` (the direction is whichever way along
  * `street` that is possible), at the kerb of the lane leaving the junction (lane: 1) or arriving at it (-1).
