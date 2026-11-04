@@ -201,6 +201,8 @@ function ownerCalls(w: World, owner: Ped, crime: Crime) {
   if (owner.state === 'down' || owner.hidden || !owner.active) return;
   const report = { x: crime.x, z: crime.z, heat: crime.heat, kind: String(crime.id) };
   if ((owner.state === 'phone' && owner.phoneMode === 'call') || owner.state === 'yell' || owner.state === 'flinch') {
+    // stopped filming to scream: drop the film here, or the phone loop below would wipe this report with it
+    if (owner.state !== 'phone' && owner.phoneMode === 'film') owner.phoneMode = null;
     owner.report = report;
     return;
   }
