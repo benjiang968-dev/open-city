@@ -155,6 +155,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   const signBuf = new SignBuf();
 
   let extraTris = 0;
+  const stoopBottoms: number[] = [];
   for (const b of doc.buildings) {
     if (skip.has(b.id)) continue;
     const key = special.get(b.id) ?? '';
@@ -323,8 +324,18 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         if (isFront && doorBay !== 255 && stoop > 0.2 && (t === 'terrace' || t === 'house')) {
           const s = (doorBay + 0.5) * bw;
           const px = w.ax + w.ux * s, pz = w.az + w.uz * s;
-          const steps = Math.max(2, Math.round(stoop / 0.19));
+          // the flight runs from the door sill down to the pavement in front of THIS door (on a sloping street that
+          // differs from the wall's middle, which set the floor height): rise and step count from the ground there
+          let gy = ras.heightAt(px + w.nx * 1.8, pz + w.nz * 1.8);
+          let rise = y0 - gy;
+          let steps = Math.max(2, Math.round(rise / 0.19));
+          const outEst = 1.1 + (steps - 1) * 0.3;
+          gy = ras.heightAt(px + w.nx * outEst, pz + w.nz * outEst);
+          rise = y0 - gy;
+          steps = Math.max(2, Math.round(rise / 0.19));
+          const stoop = rise; // shadows the building's nominal stoop height below
           const stepH = stoop / steps;
+          if (rise >= 0.2 && rise <= 2.4) {
           const sc = lin(0xb8b1a4);
           det.obox(px + w.nx * 0.55, y0 - 0.25, pz + w.nz * 0.55, 0.75, 0.55, y0, w.ux, w.uz, sc, shade(sc, 0.9));
           for (let k = 1; k < steps; k++) {
@@ -341,6 +352,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
             const ax = rx + w.nx * 0.2, az = rz + w.nz * 0.2, bx = rx + w.nx * outN, bz = rz + w.nz * outN;
             det.quad(ax - w.ux * 0.03, y0 + 0.95, az - w.uz * 0.03, ax + w.ux * 0.03, y0 + 0.95, az + w.uz * 0.03, bx + w.ux * 0.03, y0 - stoop + 0.95, bz + w.uz * 0.03, bx - w.ux * 0.03, y0 - stoop + 0.95, bz - w.uz * 0.03, iron, 0, 1, 0);
             det.quad(ax, y0 + 0.95, az, bx, y0 - stoop + 0.95, bz, bx, y0 - stoop + 0.89, bz, ax, y0 + 0.89, az, iron, w.ux * sd, 0, w.uz * sd);
+          }
+          stoopBottoms.push(px + w.nx * outN, y0 - stoop, pz + w.nz * outN, 0);
           }
           // door canopy
           det.obox(px + w.nx * 0.25, y0 + 2.75, pz + w.nz * 0.25, 0.8, 0.25, y0 + 2.9, w.ux, w.uz, lin(0xf2efe6));
@@ -419,7 +432,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       hv = Math.max(hv, Math.abs((p[0] - cx) * w0.nx + (p[1] - cz) * w0.nz));
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
-    if (4 * hu * hv <= footArea(P) * 1.01 + 0.5) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    if (4 * hu * hv <= footArea(P) * 1.002 + 0.2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
     else if (!phys.prism(P.flat(), yMin, top)) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
   }
 
@@ -674,6 +687,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   if (signMesh) { root.add(signMesh); extraTris += signBuf.count * 2; }
   return {
     extraTris,
+    stoops: Float32Array.from(stoopBottoms),
     update(_cam: THREE.Vector3, _detail: number) { /* chunk LOD is handled by the world */ },
   };
 }

@@ -36,22 +36,22 @@ export const REVIEW_VIEWS: Record<string, View> = {
   'canal-lock': { pos: [245, 3.5, 252], look: [190, 0, 236], hour: 11, fov: 62 },
   'canal-footbridge': { pos: [-300, 3.2, 252], look: [-330, 1.5, 233], hour: 11, fov: 62 },
   towpath: { pos: [-555, 1.8, 238], look: [-650, 1.4, 229], hour: 10, fov: 62 },
-  'waterfront-park': { pos: [-45, 2.5, 556], look: [70, 1.5, 575], hour: 17, fov: 62 },
+  'waterfront-park': { pos: [-75, 2.2, 508], look: [60, 1.5, 548], hour: 17, fov: 62 },
   'waterfront-piers': { pos: [60, 8, 630], look: [100, 0, 580], hour: 16, fov: 60 },
-  'circle-spoke': { pos: [985, 1.8, 470], look: [910, 3, 446], hour: 13, fov: 62 },
+  'circle-spoke': { pos: [905, 1.8, 318], look: [909, 3, 446], hour: 13, fov: 62 },
   'wisconsin-up': { pos: [-150, 2, 175], look: [-182, 16, -30], hour: 12, fov: 62 },
   'rowhouses-29th': { pos: [262.5, 1.8, -20], look: [254, 9, -160], hour: 9.5, fov: 62 },
   'rock-creek': { pos: [440, 10, 300], look: [430, 0, 160], hour: 13, fov: 62 },
   'mst-bridge': { pos: [575, 2, 124], look: [470, 5, 120], hour: 13, fov: 62 },
-  'edge-north': { pos: [-200, 25, -760], look: [-200, 0, -840], hour: 13, fov: 62 },
+  'edge-north': { pos: [-120, 25, -760], look: [-120, 0, -840], hour: 13, fov: 62 },
   'edge-west': { pos: [-1050, 18, 30], look: [-1135, 0, 40], hour: 13, fov: 62 },
   'edge-east': { pos: [1060, 18, 300], look: [1135, 0, 300], hour: 13, fov: 62 },
   'lot-waterfront': { pos: [-600, 14, 365], look: [-640, 0, 312], hour: 13, fov: 62 },
   'lot-westend': { pos: [430, 14, 560], look: [460, 0, 515], hour: 13, fov: 62 },
-  'canal-31st': { pos: [-10, 4, 262], look: [-30, 1, 238], hour: 12, fov: 62 },
+  'canal-31st': { pos: [-28, 3, 275], look: [-28, 1, 232], hour: 12, fov: 62 },
   'kst-circle': { pos: [800, 3, 455], look: [860, 2, 443], hour: 13, fov: 62 },
   'night-keybridge': { pos: [-792, 2, 262], look: [-768, 2.5, 133], hour: 22, fov: 62, deck: true },
-  'night-waterfront': { pos: [-45, 2.5, 556], look: [70, 1.5, 575], hour: 21.5, fov: 62 },
+  'night-waterfront': { pos: [-75, 2.2, 508], look: [60, 1.5, 548], hour: 21.5, fov: 62 },
   'night-rowhouses': { pos: [262.5, 1.8, -20], look: [254, 9, -160], hour: 22.5, fov: 62 },
 };
 
@@ -240,6 +240,18 @@ async function boot() {
     },
     perf: () => ({ ...perf, view: state.view, quality: geo.quality }),
     reviewViews: Object.keys(REVIEW_VIEWS),
+    /** Mean milliseconds of GeoWorld.update(time, camera) over n calls (perf script). */
+    timeUpdate: (n: number) => { const t0 = performance.now(); for (let i = 0; i < n; i++) geo.update(i * 0.016, camera); return (performance.now() - t0) / n; },
+    /** JS heap growth (bytes) over n GeoWorld.update calls; needs --enable-precise-memory-info and --expose-gc. */
+    heapUpdate: (n: number) => {
+      const g = (window as unknown as { gc?: () => void }).gc;
+      const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+      if (!mem) return NaN;
+      g?.();
+      const m0 = mem.usedJSHeapSize;
+      for (let i = 0; i < n; i++) geo.update(i * 0.016, camera);
+      return mem.usedJSHeapSize - m0;
+    },
     /** Compare the colliders with roadSurfaceAt along every lane and deck; look for lips on decks and ramps. */
     rayCheck: () => {
       let n = 0, bad = 0, maxErr = 0, lips = 0;

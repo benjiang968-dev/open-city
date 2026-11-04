@@ -16,8 +16,11 @@ const evalSrc = evalArg >= 0 ? process.argv[evalArg + 1] : null;
 const camArg = process.argv.indexOf('--cam');
 const custom = camArg >= 0 ? process.argv.slice(camArg + 1) : null;
 // --review: also every review viewpoint (REVIEW_VIEWS in src/preview/georgetownPreview.ts) into screenshots/26-geo-r-<name>.jpg
-const review = process.argv.includes('--review');
-const only = custom || evalSrc ? ['__none__'] : process.argv.slice(2).filter((a) => a !== '--review');
+//   --review=name,name: only those review viewpoints
+const reviewArg = process.argv.find((a) => a.startsWith('--review'));
+const review = !!reviewArg;
+const reviewOnly = reviewArg?.includes('=') ? reviewArg.split('=')[1].split(',') : null;
+const only = custom || evalSrc ? ['__none__'] : process.argv.slice(2).filter((a) => !a.startsWith('--review'));
 const SHOTS = [
   ['26-geo-aerial', 'aerial', 'medium'],
   ['26-geo-mst', 'mst', 'medium'],
@@ -86,7 +89,7 @@ for (const [name, view, q] of SHOTS) {
   await page.screenshot({ path: `screenshots/${name}.png`, timeout: 120000 });
 }
 if (review) {
-  const names = await page.evaluate(() => window.__geo.reviewViews);
+  const names = (await page.evaluate(() => window.__geo.reviewViews)).filter((n) => !reviewOnly || reviewOnly.includes(n));
   for (const v of names) {
     await page.evaluate((n) => { window.__geo.setQuality('medium'); window.__geo.setView(n); }, v);
     await settle(4);

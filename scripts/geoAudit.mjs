@@ -363,7 +363,7 @@ const report = await page.evaluate(() => {
     area = Math.abs(area / 2);
     const boxArea = 4 * hu * hv;
     // facades.ts uses a footprint prism (exact) when the box would be bigger than the footprint
-    if (boxArea > area * 1.01 + 0.5) continue;
+    if (boxArea > area * 1.002 + 0.2) continue;
     if (spillWalk > 2 || boxArea > area * 1.15 + 4)
       bBox.push({ id: b.id, type: b.type, at: [r2(cx), r2(cz)], verts: P2.length, area: Math.round(area), boxArea: Math.round(boxArea), spillM2: spill / 4, spillOverWalkableM2: spillWalk / 4 });
     void maxOut;
@@ -383,7 +383,8 @@ const report = await page.evaluate(() => {
     const list = Object.entries(m).sort((a, b) => b[1].n - a[1].n);
     obSum[k] = { cells: list.length, samples: list.reduce((s, q) => s + q[1].n, 0), top: list.slice(0, 25).map(([key, v]) => ({ cell: key, n: v.n, at: v.at, info: v.info })) };
   }
-  return { surfaces: summary, obstacles: obSum, steps: steps.slice(0, 200), stepCount: steps.length, edgeGrades: edgeGrade.slice(0, 40), props, buildings: { built, dropped, overlaps: bOver, overlapCount: bOver.length, boxes: bBox.slice(0, 80), boxCount: bBox.length }, laneHeight, grades };
+  const clip = g.audit ? { clipped: g.audit.buildingsClipped, dropped: g.audit.buildingsDropped } : null;
+  return { clip, surfaces: summary, obstacles: obSum, steps: steps.slice(0, 200), stepCount: steps.length, edgeGrades: edgeGrade.slice(0, 40), props, buildings: { built, dropped, overlaps: bOver, overlapCount: bOver.length, boxes: bBox.slice(0, 80), boxCount: bBox.length }, laneHeight, grades };
 });
 
 // ------------------------------------------------------------------------------------------------ print
@@ -400,7 +401,8 @@ for (const e of report.edgeGrades.slice(0, 15)) console.log(`  ${e.name.padEnd(2
 console.log('\nprops (base vs ground collider)');
 for (const [k, p] of Object.entries(report.props)) console.log(`  ${k.padEnd(14)} n ${String(p.n).padStart(5)}  floating>5cm ${String(p.floating.length).padStart(4)} (max ${p.maxFloat})  buried>25cm ${String(p.buried.length).padStart(4)} (max ${p.maxBury})  onRoad ${p.onRoad.length}  inBuilding ${p.inBuilding.length}  inWater ${p.inWater.length}`);
 const Bl = report.buildings;
-console.log(`\nbuildings: ${Bl.built} built, ${Bl.dropped} dropped under decks; ${Bl.overlapCount} overlap roads / sidewalks / lots; ${Bl.boxCount} physics boxes bigger than the footprint`);
+if (report.clip) console.log(`\nfootprints cut back from streets: ${report.clip.clipped.length}, dropped: ${report.clip.dropped.length} (${report.clip.dropped.join(' ')})`);
+console.log(`buildings: ${Bl.built} built, ${Bl.dropped} dropped under decks; ${Bl.overlapCount} overlap roads / sidewalks / lots; ${Bl.boxCount} physics boxes bigger than the footprint`);
 for (const b of Bl.overlaps.slice(0, 20)) console.log('  ' + JSON.stringify(b));
 console.log('  boxes:');
 for (const b of Bl.boxes.slice(0, 12)) console.log('  ' + JSON.stringify(b));
