@@ -1,0 +1,1783 @@
+{
+  "source": "Hand-authored approximation of Georgetown, Washington DC, reconstructed from general geographic knowledge. Not OpenStreetMap data; not survey-accurate.",
+  "bbox": {"minlon":-77.074,"minlat":38.899,"maxlon":-77.048,"maxlat":38.914},
+  "howToEdit": "Coordinates are [lat, lon] (WGS84 degrees). oneway: \"no\", \"forward\" (traffic runs in the order the points are listed) or \"backward\". A point shared by two streets is a junction: move it in every street that lists it. Optional per-street \"maxspeed\" (km/h) overrides the default. Regenerate with: node scripts/georgetownFromSpec.mjs",
+  "streets": [
+    {
+      "name": "Rock Creek and Potomac Parkway",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Two-way wooded valley road on the east bank of Rock Creek. Passes under the K St, Pennsylvania Ave, M St, P St and Q St bridges and runs past Thompson Boat Center at the south edge. No at-grade junctions inside the box (ramps to K St / Whitehurst / Virginia Ave not modelled). Rush-hour one-way operation north of Virginia Ave in reality.",
+      "points": [
+        [38.899,-77.0566],
+        [38.8999,-77.05705],
+        [38.9002,-77.05712],
+        [38.9008,-77.05718],
+        [38.9011,-77.05717],
+        [38.9038,-77.05627],
+        [38.9041,-77.05613],
+        [38.9047,-77.05572],
+        [38.905,-77.05556],
+        [38.9062,-77.05525],
+        [38.9068,-77.0549],
+        [38.9083,-77.05415],
+        [38.9107,-77.05285],
+        [38.911,-77.05274],
+        [38.9125,-77.0523],
+        [38.914,-77.0519]
+      ]
+    },
+    {
+      "name": "Canal Rd NW",
+      "kind": "primary",
+      "lanes": 3,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Continues M St west below the Georgetown University bluff, beside the canal. Reversible one-way at rush hour in reality; modelled two-way.",
+      "points": [
+        [38.9062,-77.074],
+        [38.90553,-77.072],
+        [38.90546,-77.0715]
+      ]
+    },
+    {
+      "name": "M St NW (Georgetown)",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.75,
+      "notes": "Main shopping street, two lanes each way. Key Bridge lands on it between 35th and 36th, the Exorcist Steps rise from it at 36th, Pennsylvania Ave forks off at 29th St. Ends at 28th St where the Rock Creek bridge begins.",
+      "points": [
+        [38.90546,-77.0715],
+        [38.90535,-77.07035],
+        [38.9053,-77.06985],
+        [38.90525,-77.0692],
+        [38.9052,-77.0677],
+        [38.90514,-77.0662],
+        [38.90511,-77.0648],
+        [38.90509,-77.06276],
+        [38.90515,-77.06135],
+        [38.9052,-77.0601],
+        [38.90525,-77.0591],
+        [38.9053,-77.0579],
+        [38.90535,-77.05682]
+      ]
+    },
+    {
+      "name": "Pennsylvania Ave NW (Georgetown)",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.6,
+      "notes": "Forks south-east off M St at 29th St, passing the Four Seasons, to its own Rock Creek bridge.",
+      "points": [
+        [38.9053,-77.0579],
+        [38.90479,-77.05652]
+      ]
+    },
+    {
+      "name": "Water St NW",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Waterfront street under the Whitehurst Freeway, continuation of K St west of Wisconsin Ave. Dead-ends at the boathouses and the start of the Capital Crescent Trail just west of Key Bridge (passes under the bridge).",
+      "points": [
+        [38.9041,-77.0715],
+        [38.90354,-77.0687],
+        [38.90316,-77.0662],
+        [38.903,-77.0651],
+        [38.9029,-77.06253]
+      ]
+    },
+    {
+      "name": "K St NW (Georgetown)",
+      "kind": "secondary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Ground-level waterfront street directly under the elevated Whitehurst Freeway; Washington Harbour and Waterfront Park on its river side.",
+      "points": [
+        [38.9029,-77.06253],
+        [38.9028,-77.06133],
+        [38.9027,-77.0601],
+        [38.9026,-77.0591],
+        [38.9025,-77.058]
+      ]
+    },
+    {
+      "name": "Grace St NW",
+      "kind": "service",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.3,
+      "notes": "Short street between the canal and Water St, from Wisconsin Ave west to 33rd St.",
+      "points": [
+        [38.90386,-77.0662],
+        [38.90374,-77.0646],
+        [38.9037,-77.06263]
+      ]
+    },
+    {
+      "name": "South St NW",
+      "kind": "service",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.3,
+      "notes": "Short street between the canal and K St, from Wisconsin Ave east to 31st St (Ritz-Carlton, 3100 South St).",
+      "points": [
+        [38.90342,-77.06261],
+        [38.90345,-77.06131]
+      ]
+    },
+    {
+      "name": "Prospect St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Narrow street half a block north of M St, from 37th St to Wisconsin Ave. The Exorcist Steps arrive at 36th St.",
+      "points": [
+        [38.90585,-77.0717],
+        [38.9058,-77.07044],
+        [38.9058,-77.0692],
+        [38.9058,-77.06771],
+        [38.90579,-77.0662],
+        [38.90574,-77.0648],
+        [38.9057,-77.0629]
+      ]
+    },
+    {
+      "name": "N St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Federal rowhouses; steep west of Wisconsin. Dead-ends east of 28th St at the edge of the Rock Creek valley.",
+      "points": [
+        [38.9067,-77.0718],
+        [38.90668,-77.07054],
+        [38.90666,-77.0692],
+        [38.90664,-77.06775],
+        [38.90662,-77.0662],
+        [38.9066,-77.0648],
+        [38.9066,-77.06306],
+        [38.9066,-77.0614],
+        [38.9066,-77.0591],
+        [38.9066,-77.05799],
+        [38.90661,-77.0569],
+        [38.9067,-77.056]
+      ]
+    },
+    {
+      "name": "Dumbarton St NW",
+      "kind": "residential",
+      "lanes": 1,
+      "oneway": "no",
+      "confidence": 0.35,
+      "notes": "Narrow street between N and O St, east of Wisconsin only. Geometry from one source (the other placed it between P and Q St).",
+      "points": [
+        [38.9072,-77.06318],
+        [38.9072,-77.0614],
+        [38.9072,-77.05914],
+        [38.9072,-77.058],
+        [38.90725,-77.05695]
+      ]
+    },
+    {
+      "name": "O St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Cobblestones with old streetcar rails over long stretches. West end at the Georgetown University main gate (37th St). Ends east at 27th St by Rose Park.",
+      "points": [
+        [38.908,-77.0718],
+        [38.90798,-77.07059],
+        [38.90795,-77.06925],
+        [38.90793,-77.06775],
+        [38.9079,-77.0662],
+        [38.9079,-77.0648],
+        [38.9079,-77.06339],
+        [38.9079,-77.0614],
+        [38.9079,-77.0592],
+        [38.9079,-77.058],
+        [38.9079,-77.057],
+        [38.9079,-77.05581]
+      ]
+    },
+    {
+      "name": "P St NW (Georgetown)",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Main east-west residential street with cobble and streetcar-rail sections; crosses Rock Creek to Dupont Circle.",
+      "points": [
+        [38.9093,-77.0719],
+        [38.9093,-77.07064],
+        [38.9093,-77.0693],
+        [38.90928,-77.0678],
+        [38.90927,-77.06629],
+        [38.90926,-77.0637],
+        [38.90928,-77.06141],
+        [38.9093,-77.0593],
+        [38.9093,-77.0581],
+        [38.9093,-77.0571],
+        [38.9093,-77.0559],
+        [38.9093,-77.0552]
+      ]
+    },
+    {
+      "name": "Q St NW (Georgetown)",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Large houses (Tudor Place, Dumbarton House). Runs from 35th St east to the Dumbarton (Buffalo) Bridge.",
+      "points": [
+        [38.9107,-77.0693],
+        [38.9107,-77.0678],
+        [38.9107,-77.0663],
+        [38.9107,-77.06411],
+        [38.9107,-77.06151],
+        [38.9107,-77.0594],
+        [38.9107,-77.0582],
+        [38.9107,-77.05719],
+        [38.9107,-77.0559],
+        [38.9107,-77.0548]
+      ]
+    },
+    {
+      "name": "R St NW",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Top of the hill. Dumbarton Oaks, Montrose Park and Oak Hill Cemetery line its north side. Becomes Reservoir Rd west of 35th St; ends east at 28th St.",
+      "points": [
+        [38.9128,-77.0694],
+        [38.913,-77.069],
+        [38.913,-77.06791],
+        [38.913,-77.06476],
+        [38.913,-77.06183],
+        [38.91291,-77.05949],
+        [38.9129,-77.0573]
+      ]
+    },
+    {
+      "name": "Reservoir Rd NW",
+      "kind": "secondary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.4,
+      "notes": "Continuation of R St west of 35th St along the north edge of Georgetown University.",
+      "points": [
+        [38.9118,-77.074],
+        [38.91225,-77.072],
+        [38.9128,-77.0694]
+      ]
+    },
+    {
+      "name": "M St Bridge over Rock Creek",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.6,
+      "bridge": true,
+      "notes": "Spans Rock Creek and the parkway between 28th St and the West End.",
+      "points": [
+        [38.90535,-77.05682],
+        [38.90539,-77.0556],
+        [38.90543,-77.05524]
+      ]
+    },
+    {
+      "name": "M St NW (West End)",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Hotels and offices. One source has it one-way westbound east of 24th St (as in downtown); majority two-way.",
+      "points": [
+        [38.90543,-77.05524],
+        [38.90541,-77.0547],
+        [38.90543,-77.0533],
+        [38.90545,-77.0519],
+        [38.90547,-77.0505],
+        [38.90548,-77.04924],
+        [38.90546,-77.0489],
+        [38.90546,-77.048]
+      ]
+    },
+    {
+      "name": "Pennsylvania Ave Bridge over Rock Creek",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.55,
+      "bridge": true,
+      "notes": "1916 concrete arch bridge just south of the M St bridge.",
+      "points": [
+        [38.90479,-77.05652],
+        [38.90464,-77.05612],
+        [38.90443,-77.05546]
+      ]
+    },
+    {
+      "name": "Pennsylvania Ave NW (West End)",
+      "kind": "primary",
+      "lanes": 6,
+      "oneway": "no",
+      "confidence": 0.6,
+      "notes": "Runs ESE from Rock Creek to Washington Circle.",
+      "points": [
+        [38.90443,-77.05546],
+        [38.90416,-77.0547],
+        [38.90389,-77.05386],
+        [38.90374,-77.05331],
+        [38.90357,-77.05266],
+        [38.90342,-77.05226],
+        [38.90322,-77.0519],
+        [38.90277,-77.05104]
+      ]
+    },
+    {
+      "name": "Pennsylvania Ave NW (east of Washington Circle)",
+      "kind": "primary",
+      "lanes": 6,
+      "oneway": "no",
+      "confidence": 0.6,
+      "notes": "Continues ESE toward the White House.",
+      "points": [
+        [38.90214,-77.05006],
+        [38.90201,-77.0499],
+        [38.90172,-77.04889],
+        [38.90145,-77.048]
+      ]
+    },
+    {
+      "name": "K St bridge over Rock Creek",
+      "kind": "secondary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.55,
+      "bridge": true,
+      "notes": "Low crossing of Rock Creek and the parkway at the creek mouth. The Whitehurst Freeway runs directly above it and lands at its east end.",
+      "points": [
+        [38.9025,-77.058],
+        [38.9025,-77.056]
+      ]
+    },
+    {
+      "name": "K St NW (West End)",
+      "kind": "primary",
+      "lanes": 6,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Six-lane arterial from Rock Creek to Washington Circle. Through lanes drop into the underpass beneath the circle; a ramp joins the circle.",
+      "points": [
+        [38.9025,-77.056],
+        [38.9025,-77.0547],
+        [38.90252,-77.05335],
+        [38.9025,-77.0519],
+        [38.9025,-77.05143]
+      ]
+    },
+    {
+      "name": "K St NW (east of Washington Circle)",
+      "kind": "primary",
+      "lanes": 6,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Continues east toward downtown after the Washington Circle underpass.",
+      "points": [
+        [38.9025,-77.04957],
+        [38.9025,-77.0489],
+        [38.9025,-77.048]
+      ]
+    },
+    {
+      "name": "P St Bridge over Rock Creek",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.45,
+      "bridge": true,
+      "notes": "Crosses Rock Creek and the parkway.",
+      "points": [
+        [38.9093,-77.0552],
+        [38.90946,-77.0536],
+        [38.9095,-77.053]
+      ]
+    },
+    {
+      "name": "P St NW (east of Rock Creek)",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.45,
+      "notes": "Toward Dupont Circle.",
+      "points": [
+        [38.9095,-77.053],
+        [38.90947,-77.0526],
+        [38.9095,-77.0518],
+        [38.9095,-77.0505],
+        [38.9095,-77.0489],
+        [38.9095,-77.048]
+      ]
+    },
+    {
+      "name": "Dumbarton Bridge (Q St, Buffalo Bridge)",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.5,
+      "bridge": true,
+      "notes": "Curved masonry bridge with bronze bison, carrying Q St over Rock Creek and the parkway.",
+      "points": [
+        [38.9107,-77.0548],
+        [38.9108,-77.054],
+        [38.91082,-77.0524]
+      ]
+    },
+    {
+      "name": "Q St NW (east of Rock Creek)",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.4,
+      "notes": "Toward Dupont Circle.",
+      "points": [
+        [38.91082,-77.0524],
+        [38.91075,-77.05041],
+        [38.91075,-77.0496],
+        [38.9108,-77.0488],
+        [38.9108,-77.048]
+      ]
+    },
+    {
+      "name": "I St NW",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.4,
+      "notes": "Foggy Bottom: GWU Hospital and Foggy Bottom-GWU Metro near 23rd St.",
+      "points": [
+        [38.9011,-77.0534],
+        [38.9011,-77.05186],
+        [38.9011,-77.0505],
+        [38.9011,-77.04888],
+        [38.9011,-77.048]
+      ]
+    },
+    {
+      "name": "H St NW",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.25,
+      "notes": "Close to the south edge of the box, GWU campus.",
+      "points": [
+        [38.89978,-77.05289],
+        [38.89978,-77.0505],
+        [38.89978,-77.04888],
+        [38.89978,-77.048]
+      ]
+    },
+    {
+      "name": "L St NW",
+      "kind": "tertiary",
+      "lanes": 3,
+      "oneway": "no",
+      "confidence": 0.4,
+      "notes": "One source has it one-way eastbound with a bike lane (as downtown); majority two-way.",
+      "points": [
+        [38.9037,-77.0519],
+        [38.9037,-77.0505],
+        [38.9037,-77.0494],
+        [38.9037,-77.0489],
+        [38.9037,-77.048]
+      ]
+    },
+    {
+      "name": "37th St NW",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "East edge of the Georgetown University campus; starts at the west end of Prospect St.",
+      "points": [
+        [38.90585,-77.0717],
+        [38.9067,-77.0718],
+        [38.908,-77.0718],
+        [38.9093,-77.0719],
+        [38.91225,-77.072],
+        [38.914,-77.0721]
+      ]
+    },
+    {
+      "name": "36th St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.4,
+      "notes": "No road between M St and Prospect St: that block is the Exorcist Steps.",
+      "points": [
+        [38.9058,-77.07044],
+        [38.9061,-77.07051],
+        [38.90668,-77.07054],
+        [38.90798,-77.07059],
+        [38.9093,-77.07064]
+      ]
+    },
+    {
+      "name": "Exorcist Steps",
+      "kind": "footway",
+      "lanes": 0,
+      "oneway": "no",
+      "confidence": 0.6,
+      "notes": "Very steep public stair (about 75-97 steps) from M St up to Prospect St at 36th St. Pedestrians only.",
+      "points": [
+        [38.90535,-77.07035],
+        [38.90565,-77.07038],
+        [38.9058,-77.07044]
+      ]
+    },
+    {
+      "name": "35th St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.35,
+      "notes": "Steep from M St up to N St. R St turns into Reservoir Rd at its junction with 35th. One-way direction unknown (sources split two-way / northbound / southbound), so left two-way; if 34th is run northbound, 35th is the likely southbound partner.",
+      "points": [
+        [38.90525,-77.0692],
+        [38.9058,-77.0692],
+        [38.90666,-77.0692],
+        [38.90795,-77.06925],
+        [38.9093,-77.0693],
+        [38.9107,-77.0693],
+        [38.9128,-77.0694],
+        [38.914,-77.06945]
+      ]
+    },
+    {
+      "name": "34th St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "forward",
+      "confidence": 0.35,
+      "notes": "Very steep from M St to Prospect. Francis Scott Key Park at the M St corner, Volta Park at Q St. One-way northbound is a majority guess.",
+      "points": [
+        [38.9052,-77.0677],
+        [38.9058,-77.06771],
+        [38.90664,-77.06775],
+        [38.90793,-77.06775],
+        [38.90928,-77.0678],
+        [38.9107,-77.0678],
+        [38.913,-77.06791]
+      ]
+    },
+    {
+      "name": "33rd St NW",
+      "kind": "residential",
+      "lanes": 1,
+      "oneway": "backward",
+      "confidence": 0.4,
+      "notes": "Crosses the canal on a small bridge between Water St and M St. Steep. One-way southbound is a majority guess.",
+      "points": [
+        [38.90316,-77.0662],
+        [38.90386,-77.0662],
+        [38.90514,-77.0662],
+        [38.90579,-77.0662],
+        [38.90662,-77.0662],
+        [38.9079,-77.0662],
+        [38.90927,-77.06629],
+        [38.9107,-77.0663]
+      ]
+    },
+    {
+      "name": "Potomac St NW",
+      "kind": "residential",
+      "lanes": 1,
+      "oneway": "no",
+      "confidence": 0.35,
+      "notes": "Short street; south of M St a pedestrian way continues to the Potomac St canal footbridge.",
+      "points": [
+        [38.90511,-77.0648],
+        [38.90574,-77.0648],
+        [38.9066,-77.0648],
+        [38.9079,-77.0648]
+      ]
+    },
+    {
+      "name": "Wisconsin Ave NW",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.75,
+      "notes": "Main north-south shopping street. Climbs about 5-6% from the canal to R St and leans NNW. South end at the K St / Water St junction; crosses the canal on a bridge.",
+      "points": [
+        [38.9029,-77.06253],
+        [38.9032,-77.0626],
+        [38.90342,-77.06261],
+        [38.9037,-77.06263],
+        [38.9047,-77.06267],
+        [38.90509,-77.06276],
+        [38.9057,-77.0629],
+        [38.9066,-77.06306],
+        [38.9072,-77.06318],
+        [38.9079,-77.06339],
+        [38.90926,-77.0637],
+        [38.9107,-77.06411],
+        [38.913,-77.06476],
+        [38.914,-77.065]
+      ]
+    },
+    {
+      "name": "31st St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.45,
+      "notes": "Crosses the canal by bridge; Tudor Place between Q and R St. May be one-way north of M.",
+      "points": [
+        [38.9028,-77.06133],
+        [38.90345,-77.06131],
+        [38.9043,-77.06135],
+        [38.90515,-77.06135],
+        [38.9066,-77.0614],
+        [38.9072,-77.0614],
+        [38.9079,-77.0614],
+        [38.90928,-77.06141],
+        [38.9107,-77.06151],
+        [38.913,-77.06183]
+      ]
+    },
+    {
+      "name": "Thomas Jefferson St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.45,
+      "notes": "South of M only: old warehouses, canal locks and visitor area, over a canal bridge to Washington Harbour.",
+      "points": [
+        [38.9027,-77.0601],
+        [38.9052,-77.0601]
+      ]
+    },
+    {
+      "name": "30th St NW",
+      "kind": "residential",
+      "lanes": 1,
+      "oneway": "backward",
+      "confidence": 0.3,
+      "notes": "Crosses the canal near Lock 3. North end at Oak Hill Cemetery / R St. One-way southbound is a majority guess.",
+      "points": [
+        [38.9026,-77.0591],
+        [38.90525,-77.0591],
+        [38.9066,-77.0591],
+        [38.9072,-77.05914],
+        [38.9079,-77.0592],
+        [38.9093,-77.0593],
+        [38.9107,-77.0594],
+        [38.91291,-77.05949]
+      ]
+    },
+    {
+      "name": "29th St NW",
+      "kind": "residential",
+      "lanes": 1,
+      "oneway": "forward",
+      "confidence": 0.3,
+      "notes": "Canal bridge near Locks 1-2. One-way northbound is a majority guess.",
+      "points": [
+        [38.9025,-77.058],
+        [38.9043,-77.0579],
+        [38.9053,-77.0579],
+        [38.9066,-77.05799],
+        [38.9072,-77.058],
+        [38.9079,-77.058],
+        [38.9093,-77.0581],
+        [38.9107,-77.0582]
+      ]
+    },
+    {
+      "name": "28th St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.4,
+      "notes": "Slopes down toward the Rock Creek valley on its east side. Ends at R St by Oak Hill Cemetery.",
+      "points": [
+        [38.90535,-77.05682],
+        [38.9055,-77.05681],
+        [38.90661,-77.0569],
+        [38.90725,-77.05695],
+        [38.9079,-77.057],
+        [38.9093,-77.0571],
+        [38.9107,-77.05719],
+        [38.9129,-77.0573]
+      ]
+    },
+    {
+      "name": "27th St NW (Georgetown)",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.3,
+      "notes": "Short street at the edge of the creek valley beside Rose Park; extent uncertain.",
+      "points": [
+        [38.9079,-77.05581],
+        [38.9088,-77.0559],
+        [38.9093,-77.0559],
+        [38.9107,-77.0559]
+      ]
+    },
+    {
+      "name": "26th St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.35,
+      "notes": "West End side street.",
+      "points": [
+        [38.9025,-77.0547],
+        [38.90416,-77.0547],
+        [38.90541,-77.0547]
+      ]
+    },
+    {
+      "name": "25th St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.4,
+      "notes": "West End side street.",
+      "points": [
+        [38.9011,-77.0534],
+        [38.90252,-77.05335],
+        [38.90374,-77.05331],
+        [38.90543,-77.0533]
+      ]
+    },
+    {
+      "name": "24th St NW",
+      "kind": "residential",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.45,
+      "notes": "Continues north of M St toward N St (dead-ends in this model).",
+      "points": [
+        [38.9011,-77.05186],
+        [38.9014,-77.0519],
+        [38.9025,-77.0519],
+        [38.90322,-77.0519],
+        [38.9037,-77.0519],
+        [38.90545,-77.0519],
+        [38.9067,-77.0519]
+      ]
+    },
+    {
+      "name": "23rd St NW (south of Washington Circle)",
+      "kind": "secondary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "GWU Hospital and Foggy Bottom-GWU Metro near I St.",
+      "points": [
+        [38.899,-77.0505],
+        [38.89978,-77.0505],
+        [38.9011,-77.0505],
+        [38.902,-77.0505]
+      ]
+    },
+    {
+      "name": "23rd St NW (north of Washington Circle)",
+      "kind": "secondary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Runs north from Washington Circle toward Sheridan Circle and Massachusetts Ave (beyond Q St, outside this model).",
+      "points": [
+        [38.903,-77.0505],
+        [38.9037,-77.0505],
+        [38.90547,-77.0505],
+        [38.9095,-77.0505],
+        [38.9102,-77.05049],
+        [38.9105,-77.05047],
+        [38.91075,-77.05041]
+      ]
+    },
+    {
+      "name": "22nd St NW",
+      "kind": "tertiary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.3,
+      "notes": "Just inside the east edge of the box.",
+      "points": [
+        [38.899,-77.04888],
+        [38.89978,-77.04888],
+        [38.9011,-77.04888],
+        [38.90172,-77.04889],
+        [38.9025,-77.0489],
+        [38.9037,-77.0489],
+        [38.9042,-77.0489],
+        [38.90546,-77.0489],
+        [38.9095,-77.0489]
+      ]
+    },
+    {
+      "name": "New Hampshire Ave NW (south of Washington Circle)",
+      "kind": "secondary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.42,
+      "notes": "Heads SSW toward the Watergate and Kennedy Center.",
+      "points": [
+        [38.899,-77.0535],
+        [38.89978,-77.05289],
+        [38.9008,-77.05207],
+        [38.9011,-77.05186],
+        [38.9014,-77.05162],
+        [38.9021,-77.05115],
+        [38.90219,-77.051]
+      ]
+    },
+    {
+      "name": "New Hampshire Ave NW (north of Washington Circle)",
+      "kind": "secondary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Diagonal NNE toward Dupont Circle.",
+      "points": [
+        [38.90291,-77.05015],
+        [38.9032,-77.0499],
+        [38.9037,-77.0494],
+        [38.9042,-77.0489],
+        [38.9051,-77.048]
+      ]
+    },
+    {
+      "name": "Francis Scott Key Bridge",
+      "kind": "primary",
+      "lanes": 6,
+      "oneway": "no",
+      "confidence": 0.65,
+      "bridge": true,
+      "notes": "Concrete arch bridge to Rosslyn VA. North end lands on M St between 35th and 36th St; passes high over the Whitehurst ramps, the canal, the towpath, Water St and the Potomac. Cut at the box edge.",
+      "points": [
+        [38.899,-77.0709],
+        [38.9011,-77.07053],
+        [38.9029,-77.07036],
+        [38.9035,-77.07024],
+        [38.9041,-77.07008],
+        [38.9053,-77.06985]
+      ]
+    },
+    {
+      "name": "Whitehurst Freeway",
+      "kind": "freeway",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.6,
+      "elevated": true,
+      "notes": "Elevated steel viaduct directly above K St / Water St from Rock Creek to about 34th St, then curves NW over the canal. West end simplified to a single junction at M St / Key Bridge (real ramps also serve Canal Rd); east end comes down onto K St just east of Rock Creek.",
+      "points": [
+        [38.9053,-77.06985],
+        [38.90471,-77.06945],
+        [38.90439,-77.06905],
+        [38.90421,-77.06865],
+        [38.90379,-77.06745],
+        [38.90372,-77.06705],
+        [38.90362,-77.06665],
+        [38.90325,-77.06545],
+        [38.90317,-77.06505],
+        [38.90293,-77.06305],
+        [38.90257,-77.05865],
+        [38.9025,-77.056]
+      ]
+    },
+    {
+      "name": "C&O Canal Towpath",
+      "kind": "path",
+      "lanes": 0,
+      "oneway": "no",
+      "confidence": 0.55,
+      "notes": "Gravel and brick towpath on the south (river) side of the canal, passing under the street bridges. Pedestrians and bikes only; not connected to the road graph.",
+      "points": [
+        [38.90522,-77.074],
+        [38.90502,-77.0728],
+        [38.90474,-77.0716],
+        [38.90453,-77.07],
+        [38.90447,-77.0692],
+        [38.90435,-77.0664],
+        [38.90432,-77.064],
+        [38.90425,-77.0632],
+        [38.90426,-77.0628],
+        [38.90437,-77.0612],
+        [38.90437,-77.06],
+        [38.9043,-77.0588],
+        [38.9042,-77.0576],
+        [38.90412,-77.0569]
+      ]
+    },
+    {
+      "name": "Capital Crescent Trail",
+      "kind": "cycleway",
+      "lanes": 0,
+      "oneway": "no",
+      "confidence": 0.42,
+      "notes": "Rail-trail starting at the west end of Water St, between the canal and the river.",
+      "points": [
+        [38.90455,-77.074],
+        [38.90406,-77.072],
+        [38.9041,-77.0715]
+      ]
+    },
+    {
+      "name": "K St NW (Washington Circle underpass)",
+      "kind": "primary",
+      "lanes": 4,
+      "oneway": "no",
+      "confidence": 0.5,
+      "notes": "Through lanes of K St in a short underpass beneath Washington Circle (2 of 3 sources). Below grade: no junction with the ring even though it crosses it in plan.",
+      "points": [
+        [38.9025,-77.05143],
+        [38.9025,-77.04957]
+      ]
+    },
+    {
+      "name": "K St NW (Washington Circle west ramp)",
+      "kind": "secondary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.45,
+      "notes": "Surface lanes from K St up to the circle (west side). Shares its first metres with the underpass portal.",
+      "points": [
+        [38.9025,-77.05143],
+        [38.9025,-77.05114]
+      ]
+    },
+    {
+      "name": "K St NW (Washington Circle east ramp)",
+      "kind": "secondary",
+      "lanes": 2,
+      "oneway": "no",
+      "confidence": 0.45,
+      "notes": "Surface lanes from the circle (east side) down to K St.",
+      "points": [
+        [38.9025,-77.04986],
+        [38.9025,-77.04957]
+      ]
+    },
+    {
+      "name": "Washington Circle",
+      "kind": "primary",
+      "lanes": 3,
+      "oneway": "forward",
+      "confidence": 0.75,
+      "notes": "Roundabout ring, closed loop (first point = last point), points run counter-clockwise in the direction of traffic. Centre 38.90250,-77.05050, radius 55 m. Spokes: 23rd St north and south, New Hampshire Ave NNE and SSW, Pennsylvania Ave WNW and ESE, K St ramps east and west. K St through lanes pass beneath in an underpass. George Washington statue in the central park.",
+      "points": [
+        [38.903,-77.0505],
+        [38.90294,-77.05081],
+        [38.90277,-77.05104],
+        [38.90264,-77.05111],
+        [38.9025,-77.05114],
+        [38.90234,-77.0511],
+        [38.90219,-77.051],
+        [38.90205,-77.05078],
+        [38.902,-77.0505],
+        [38.90204,-77.05026],
+        [38.90214,-77.05006],
+        [38.9023,-77.04991],
+        [38.9025,-77.04986],
+        [38.90273,-77.04994],
+        [38.90291,-77.05015],
+        [38.90298,-77.05031],
+        [38.903,-77.0505]
+      ]
+    }
+  ],
+  "water": {
+    "canal": [
+      [38.9042,-77.05668],
+      [38.90425,-77.0572],
+      [38.90428,-77.0576],
+      [38.90432,-77.058],
+      [38.90435,-77.0584],
+      [38.90438,-77.0588],
+      [38.90441,-77.0592],
+      [38.90443,-77.0596],
+      [38.90445,-77.06],
+      [38.90445,-77.0604],
+      [38.90445,-77.0608],
+      [38.90445,-77.0612],
+      [38.90443,-77.0616],
+      [38.9044,-77.062],
+      [38.90437,-77.0624],
+      [38.90434,-77.0628],
+      [38.90433,-77.0632],
+      [38.90437,-77.0636],
+      [38.9044,-77.064],
+      [38.9044,-77.0644],
+      [38.9044,-77.0648],
+      [38.90441,-77.0652],
+      [38.90441,-77.0656],
+      [38.90442,-77.066],
+      [38.90443,-77.0664],
+      [38.90444,-77.0668],
+      [38.90446,-77.0672],
+      [38.90448,-77.0676],
+      [38.90449,-77.068],
+      [38.90451,-77.0684],
+      [38.90453,-77.0688],
+      [38.90455,-77.0692],
+      [38.90458,-77.0696],
+      [38.90461,-77.07],
+      [38.90466,-77.0704],
+      [38.90471,-77.0708],
+      [38.90476,-77.0712],
+      [38.90482,-77.0716],
+      [38.90492,-77.072],
+      [38.90501,-77.0724],
+      [38.9051,-77.0728],
+      [38.90517,-77.0732],
+      [38.90523,-77.0736],
+      [38.9053,-77.074]
+    ],
+    "canal_towpath_side": "south (river side) of the canal throughout the box, between the canal and K St / Water St (all three sources agree)",
+    "canal_footbridges": [
+      {"name":"29th St road bridge","lat":38.90431,"lon":-77.0579},
+      {"name":"30th St road bridge","lat":38.9044,"lon":-77.0591},
+      {"name":"Thomas Jefferson St road bridge","lat":38.90445,"lon":-77.0601},
+      {"name":"31st St road bridge","lat":38.90444,"lon":-77.06135},
+      {"name":"Wisconsin Ave road bridge","lat":38.90435,"lon":-77.06266},
+      {"name":"Potomac St footbridge (pedestrian way south of M St)","lat":38.9044,"lon":-77.0648},
+      {"name":"33rd St road bridge","lat":38.90442,"lon":-77.0662},
+      {"name":"34th St footbridge","lat":38.90447,"lon":-77.0675},
+      {"name":"Francis Scott Key Bridge (high-level crossing, no access)","lat":38.90461,"lon":-77.06998}
+    ],
+    "potomac_north_shore": [
+      [38.9042,-77.074],
+      [38.90388,-77.07214],
+      [38.90217,-77.06535],
+      [38.90211,-77.06504],
+      [38.90192,-77.06316],
+      [38.90181,-77.06159],
+      [38.90176,-77.06129],
+      [38.90116,-77.05928],
+      [38.90106,-77.05901],
+      [38.90066,-77.05836],
+      [38.90054,-77.05806],
+      [38.90036,-77.05784],
+      [38.89994,-77.05758],
+      [38.899,-77.0572]
+    ],
+    "rock_creek": [
+      [38.914,-77.0525],
+      [38.9137,-77.05258],
+      [38.9134,-77.05266],
+      [38.9131,-77.05274],
+      [38.9128,-77.05282],
+      [38.9125,-77.0529],
+      [38.9122,-77.05301],
+      [38.9119,-77.05311],
+      [38.9116,-77.05322],
+      [38.9113,-77.05332],
+      [38.911,-77.05343],
+      [38.9107,-77.05355],
+      [38.9104,-77.05368],
+      [38.9101,-77.05382],
+      [38.9098,-77.05396],
+      [38.9095,-77.0541],
+      [38.9092,-77.05426],
+      [38.9089,-77.05442],
+      [38.9086,-77.05458],
+      [38.9083,-77.05475],
+      [38.908,-77.0549],
+      [38.9077,-77.05505],
+      [38.9074,-77.0552],
+      [38.9071,-77.05531],
+      [38.9068,-77.05539],
+      [38.9065,-77.05547],
+      [38.9062,-77.05555],
+      [38.9059,-77.05565],
+      [38.9056,-77.05587],
+      [38.9053,-77.0561],
+      [38.905,-77.05623],
+      [38.9047,-77.05636],
+      [38.9044,-77.05654],
+      [38.9041,-77.05675],
+      [38.9038,-77.05696],
+      [38.9035,-77.05714],
+      [38.9032,-77.05725],
+      [38.9029,-77.05735],
+      [38.9026,-77.05746],
+      [38.9023,-77.05758],
+      [38.902,-77.0577],
+      [38.9017,-77.05782],
+      [38.9014,-77.05794],
+      [38.9011,-77.05806],
+      [38.9008,-77.05818],
+      [38.90061,-77.05823]
+    ]
+  },
+  "areas": [
+    {
+      "name": "Georgetown Waterfront Park",
+      "kind": "park",
+      "confidence": 0.6,
+      "polygon": [
+        [38.90361,-77.0696],
+        [38.90345,-77.0688],
+        [38.90291,-77.0652],
+        [38.90278,-77.0624],
+        [38.90269,-77.0613],
+        [38.90177,-77.0613],
+        [38.90181,-77.0616],
+        [38.90192,-77.0632],
+        [38.90208,-77.0648],
+        [38.90214,-77.0652],
+        [38.90324,-77.0696]
+      ]
+    },
+    {
+      "name": "Washington Harbour",
+      "kind": "plaza",
+      "confidence": 0.55,
+      "polygon": [
+        [38.90267,-77.061],
+        [38.90248,-77.059],
+        [38.90106,-77.059],
+        [38.90168,-77.061]
+      ]
+    },
+    {
+      "name": "Thompson Boat Center",
+      "kind": "marina",
+      "confidence": 0.5,
+      "polygon": [
+        [38.8996,-77.05761],
+        [38.8999,-77.05773],
+        [38.9002,-77.05791],
+        [38.9004,-77.05806],
+        [38.9004,-77.05728],
+        [38.9002,-77.05726],
+        [38.8999,-77.05719],
+        [38.8996,-77.05704]
+      ]
+    },
+    {
+      "name": "Surface parking under Whitehurst Freeway (Water St north side, 33rd-34th St)",
+      "kind": "parking",
+      "confidence": 0.3,
+      "polygon": [
+        [38.9041,-77.0683],
+        [38.9041,-77.0664],
+        [38.9033,-77.0664],
+        [38.90359,-77.0683]
+      ]
+    },
+    {
+      "name": "Georgetown University (east edge)",
+      "kind": "campus",
+      "confidence": 0.55,
+      "polygon": [
+        [38.906,-77.07186],
+        [38.907,-77.07194],
+        [38.908,-77.07194],
+        [38.909,-77.07202],
+        [38.911,-77.0721],
+        [38.9121,-77.0722],
+        [38.91169,-77.074],
+        [38.90638,-77.074],
+        [38.90611,-77.0732],
+        [38.906,-77.0724]
+      ]
+    },
+    {
+      "name": "Dumbarton Oaks gardens",
+      "kind": "park",
+      "confidence": 0.5,
+      "polygon": [
+        [38.914,-77.0642],
+        [38.914,-77.0612],
+        [38.91308,-77.0612],
+        [38.91311,-77.0618],
+        [38.91311,-77.0642]
+      ]
+    },
+    {
+      "name": "Montrose Park",
+      "kind": "park",
+      "confidence": 0.5,
+      "polygon": [
+        [38.914,-77.0612],
+        [38.914,-77.0606],
+        [38.914,-77.06],
+        [38.914,-77.0596],
+        [38.91302,-77.0596],
+        [38.91304,-77.06],
+        [38.91306,-77.0606],
+        [38.91308,-77.0612]
+      ]
+    },
+    {
+      "name": "Oak Hill Cemetery",
+      "kind": "cemetery",
+      "confidence": 0.5,
+      "polygon": [
+        [38.91302,-77.0596],
+        [38.914,-77.0596],
+        [38.914,-77.056],
+        [38.91301,-77.0573]
+      ]
+    },
+    {
+      "name": "Rock Creek Park corridor",
+      "kind": "park",
+      "confidence": 0.45,
+      "polygon": [
+        [38.90061,-77.05857],
+        [38.90111,-77.0584],
+        [38.90361,-77.05742],
+        [38.90461,-77.05676],
+        [38.90511,-77.05653],
+        [38.90611,-77.05593],
+        [38.90711,-77.05565],
+        [38.90761,-77.05544],
+        [38.90961,-77.0544],
+        [38.91061,-77.05394],
+        [38.91111,-77.05374],
+        [38.91261,-77.05322],
+        [38.914,-77.05285],
+        [38.914,-77.05161],
+        [38.91161,-77.05227],
+        [38.91111,-77.05242],
+        [38.91061,-77.05261],
+        [38.90861,-77.0537],
+        [38.90611,-77.05499],
+        [38.90511,-77.05524],
+        [38.90461,-77.0555],
+        [38.90411,-77.05584],
+        [38.90361,-77.05605],
+        [38.90111,-77.05688],
+        [38.90061,-77.05687]
+      ]
+    },
+    {
+      "name": "Rose Park",
+      "kind": "park",
+      "confidence": 0.35,
+      "polygon": [
+        [38.90799,-77.05576],
+        [38.90921,-77.05576],
+        [38.90921,-77.055],
+        [38.90799,-77.05531]
+      ]
+    },
+    {
+      "name": "Volta Park",
+      "kind": "park",
+      "confidence": 0.45,
+      "polygon": [
+        [38.91007,-77.06768],
+        [38.91061,-77.06768],
+        [38.91061,-77.06641],
+        [38.91007,-77.06641]
+      ]
+    },
+    {
+      "name": "Francis Scott Key Park",
+      "kind": "park",
+      "confidence": 0.5,
+      "polygon": [
+        [38.9049,-77.069],
+        [38.90514,-77.069],
+        [38.9051,-77.0679],
+        [38.9049,-77.0679]
+      ]
+    },
+    {
+      "name": "Washington Circle park",
+      "kind": "park",
+      "confidence": 0.75,
+      "polygon": [
+        [38.9028,-77.0505],
+        [38.90276,-77.05031],
+        [38.90265,-77.05017],
+        [38.9025,-77.05012],
+        [38.90235,-77.05017],
+        [38.90224,-77.05031],
+        [38.9022,-77.0505],
+        [38.90224,-77.05069],
+        [38.90235,-77.05083],
+        [38.9025,-77.05088],
+        [38.90265,-77.05083],
+        [38.90276,-77.05069]
+      ]
+    },
+    {
+      "name": "George Washington University (west part)",
+      "kind": "campus",
+      "confidence": 0.4,
+      "polygon": [
+        [38.899,-77.05245],
+        [38.9017,-77.05125],
+        [38.9017,-77.0498],
+        [38.90134,-77.048],
+        [38.899,-77.048]
+      ]
+    }
+  ],
+  "landmarks": [
+    {
+      "name": "Key Bridge north landing",
+      "kind": "bridge",
+      "lat": 38.9053,
+      "lon": -77.06985,
+      "notes": "Key Bridge meets M St between 35th and 36th St; the Whitehurst Freeway ramp joins here (R1, R2, R3 geometry)."
+    },
+    {
+      "name": "Exorcist Steps",
+      "kind": "stairs",
+      "lat": 38.90557,
+      "lon": -77.0704,
+      "notes": "Steep public stair from M St up to Prospect St at 36th St (all three sources)."
+    },
+    {
+      "name": "Car Barn (old streetcar barn, 3600 M St)",
+      "kind": "building",
+      "lat": 38.9056,
+      "lon": -77.07103,
+      "notes": "North side of M St just west of the Exorcist Steps (R1, R2)."
+    },
+    {
+      "name": "Healy Hall, Georgetown University",
+      "kind": "campus",
+      "lat": 38.9076,
+      "lon": -77.0725,
+      "notes": "Tall spired clock-tower hall, visible from the river (all three sources)."
+    },
+    {
+      "name": "Georgetown University main gate (37th & O)",
+      "kind": "gate",
+      "lat": 38.908,
+      "lon": -77.0718,
+      "notes": "Where O St ends at 37th St (R1, R2; R3 says O St ends at the gate)."
+    },
+    {
+      "name": "Holy Trinity Church",
+      "kind": "church",
+      "lat": 38.9069,
+      "lon": -77.0703,
+      "notes": "Near 36th and N St (R1, R3)."
+    },
+    {
+      "name": "Capital Crescent Trail start",
+      "kind": "trail",
+      "lat": 38.9041,
+      "lon": -77.0715,
+      "notes": "West end of Water St (all three sources)."
+    },
+    {
+      "name": "Key Bridge Boathouse",
+      "kind": "boathouse",
+      "lat": 38.90364,
+      "lon": -77.0704,
+      "notes": "Kayak and canoe rental under Key Bridge. Single source (R2)."
+    },
+    {
+      "name": "Potomac Boat Club",
+      "kind": "boathouse",
+      "lat": 38.90392,
+      "lon": -77.0718,
+      "notes": "Rowing club on the river bank west of Key Bridge. Single source (R1)."
+    },
+    {
+      "name": "Washington Canoe Club",
+      "kind": "boathouse",
+      "lat": 38.90411,
+      "lon": -77.0728,
+      "notes": "Historic canoe club on the river bank. Single source (R2)."
+    },
+    {
+      "name": "Waterfront Park fountain (foot of Wisconsin Ave)",
+      "kind": "fountain",
+      "lat": 38.9023,
+      "lon": -77.06275,
+      "notes": "Interactive fountain in Georgetown Waterfront Park (R1, R2)."
+    },
+    {
+      "name": "Washington Harbour",
+      "kind": "waterfront complex",
+      "lat": 38.9019,
+      "lon": -77.0596,
+      "notes": "Riverside restaurants, boardwalk, boat slips, fountains; ice rink in winter (all three sources)."
+    },
+    {
+      "name": "Old Stone House (3051 M St)",
+      "kind": "historic house",
+      "lat": 38.9054,
+      "lon": -77.0597,
+      "notes": "North side of M St; oldest standing building in DC, small garden behind (all three sources)."
+    },
+    {
+      "name": "Georgetown Park (shopping mall)",
+      "kind": "mall",
+      "lat": 38.9048,
+      "lon": -77.0636,
+      "notes": "Shops between M St and the canal at Wisconsin Ave (all three sources)."
+    },
+    {
+      "name": "Wisconsin Ave and M St",
+      "kind": "intersection",
+      "lat": 38.90509,
+      "lon": -77.06276,
+      "notes": "Heart of Georgetown shopping. Single source as a landmark (R2)."
+    },
+    {
+      "name": "Grace Episcopal Church",
+      "kind": "church",
+      "lat": 38.9038,
+      "lon": -77.0624,
+      "notes": "Wisconsin Ave between the canal and K St. Single source (R1)."
+    },
+    {
+      "name": "Ritz-Carlton Georgetown (old incinerator smokestack)",
+      "kind": "hotel",
+      "lat": 38.90326,
+      "lon": -77.06174,
+      "notes": "3100 South St; the brick smokestack is a landmark (R1, R2)."
+    },
+    {
+      "name": "C&O Canal locks 3-4",
+      "kind": "canal lock",
+      "lat": 38.9044,
+      "lon": -77.0591,
+      "notes": "In the canal by 30th St (R1, R2 median; R3 puts it at Thomas Jefferson St by the visitor centre). Water level steps down through Locks 1-4 toward Rock Creek."
+    },
+    {
+      "name": "Four Seasons Hotel (2800 Pennsylvania Ave)",
+      "kind": "hotel",
+      "lat": 38.9046,
+      "lon": -77.0575,
+      "notes": "South side of Pennsylvania Ave by the Rock Creek bridges (all three sources)."
+    },
+    {
+      "name": "Thompson Boat Center",
+      "kind": "boathouse",
+      "lat": 38.9002,
+      "lon": -77.0575,
+      "notes": "Boat, kayak and bike rental at the mouth of Rock Creek (all three sources)."
+    },
+    {
+      "name": "Tudor Place",
+      "kind": "historic house",
+      "lat": 38.9113,
+      "lon": -77.0625,
+      "notes": "Mansion and garden between Q and R St off 31st St (all three sources)."
+    },
+    {
+      "name": "Dumbarton Oaks",
+      "kind": "museum/garden",
+      "lat": 38.9139,
+      "lon": -77.063,
+      "notes": "House and museum on R St; gardens extend north of the box (all three sources)."
+    },
+    {
+      "name": "Oak Hill Cemetery gate (3001 R St)",
+      "kind": "cemetery",
+      "lat": 38.9131,
+      "lon": -77.0592,
+      "notes": "Gate on the north side of R St at 30th St (all three sources)."
+    },
+    {
+      "name": "Georgetown Library (Wisconsin Ave and R St)",
+      "kind": "library",
+      "lat": 38.9132,
+      "lon": -77.0652,
+      "notes": "Next to Book Hill park (all three sources)."
+    },
+    {
+      "name": "Washington Circle (George Washington statue)",
+      "kind": "statue",
+      "lat": 38.9025,
+      "lon": -77.0505,
+      "notes": "Equestrian statue in the centre of the circle (all three sources)."
+    },
+    {
+      "name": "GWU Hospital",
+      "kind": "hospital",
+      "lat": 38.9017,
+      "lon": -77.0508,
+      "notes": "Just south of Washington Circle on 23rd St (all three sources)."
+    },
+    {
+      "name": "Foggy Bottom-GWU Metro",
+      "kind": "metro",
+      "lat": 38.90092,
+      "lon": -77.05027,
+      "notes": "Station entrance at 23rd and I St. Single source (R1)."
+    },
+    {
+      "name": "Watergate complex",
+      "kind": "building",
+      "lat": 38.8994,
+      "lon": -77.0554,
+      "notes": "At the south edge of the box, west of New Hampshire Ave (R1, R3)."
+    },
+    {
+      "name": "Sheridan Circle",
+      "kind": "roundabout",
+      "lat": 38.9116,
+      "lon": -77.04975,
+      "notes": "Just north-east of where 23rd St reaches Q St; its streets (Massachusetts Ave, R St east of the creek) are not modelled (R1, R2, both low confidence)."
+    }
+  ],
+  "street_character": [
+    {
+      "street": "M St NW",
+      "segment": "Key Bridge to 29th St",
+      "character": "busy shopping",
+      "typical_shop_categories": ["clothing boutiques","shoe stores","restaurants","bars","cafes","bakery","bank"]
+    },
+    {
+      "street": "Wisconsin Ave NW",
+      "segment": "K St to N St",
+      "character": "busy shopping",
+      "typical_shop_categories": ["clothing","restaurants","phone shop"]
+    },
+    {
+      "street": "Wisconsin Ave NW",
+      "segment": "N St to R St (Book Hill)",
+      "character": "restaurants",
+      "typical_shop_categories": ["art galleries","antiques","bistros","home goods"]
+    },
+    {
+      "street": "K St NW / Water St NW",
+      "segment": "Rock Creek to Key Bridge (under the Whitehurst Freeway)",
+      "character": "restaurants",
+      "typical_shop_categories": ["waterfront restaurants","bars","boat/kayak rental","parking"]
+    },
+    {
+      "street": "Water St NW",
+      "segment": "west of Key Bridge",
+      "character": "industrial/old warehouses",
+      "typical_shop_categories": ["boathouses","parking","trailhead"]
+    },
+    {
+      "street": "Thomas Jefferson St NW / 31st St NW / 30th St NW",
+      "segment": "M St to K St (canal area)",
+      "character": "industrial/old warehouses",
+      "typical_shop_categories": ["offices in converted warehouses","restaurants","hotel"]
+    },
+    {
+      "street": "Prospect St NW",
+      "segment": "37th St to Wisconsin Ave",
+      "character": "rowhouses",
+      "typical_shop_categories": ["restaurants"]
+    },
+    {
+      "street": "N St NW, O St NW, P St NW and the numbered cross streets",
+      "segment": "Georgetown, 36th St to 28th St",
+      "character": "rowhouses",
+      "typical_shop_categories": ["corner market/cafe","church"]
+    },
+    {
+      "street": "Q St NW / R St NW / upper 31st St NW",
+      "segment": "Georgetown Heights",
+      "character": "mansions",
+      "typical_shop_categories": []
+    },
+    {
+      "street": "37th St NW",
+      "segment": "Prospect St to Reservoir Rd (GU edge)",
+      "character": "campus",
+      "typical_shop_categories": ["student cafe","campus bookstore"]
+    },
+    {
+      "street": "M St NW / Pennsylvania Ave NW",
+      "segment": "West End, Rock Creek to Washington Circle",
+      "character": "offices",
+      "typical_shop_categories": ["hotels","restaurants","coffee"]
+    },
+    {
+      "street": "K St NW",
+      "segment": "Rock Creek to east edge",
+      "character": "offices",
+      "typical_shop_categories": ["coffee","sandwich shops"]
+    },
+    {
+      "street": "23rd St NW / I St NW",
+      "segment": "Foggy Bottom, H St to Washington Circle",
+      "character": "campus",
+      "typical_shop_categories": ["hospital","university","fast casual food","pharmacy"]
+    },
+    {
+      "street": "Rock Creek and Potomac Parkway",
+      "segment": "whole length",
+      "character": "parkland",
+      "typical_shop_categories": []
+    },
+    {"street":"Canal Rd NW","segment":"west of M St","character":"parkland","typical_shop_categories":[]}
+  ],
+  "elevation": [
+    {"lat":38.901,"lon":-77.062,"metres":0},
+    {"lat":38.902,"lon":-77.0702,"metres":0},
+    {"lat":38.902,"lon":-77.063,"metres":0},
+    {"lat":38.9002,"lon":-77.0576,"metres":2},
+    {"lat":38.9023,"lon":-77.063,"metres":2},
+    {"lat":38.9055,"lon":-77.0563,"metres":2},
+    {"lat":38.9025,"lon":-77.064,"metres":3},
+    {"lat":38.9038,"lon":-77.0585,"metres":3},
+    {"lat":38.904,"lon":-77.0702,"metres":3},
+    {"lat":38.9052,"lon":-77.0558,"metres":3},
+    {"lat":38.90165,"lon":-77.05975,"metres":3.5},
+    {"lat":38.9029,"lon":-77.06253,"metres":4},
+    {"lat":38.9093,"lon":-77.0547,"metres":7},
+    {"lat":38.899,"lon":-77.051,"metres":8},
+    {"lat":38.90435,"lon":-77.0627,"metres":9},
+    {"lat":38.9053,"lon":-77.0579,"metres":9},
+    {"lat":38.90535,"lon":-77.05682,"metres":9},
+    {"lat":38.9093,"lon":-77.054,"metres":9},
+    {"lat":38.9107,"lon":-77.05335,"metres":9},
+    {"lat":38.90525,"lon":-77.0591,"metres":10},
+    {"lat":38.90509,"lon":-77.06276,"metres":11},
+    {"lat":38.9011,"lon":-77.0505,"metres":12},
+    {"lat":38.9053,"lon":-77.06985,"metres":13},
+    {"lat":38.9066,"lon":-77.05799,"metres":14},
+    {"lat":38.90661,"lon":-77.0569,"metres":14},
+    {"lat":38.90545,"lon":-77.0519,"metres":14.5},
+    {"lat":38.9025,"lon":-77.0505,"metres":16},
+    {"lat":38.9086,"lon":-77.0554,"metres":18},
+    {"lat":38.9066,"lon":-77.06306,"metres":20},
+    {"lat":38.9095,"lon":-77.0518,"metres":22},
+    {"lat":38.9093,"lon":-77.0571,"metres":25},
+    {"lat":38.9095,"lon":-77.0505,"metres":26},
+    {"lat":38.9058,"lon":-77.07044,"metres":27},
+    {"lat":38.9079,"lon":-77.06339,"metres":30},
+    {"lat":38.9117,"lon":-77.05,"metres":33},
+    {"lat":38.90926,"lon":-77.0637,"metres":38},
+    {"lat":38.9135,"lon":-77.057,"metres":40},
+    {"lat":38.908,"lon":-77.0718,"metres":42},
+    {"lat":38.9076,"lon":-77.0726,"metres":43.5},
+    {"lat":38.9075,"lon":-77.072,"metres":45},
+    {"lat":38.9093,"lon":-77.0693,"metres":45},
+    {"lat":38.9129,"lon":-77.0573,"metres":45},
+    {"lat":38.9107,"lon":-77.06411,"metres":46},
+    {"lat":38.9093,"lon":-77.0719,"metres":48},
+    {"lat":38.913,"lon":-77.06476,"metres":56},
+    {"lat":38.9136,"lon":-77.06,"metres":56},
+    {"lat":38.913,"lon":-77.06183,"metres":56.5}
+  ],
+  "uncertainties": [
+    "Rock Creek (water): sources disagree on the longitude of the centreline by up to 104 m (worst at 38.91400,-77.05250; offsets from consensus: R1 0 m, R2 0 m, R3 104 m); 41 sample stations over 40 m between lat 38.90050 and 38.91400.",
+    "C&O Canal (water): sources disagree on the latitude of the centreline by up to 133 m (worst at 38.90530,-77.07400; offsets from consensus: R1 0 m, R2 56 m, R3 78 m); 30 sample stations over 40 m between lon -77.07400 and -77.05690.",
+    "Potomac north shore: sources disagree by up to 100 m (worst near 38.90420,-77.07400; offsets R1 0 m, R2 33 m, R3 67 m).",
+    "Rock Creek and Potomac Parkway: sources disagree on the longitude of the centreline by up to 139 m (worst at 38.91400,-77.05190; offsets from consensus: R1 0 m, R2 9 m, R3 130 m); 48 sample stations over 40 m between lat 38.89900 and 38.91400.",
+    "Canal Rd NW: sources disagree on the latitude of the centreline by up to 72 m (worst at 38.90620,-77.07400; offsets from consensus: R1 0 m, R2 22 m, R3 50 m); 3 sample stations over 40 m between lon -77.07400 and -77.07320.",
+    "M St NW (Georgetown): east end disagrees by 52 m (R1 lon -77.05680, R2 lon -77.05665, R3 lon -77.05620).",
+    "Pennsylvania Ave NW (Georgetown): sources disagree on the latitude of the centreline by up to 41 m (worst at 38.90486,-77.05670; offsets from consensus: R1 0 m, R2 6 m, R3 34 m); 2 sample stations over 40 m between lon -77.05670 and -77.05652.",
+    "Pennsylvania Ave NW (Georgetown): east end disagrees by 61 m (R1 lon -77.05690, R2 lon -77.05640, R3 lon -77.05620).",
+    "Water St NW: sources disagree on the latitude of the centreline by up to 70 m (worst at 38.90290,-77.06240; offsets from consensus: R1 9 m, R2 61 m, R3 0 m); 9 sample stations over 40 m between lon -77.06550 and -77.06240.",
+    "Water St NW: west end disagrees by 278 m (R1 lon -77.07380, R2 lon -77.07150, R3 lon -77.07060).",
+    "K St NW (Georgetown): sources disagree on the latitude of the centreline by up to 70 m (worst at 38.90290,-77.06240; offsets from consensus: R1 8 m, R2 61 m, R3 0 m); 5 sample stations over 40 m between lon -77.06240 and -77.06080.",
+    "Prospect St NW: west end disagrees by 61 m (R1 lon -77.07170, R2 lon -77.07120, R3 lon -77.07190).",
+    "N St NW: west end disagrees by 65 m (R1 lon -77.07180, R2 lon -77.07120, R3 lon -77.07195).",
+    "N St NW: east end disagrees by 87 m (R1 lon -77.05590, R2 lon -77.05600, R3 lon -77.05690).",
+    "O St NW: sources disagree on the latitude of the centreline by up to 44 m (worst at 38.90800,-77.07180; offsets from consensus: R1 0 m, R2 22 m, R3 21 m); 3 sample stations over 40 m between lon -77.07180 and -77.07100.",
+    "O St NW: west end disagrees by 69 m (R1 lon -77.07180, R2 lon -77.07120, R3 lon -77.07200).",
+    "O St NW: east end disagrees by 130 m (R1 lon -77.05580, R2 lon -77.05550, R3 lon -77.05700).",
+    "P St NW (Georgetown): sources disagree on the latitude of the centreline by up to 44 m (worst at 38.90930,-77.07190; offsets from consensus: R1 0 m, R2 11 m, R3 33 m); 3 sample stations over 40 m between lon -77.07190 and -77.07110.",
+    "P St NW (Georgetown): west end disagrees by 74 m (R1 lon -77.07190, R2 lon -77.07120, R3 lon -77.07205).",
+    "Q St NW (Georgetown): west end disagrees by 43 m (R1 lon -77.06930, R2 lon -77.06880).",
+    "Q St NW (Georgetown): east end disagrees by 95 m (R1 lon -77.05450, R2 lon -77.05560, R3 lon -77.05480).",
+    "R St NW: sources disagree on the latitude of the centreline by up to 69 m (worst at 38.91280,-77.06940; offsets from consensus: R1 0 m, R2 47 m, R3 22 m); 28 sample stations over 40 m between lon -77.06940 and -77.05860.",
+    "Reservoir Rd NW: sources disagree on the latitude of the centreline by up to 90 m (worst at 38.91242,-77.07120; offsets from consensus: R1 0 m, R2 47 m, R3 43 m); 13 sample stations over 40 m between lon -77.07400 and -77.06940.",
+    "M St Bridge over Rock Creek: east end disagrees by 48 m (R1 lon -77.05530, R2 lon -77.05575, R3 lon -77.05520).",
+    "Pennsylvania Ave Bridge over Rock Creek: sources disagree on the latitude of the centreline by up to 49 m (worst at 38.90443,-77.05546; offsets from consensus: R1 4 m, R2 0 m, R3 45 m); 3 sample stations over 40 m between lon -77.05612 and -77.05546.",
+    "Pennsylvania Ave Bridge over Rock Creek: east end disagrees by 43 m (R1 lon -77.05580, R2 lon -77.05570, R3 lon -77.05530).",
+    "Pennsylvania Ave NW (West End): sources disagree on the latitude of the centreline by up to 53 m (worst at 38.90414,-77.05466; offsets from consensus: R1 5 m, R2 0 m, R3 47 m); 8 sample stations over 40 m between lon -77.05546 and -77.05266.",
+    "Pennsylvania Ave NW (east of Washington Circle): sources disagree on the latitude of the centreline by up to 48 m (worst at 38.90201,-77.04990; offsets from consensus: R1 47 m, R2 0 m, R3 1 m); 6 sample stations over 40 m between lon -77.04990 and -77.04800.",
+    "P St Bridge over Rock Creek: east end disagrees by 113 m (R1 lon -77.05290, R2 lon -77.05300, R3 lon -77.05420).",
+    "Dumbarton Bridge (Q St, Buffalo Bridge): sources disagree on the latitude of the centreline by up to 45 m (worst at 38.91082,-77.05240; offsets from consensus: R1 0 m, R2 25 m, R3 20 m); 2 sample stations over 40 m between lon -77.05280 and -77.05240.",
+    "Dumbarton Bridge (Q St, Buffalo Bridge): east end disagrees by 121 m (R1 lon -77.05240, R2 lon -77.05220, R3 lon -77.05360).",
+    "I St NW: west end disagrees by 87 m (R1 lon -77.05330, R2 lon -77.05240, R3 lon -77.05340).",
+    "H St NW: west end disagrees by 43 m (R1 lon -77.05200, R2 lon -77.05250).",
+    "L St NW: west end disagrees by 130 m (R1 lon -77.05330, R2 lon -77.05240, R3 lon -77.05180).",
+    "37th St NW: sources disagree on the longitude of the centreline by up to 80 m (worst at 38.91215,-77.07200; offsets from consensus: R1 0 m, R2 68 m, R3 12 m); 28 sample stations over 40 m between lat 38.90585 and 38.91400.",
+    "36th St NW: sources disagree on the longitude of the centreline by up to 48 m (worst at 38.90930,-77.07064; offsets from consensus: R1 1 m, R2 47 m, R3 0 m); 13 sample stations over 40 m between lat 38.90580 and 38.90930.",
+    "Exorcist Steps: sources disagree on the longitude of the centreline by up to 50 m (worst at 38.90535,-77.07035; offsets from consensus: R1 28 m, R2 22 m, R3 0 m); 3 sample stations over 40 m between lat 38.90535 and 38.90580.",
+    "35th St NW: sources disagree on the longitude of the centreline by up to 65 m (worst at 38.91400,-77.06945; offsets from consensus: R1 0 m, R2 56 m, R3 8 m); 24 sample stations over 40 m between lat 38.90715 and 38.91400.",
+    "35th St NW: south end disagrees by 56 m (R1 lat 38.90575, R2 lat 38.90535, R3 lat 38.90525).",
+    "34th St NW: sources disagree on the longitude of the centreline by up to 56 m (worst at 38.91280,-77.06790; offsets from consensus: R1 0 m, R2 35 m, R3 21 m); 16 sample stations over 40 m between lat 38.90850 and 38.91280.",
+    "33rd St NW: sources disagree on the longitude of the centreline by up to 56 m (worst at 38.91080,-77.06631; offsets from consensus: R1 0 m, R2 18 m, R3 39 m); 17 sample stations over 40 m between lat 38.90610 and 38.91080.",
+    "33rd St NW: south end disagrees by 235 m (R1 lat 38.90512, R2 lat 38.90300, R3 lat 38.90320).",
+    "33rd St NW: north end disagrees by 397 m (R1 lat 38.91278, R2 lat 38.90920, R3 lat 38.91080).",
+    "Potomac St NW: sources disagree on the longitude of the centreline by up to 56 m (worst at 38.90795,-77.06480; offsets from consensus: R1 0 m, R2 18 m, R3 39 m); 11 sample stations over 40 m between lat 38.90510 and 38.90795.",
+    "Potomac St NW: north end disagrees by 320 m (R1 lat 38.91068, R2 lat 38.90780, R3 lat 38.90795).",
+    "Wisconsin Ave NW: sources disagree on the longitude of the centreline by up to 121 m (worst at 38.91400,-77.06500; offsets from consensus: R1 0 m, R2 95 m, R3 26 m); 20 sample stations over 40 m between lat 38.90830 and 38.91400.",
+    "Wisconsin Ave NW: south end disagrees by 72 m (R1 lat 38.90300, R2 lat 38.90235, R3 lat 38.90290).",
+    "31st St NW: south end disagrees by 50 m (R1 lat 38.90285, R2 lat 38.90240, R3 lat 38.90280).",
+    "31st St NW: north end disagrees by 49 m (R1 lat 38.91276, R2 lat 38.91320, R3 lat 38.91300).",
+    "30th St NW: north end disagrees by 47 m (R1 lat 38.91278, R2 lat 38.91320, R3 lat 38.91290).",
+    "26th St NW: sources disagree on the longitude of the centreline by up to 61 m (worst at 38.90460,-77.05470; offsets from consensus: R1 0 m, R2 52 m, R3 9 m); 11 sample stations over 40 m between lat 38.90250 and 38.90540.",
+    "25th St NW: sources disagree on the longitude of the centreline by up to 52 m (worst at 38.90110,-77.05340; offsets from consensus: R1 8 m, R2 44 m, R3 0 m); 16 sample stations over 40 m between lat 38.90110 and 38.90542.",
+    "25th St NW: south end disagrees by 169 m (R1 lat 38.90110, R2 lat 38.90252, R3 lat 38.90100).",
+    "24th St NW: sources disagree on the longitude of the centreline by up to 52 m (worst at 38.90350,-77.05190; offsets from consensus: R1 0 m, R2 43 m, R3 9 m); 20 sample stations over 40 m between lat 38.90110 and 38.90670.",
+    "24th St NW: north end disagrees by 155 m (R1 lat 38.90540, R2 lat 38.90670, R3 lat 38.90680).",
+    "23rd St NW (south of Washington Circle): sources disagree on the longitude of the centreline by up to 67 m (worst at 38.89900,-77.05050; offsets from consensus: R1 0 m, R2 30 m, R3 37 m); 9 sample stations over 40 m between lat 38.89900 and 38.90140.",
+    "23rd St NW (north of Washington Circle): north end disagrees by 61 m (R1 lat 38.91082, R2 lat 38.91130, R3 lat 38.91075).",
+    "22nd St NW: north end disagrees by 144 m (R1 lat 38.90950, R2 lat 38.91080).",
+    "New Hampshire Ave NW (south of Washington Circle): sources disagree on the longitude of the centreline by up to 104 m (worst at 38.89900,-77.05350; offsets from consensus: R1 52 m, R2 52 m); 7 sample stations over 40 m between lat 38.89900 and 38.90080.",
+    "Whitehurst Freeway: sources disagree on the latitude of the centreline by up to 49 m (worst at 38.90289,-77.06265; offsets from consensus: R1 29 m, R2 20 m, R3 0 m); 9 sample stations over 40 m between lon -77.06985 and -77.06105.",
+    "C&O Canal Towpath: sources disagree on the latitude of the centreline by up to 133 m (worst at 38.90522,-77.07400; offsets from consensus: R1 0 m, R2 56 m, R3 78 m); 30 sample stations over 40 m between lon -77.07400 and -77.05690.",
+    "C&O Canal Towpath: east end disagrees by 78 m (R1 lon -77.05690, R2 lon -77.05740, R3 lon -77.05650).",
+    "Capital Crescent Trail: sources disagree on the latitude of the centreline by up to 100 m (worst at 38.90455,-77.07400; offsets from consensus: R2 50 m, R3 50 m); 6 sample stations over 40 m between lon -77.07400 and -77.07200.",
+    "M St NW (West End): ONE-WAY CONFLICT (R1 two-way; R2 two-way, westbound; R3 two-way); output uses 'no' (two-way) at 38.90547,-77.05050.",
+    "L St NW: ONE-WAY CONFLICT (R1 two-way; R2 eastbound; R3 two-way); output uses 'no' (two-way) at 38.90370,-77.04940.",
+    "35th St NW: ONE-WAY CONFLICT (R1 two-way; R2 northbound; R3 southbound); output uses 'no' (two-way) at 38.90930,-77.06930.",
+    "34th St NW: ONE-WAY CONFLICT (R1 northbound; R2 southbound; R3 northbound); output uses 'forward' (northbound) at 38.90793,-77.06775.",
+    "33rd St NW: ONE-WAY CONFLICT (R1 southbound; R2 northbound; R3 southbound); output uses 'backward' (southbound) at 38.90662,-77.06620.",
+    "31st St NW: ONE-WAY CONFLICT (R1 two-way; R2 northbound; R3 two-way); output uses 'no' (two-way) at 38.90720,-77.06140.",
+    "30th St NW: ONE-WAY CONFLICT (R1 two-way; R2 southbound; R3 southbound); output uses 'backward' (southbound) at 38.90790,-77.05920.",
+    "29th St NW: ONE-WAY CONFLICT (R1 two-way; R2 northbound; R3 northbound); output uses 'forward' (northbound) at 38.90720,-77.05800.",
+    "Spot heights where the sources differ by 8 m or more (median used): 38.91070,-77.06411 (R3 50 m, R2 40 m, R1 46 m); 38.91300,-77.06476 (R2 52 m, R3 60 m, R1 56 m).",
+    "All three inputs are from memory, not surveys; expect 20-80 m absolute error. Consensus = per-station median of the sources (mean where only two cover), then intersections snapped (nodes within 15 m merged) so every junction is one shared coordinate.",
+    "Dumbarton St NW: R2 puts it between P and Q St (lat ~38.9099) while R3 puts it between N and O St (lat ~38.9072) - about 300 m apart. Averaging would invent a street between O and P, so R3's alignment (between N and O, matching the usual description) was kept; confidence lowered to 0.35.",
+    "South St NW: R1 and R2 run it from Wisconsin Ave to 31st St (3100 South St, Ritz-Carlton); R3 runs it from 31st to 30th St (~38.9035,-77.0602). Majority kept.",
+    "K St / Water St name change: R1 and R2 switch at Wisconsin Ave; R3 says somewhere between 31st and 33rd St. Switched at Wisconsin Ave (38.9029,-77.0625).",
+    "Water St NW west end: R1 runs it to the box edge (-77.0738), R2 to -77.0715, R3 to -77.0706 (~280 m spread). Median -77.0715 used; Capital Crescent Trail continues west from there.",
+    "R St / Reservoir Rd changeover: R1 and R3 at 35th St (38.9128,-77.0694); R2 at Wisconsin Ave (38.9132,-77.0658). Majority (35th St) kept.",
+    "33rd St NW extent: R1 runs M St to R St, R2 Water St to P St, R3 Water St to Q St. Consensus Water St to Q St (38.9107,-77.0665). Its canal crossing south of M is a road bridge in this model.",
+    "Potomac St NW: R2 starts it at the canal footbridge (38.90445,-77.0646) and R1 runs it north to Q St (38.9107,-77.0650); consensus M St to O St, with a pedestrian way south to the footbridge.",
+    "35th St NW south end: R1 starts it at Prospect St (38.90575,-77.0692), R2 and R3 at M St. Majority (M St) kept.",
+    "Q St NW (Georgetown) west end: R3 runs it to 37th St (38.9110,-77.0721); R1 and R2 stop at 35th St. Majority kept.",
+    "27th St NW (Georgetown): R1 starts it at N St (38.90675,-77.0559); R2 and R3 at O St. Majority kept. N St NW then dead-ends at 38.9067,-77.0560.",
+    "28th St NW: R1 extends it south of M St to Pennsylvania Ave (38.90493,-77.0569); R2 and R3 start at M St. Majority kept.",
+    "24th St NW: R1 runs it south to the box edge through H St (38.8990,-77.0519); R2 and R3 start at I St. North end: R1 stops at M St, R2 and R3 continue to ~38.9067 (median used, dead end).",
+    "25th St NW: R2 starts it at K St; R1 and R3 at I St (kept). R3 continues it north of M St to N St (38.9068,-77.0533); not kept.",
+    "22nd St NW: only R1 and R2 have it (R3 left it out as too close to the box edge). North end: R1 at P St, R2 at Q St (38.9108,-77.0488); ended at P St. South end: R2 starts at H St, R1 at the box edge (kept). Lanes 2 vs 3 (2 used).",
+    "H St NW and New Hampshire Ave NW (south of Washington Circle): only R1 and R2 have them. New Hampshire Ave south end differs by ~100 m (R1 -77.0541, R2 -77.0529 at lat 38.8990).",
+    "I St NW / New Hampshire Ave NW / 24th St NW meet at a single merged node (38.9011,-77.0519); the sources put the NH Ave crossing within ~10 m of 24th St.",
+    "Pennsylvania Ave NW (Georgetown) meets M St at 29th St (R1, R3); R2 puts the fork ~20 m east of 29th. Merged into the M St / 29th St node (38.9053,-77.0579).",
+    "L St NW west end: R1 at 25th St (38.9038,-77.0533), R2 at 24th St (-77.0524), R3 at 24th St (-77.0518). Started at 24th St.",
+    "Washington Circle: centre 38.90250,-77.05050, radius 55 m (sources 50-60 m). Spoke angles are derived from the consensus streets, not from any single source. K St through lanes use an underpass (R1, R3; R2 \"believed\"); R2 joins K St to the ring, so both a tunnel segment and two short ramps are modelled. The tunnel crosses the ring in plan without a shared node.",
+    "Whitehurst Freeway: elevated over K St / Water St, so its centreline passes within a few metres of at-grade nodes (e.g. Wisconsin Ave / K St at 38.9029,-77.0625). Do not snap it to the street graph except at its two endpoints (M St / Key Bridge node and the east end of the K St bridge). Its real ramps to Canal Rd and Rock Creek Pkwy are not modelled.",
+    "Rock Creek and Potomac Parkway has no junctions inside the box (it passes under all five bridges); in reality ramps connect it to K St / Virginia Ave near Thompson Boat Center. Canal Rd and the parkway also run reversible one-way at rush hour; modelled two-way.",
+    "Bridge ends over Rock Creek were extended where needed so each bridge clears both the creek and the parkway by about 18 m (consensus creek and parkway crossings: M St creek -77.05603 / parkway -77.05545, Pennsylvania Ave creek -77.05631 / parkway -77.05566, P St creek -77.05415 / parkway -77.05355, Q St creek -77.05355 / parkway -77.05285, K St creek -77.05750 / parkway -77.05670).",
+    "K St bridge over Rock Creek: only R2 draws a separate bridge; R1 notes a \"low crossing\" and R3 leaves a gap at the creek. Modelled as a bridge from 29th St (38.9025,-77.0580) to 38.9025,-77.0560.",
+    "Dropped (only one source): Virginia Ave NW (R1, 38.9003,-77.0571 to the south edge), Volta Pl NW (R2, lat 38.9100), N St NW West End (R3, lat 38.9068 east of 25th St), Theodore Roosevelt Island north tip (R1), Thompson Boat Center parking lot (R2), parking under the Whitehurst at 29th-30th St (R3), surface parking by Key Bridge (R3), the R3 footbridge near Lock 3/4.",
+    "Single-source landmarks kept because they are well-known and useful (marked in notes): Key Bridge Boathouse, Potomac Boat Club, Washington Canoe Club, Grace Episcopal Church, Foggy Bottom-GWU Metro, Wisconsin Ave and M St.",
+    "R3 spot height on the Key Bridge deck (38.9035,-77.0703, 20 m) dropped because it is not ground level.",
+    "Sheridan Circle and Massachusetts Ave may clip the NE corner of the box (~38.9116,-77.0498); not modelled as streets.",
+    "Minor streets none of the sources drew are absent: 32nd St, Dent Pl, Olive St, Cecil Pl, Cady's Alley, Lovers Lane, Massachusetts Ave."
+  ]
+}
