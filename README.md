@@ -52,3 +52,11 @@ Map data © OpenStreetMap contributors, ODbL
 Milestone 3 builds the city from OpenStreetMap (Georgetown, Washington DC; see https://www.openstreetmap.org/copyright).
 Street, river, canal and park names come from OSM. Shop and business names are invented (`src/data/poiNames.ts`).
 To import the map, follow `data/osm/README.md` (`npm run import-osm`).
+
+Until a real OpenStreetMap download is available, `src/data/georgetown.json` is generated instead from a
+hand-authored spec, `data/georgetown-spec.json` (streets, water, parks, landmarks and spot heights written from
+general knowledge; not OSM data and not survey-accurate). `npm run gen-georgetown` rebuilds it in the importer's
+format and synthesizes the buildings, POIs, sidewalks, props and heightfield (`meta.synthetic` is true);
+`npm run preview-map` draws it to `screenshots/24-map-preview.png`. Edit the spec's coordinates, lanes or one-ways
+and run both again. A real import replaces the file; run the importer with
+`--crop -77.074,38.899,-77.048,38.914` to keep the same frame.
