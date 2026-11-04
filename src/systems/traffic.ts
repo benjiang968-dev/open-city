@@ -44,6 +44,7 @@ export interface AiCar {
   stuckT: number;
   lastSetHeading: number; // heading last written to the physics body
   px: number; // cached position, refreshed once per physics step (avoids allocating translation() calls)
+  py: number;
   pz: number;
   /** Optional route chooser at junctions: returns the next lane edge id (police head for the player). */
   chooser?: (car: AiCar) => number;
@@ -119,17 +120,27 @@ export function isUTurn(e: LaneEdge, n: LaneEdge): boolean {
   return n.id === e.twin || (n.to === e.from && n.roadId === e.roadId);
 }
 
-/** Random next lane at the end of the car's edge: never back the way it came unless it's a dead end. */
+/**
+ * Random next lane at the end of the car's edge: never back the way it came unless it's a dead end, and not into a
+ * parking lane (cars parked along its kerb) while another lane leads on.
+ */
 export function pickNext(w: World, car: AiCar, rng: () => number): number {
   const { nodes, edges } = w.city.roads;
   const e = edges[car.edge];
   const out = nodes[e.to].out;
-  let n = 0;
-  for (let i = 0; i < out.length; i++) if (!isUTurn(e, edges[out[i]])) n++;
-  if (n === 0) return e.twin >= 0 ? e.twin : out.length ? out[Math.floor(rng() * out.length)] : -1;
-  let k = Math.floor(rng() * n);
+  let n = 0, free = 0;
   for (let i = 0; i < out.length; i++) {
-    if (isUTurn(e, edges[out[i]])) continue;
+    const o = edges[out[i]];
+    if (isUTurn(e, o)) continue;
+    n++;
+    if (!o.parking) free++;
+  }
+  if (n === 0) return e.twin >= 0 ? e.twin : out.length ? out[Math.floor(rng() * out.length)] : -1;
+  const skipParking = free > 0;
+  let k = Math.floor(rng() * (skipParking ? free : n));
+  for (let i = 0; i < out.length; i++) {
+    const o = edges[out[i]];
+    if (isUTurn(e, o) || (skipParking && o.parking)) continue;
     if (k-- === 0) return out[i];
   }
   return -1;
@@ -156,7 +167,7 @@ export function createAiCar(w: World, kind: 'traffic' | 'police', type: CarTypeN
   const car: AiCar = {
     id: kind === 'police' ? w.police?.cars?.length ?? 0 : w.traffic.length, kind, type, body, collider, mesh, meshYOffset: rideY - halfH, halfW: hx, halfL: hz,
     edge, next: -1, phase: 'lane', s: 0, turnPts: new Float32Array((TURN_SEGS + 1) * 2), turnCum: new Float32Array(TURN_SEGS + 1), turnLen: 0.01,
-    speed: 0, heading: 0, waitT: 0, honkCd: 0, blockedT: 0, swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, pz: 0, lastSetHeading: NaN,
+    speed: 0, heading: 0, waitT: 0, honkCd: 0, blockedT: 0, swerve: 0, swerveT: 0, stunT: 0, stuckT: 0, px: 0, py: 0, pz: 0, lastSetHeading: NaN,
   };
   placeOnEdge(w, car, edge, s0);
   return car;
@@ -176,6 +187,7 @@ export function placeOnEdge(w: World, car: AiCar, edge: number, s0: number): voi
   car.lastSetHeading = car.heading;
   car.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
   car.px = p.x;
+  car.py = p.y + 0.62;
   car.pz = p.z;
   car.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
   car.speed = 0;
@@ -193,6 +205,7 @@ export function placeRandom(w: World, car: AiCar, minDist: number, rng: () => nu
     const a = nodes[Math.floor(rng() * nodes.length)];
     if (!a.out.length) continue;
     const e = edges[a.out[Math.floor(rng() * a.out.length)]];
+    if (e.parking) continue; // parked cars stand along it
     const laneLen = stopLine(e) - laneStart(e);
     if (laneLen < 20) continue; // too short to start on
     const s0 = 5 + rng() * Math.max(1, laneLen - 15);
@@ -253,25 +266,26 @@ export function yawOf(r: { x: number; y: number; z: number; w: number }): number
 
 /** Refresh cached positions of AI cars and drivable vehicles once per physics step. */
 export function cachePositions(w: World): void {
-  for (const c of w.traffic) { const t = c.body.translation(); c.px = t.x; c.pz = t.z; }
-  for (const c of w.police.cars ?? []) { const t = c.body.translation(); c.px = t.x; c.pz = t.z; }
+  for (const c of w.traffic) { const t = c.body.translation(); c.px = t.x; c.py = t.y; c.pz = t.z; }
+  for (const c of w.police.cars ?? []) { const t = c.body.translation(); c.px = t.x; c.py = t.y; c.pz = t.z; }
 }
 
 const OB = { dist: 0, player: false };
 /**
  * Distance to the nearest obstacle ahead in this car's lane (Infinity if clear) and whether it is the player.
+ * Another car is in the lane when the sides of the two bodies are less than traffic.sideGap apart.
  * Returns a shared object: read it immediately. Written as flat loops with no helper calls: passing
  * doubles to a non-inlined helper boxes them, which made this the biggest allocator in the game.
  */
 export function obstacleAhead(w: World, car: AiCar, look: number): { dist: number; player: boolean } {
-  const px = car.px, pz = car.pz, fx = Math.sin(car.heading), fz = Math.cos(car.heading), half = car.halfL;
+  const px = car.px, pz = car.pz, fx = Math.sin(car.heading), fz = Math.cos(car.heading), half = car.halfL, side = car.halfW + TT.sideGap;
   let best = Infinity, isPlayer = false;
   const traffic = w.traffic;
   for (let i = 0; i < traffic.length; i++) {
     const o = traffic[i];
     if (o === car) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > 2.3) continue;
+    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW) continue;
     const d = along - o.halfL - half;
     if (d < best) { best = d; isPlayer = false; }
   }
@@ -280,7 +294,7 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     const o = police[i];
     if (o === car) continue;
     const rx = o.px - px, rz = o.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > 2.3) continue;
+    if (along <= 0 || along > look + o.halfL || Math.abs(rx * fz - rz * fx) > side + o.halfW) continue;
     const d = along - o.halfL - half;
     if (d < best) { best = d; isPlayer = false; }
   }
@@ -289,7 +303,7 @@ export function obstacleAhead(w: World, car: AiCar, look: number): { dist: numbe
     const v = vehicles[i];
     const hl = v.spec.halfExtents[2];
     const rx = v.px - px, rz = v.pz - pz, along = rx * fx + rz * fz;
-    if (along <= 0 || along > look + hl || Math.abs(rx * fz - rz * fx) > 2.4) continue;
+    if (along <= 0 || along > look + hl || Math.abs(rx * fz - rz * fx) > side + v.spec.halfExtents[0]) continue;
     const d = along - hl - half;
     if (d < best) { best = d; isPlayer = v.driven; }
   }

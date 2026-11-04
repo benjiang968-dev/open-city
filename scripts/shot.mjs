@@ -36,7 +36,7 @@ if (process.env.THROTTLE) {
 }
 const params = [seed ? `seed=${seed}` : '', process.env.MAP ? `map=${encodeURIComponent(process.env.MAP)}` : ''].filter(Boolean).join('&');
 await page.goto(`http://localhost:${port}/${params ? `?${params}` : ''}`);
-await page.waitForFunction(() => window.__oc && window.__oc.time > 1, null, { timeout: 60000 });
+await page.waitForFunction(() => window.__oc && window.__oc.time > 1, null, { timeout: 180000 }); // software GL: a real map's first frames are slow
 const mod = await import(`./scenarios.mjs`);
 await page.evaluate(mod.installMapHelpers);
 

@@ -29,11 +29,19 @@
 //    lanes spread over the whole width (offsets can be negative for the left lanes).
 //  - twin: the opposite-direction edge on the same segment with the same lane index (or the closest one), -1 if
 //    one-way. bridge: the lane is on a bridge (its pts carry the deck height).
+//  - parking: cars are parked along this lane's kerb (its ParkingSpots carry `edge` = this lane). On a road with two
+//    or more lanes each way the kerbside lane IS the parking lane: traffic keeps out of it when another lane goes the
+//    same way (RoadRouter also avoids it). On a narrow two-way street with parking on one kerb, the lane pts are
+//    already shifted away from the parked cars (so they need not sit on the painted lane line).
 //  - speed: cruise m/s from maxspeed, else TUNING.map.classSpeed[cls]. cls: OSM highway class mapped to RoadClass.
 //  - Every edge must appear in nodes[from].out and nodes[to].in. validateCityMap() checks all of this.
 //
 // Walk graph (walk.nodes): undirected; nbrs are symmetric. Sidewalks along both kerbs, crossings at junctions,
 //  park paths, plazas, the canal towpath and the waterfront promenade. Must be (nearly) one connected component.
+//
+// Parking (parkingSpots): kerbside spots stand in the parking lane (edge = that lane, s = distance along it) with the
+//  car's centre TUNING.map.parkingBand / 2 from the kerb and heading = the lane's direction; lot stalls have
+//  edge = -1 and lot = the car park's index. y = the surface the car stands on (spawnVehicle uses it).
 //
 // POIs: x,z = the spot on the pavement in front of the door; door = building entrance; curbX/curbZ = the stopping
 //  point in the road at the kerb (taxi drop-off), kerbHeading = the heading of a car stopped there (traffic direction
@@ -103,6 +111,8 @@ export interface LaneEdge {
   bridge: boolean;
   halfWidth: number; // kerb-to-kerb half width of the whole road
   twin: number; // opposite-direction edge on the same segment, -1 if one-way
+  /** Cars park along this lane's kerb (see the contract): traffic avoids it when another lane goes the same way. */
+  parking: boolean;
 }
 
 export type WalkKind = 'sidewalk' | 'path' | 'towpath' | 'waterfront' | 'crossing' | 'plaza';
@@ -140,6 +150,9 @@ export interface ParkingSpot {
   cls: RoadClass | 'lot';
   street: string | null;
   lot: number; // car park index, -1 if kerbside
+  /** The parking lane this kerbside spot stands in (-1 in a car park), and the distance along it. */
+  edge: number;
+  s: number;
 }
 
 /** A named street for minimap labels: its centre line as x,z pairs. */
@@ -247,8 +260,13 @@ export interface CityMap {
   groundMats: THREE.MeshStandardMaterial[];
   water: THREE.Mesh;
   boats: Boat[];
-  /** Animate water and boats (called once per rendered frame with the game time in seconds). */
-  update(time: number): void;
+  /**
+   * Animate water and boats, and (maps with level of detail) show what the camera can see. Called once per rendered
+   * frame with the game time in seconds and the render camera.
+   */
+  update(time: number, camera: THREE.Camera): void;
+  /** Optional: the pause menu's graphics quality (draw distance, detail, trees). Called at boot and on every change. */
+  setQuality?(q: 'low' | 'medium' | 'high'): void;
 }
 
 // =============================================================================================== lane geometry
@@ -612,7 +630,8 @@ class Heap {
 }
 
 /**
- * Directed shortest paths on the road graph (A*, cost = travel time len/speed, straight-line heuristic).
+ * Directed shortest paths on the road graph (A*, cost = travel time len/speed, x TUNING.map.parkingLaneCost on
+ * parking lanes, straight-line heuristic).
  * Reusable buffers: create one per system and keep it. After `path()` the edge ids are in `edges[0..count)`.
  */
 export class RoadRouter {
@@ -666,7 +685,7 @@ export class RoadRouter {
         const e = edges[out[i]];
         const m = e.to;
         if (this.done[m] === st) continue;
-        const g = this.g[n] + e.len / e.speed;
+        const g = this.g[n] + (e.len / e.speed) * (e.parking ? M.parkingLaneCost : 1);
         if (this.seen[m] !== st || g < this.g[m]) {
           this.seen[m] = st;
           this.g[m] = g;
@@ -794,6 +813,7 @@ export interface MapReport {
     walkNodes: number;
     walkLinks: number;
     largestWalkShare: number;
+    heightMismatches: number;
     pois: number;
     taxiRanks: number;
     parkingSpots: number;
@@ -811,6 +831,11 @@ export function validateCityMap(map: CityMap): MapReport {
   const warn = (s: string) => { if (warnings.length < 40) warnings.push(s); };
   const { nodes, edges } = map.roads;
   const fin = (v: number) => Number.isFinite(v);
+  let heightBad = 0;
+  const heightErr = (what: string, x: number, y: number, z: number, dy: number) => {
+    heightBad++;
+    err(`${what} at (${x.toFixed(0)}, ${y.toFixed(1)}, ${z.toFixed(0)}) is ${dy.toFixed(2)} m off the surface heightAt reports`);
+  };
 
   nodes.forEach((n, i) => {
     if (n.id !== i) err(`road node ${i} has id ${n.id}`);
@@ -843,6 +868,11 @@ export function validateCityMap(map: CityMap): MapReport {
     const dA = Math.hypot(p[0] - a.x, p[2] - a.z), dB = Math.hypot(p[l] - b.x, p[l + 2] - b.z);
     if (dA > e.halfWidth + 2 || dB > e.halfWidth + 2) warn(`edge ${i} ends ${Math.max(dA, dB).toFixed(1)} m from its node`);
     laneM += e.len;
+    // the lane must lie on the surface the map reports at its height (bridge decks included)
+    for (let k = 0; k < p.length; k += 9) {
+      const dy = p[k + 1] - map.heightAt(p[k], p[k + 2], p[k + 1]);
+      if (Math.abs(dy) > M.heightCheckTolerance) { heightErr(`lane ${i} (${e.name ?? e.roadId})`, p[k], p[k + 1], p[k + 2], dy); break; }
+    }
   });
 
   // ---- strongly connected components (iterative Kosaraju over nodes) ----
@@ -896,6 +926,10 @@ export function validateCityMap(map: CityMap): MapReport {
   W.forEach((n, i) => {
     if (n.id !== i) err(`walk node ${i} has id ${n.id}`);
     if (!fin(n.x) || !fin(n.y) || !fin(n.z)) err(`walk node ${i} has a non-finite position`);
+    else {
+      const dy = n.y - map.heightAt(n.x, n.z, n.y);
+      if (Math.abs(dy) > M.heightCheckTolerance) heightErr(`walk node ${i} (${n.kind})`, n.x, n.y, n.z, dy);
+    }
     for (const m of n.nbrs) {
       if (!W[m]) { err(`walk node ${i} links to missing node ${m}`); continue; }
       if (!W[m].nbrs.includes(i)) err(`walk link ${i} -> ${m} is one-sided`);
@@ -930,7 +964,12 @@ export function validateCityMap(map: CityMap): MapReport {
   if (!map.taxiRanks.length) err('no taxi ranks');
   for (const r of map.taxiRanks) if (map.pois[r.id] !== r) err(`taxi rank ${r.name} is not one of the pois`);
   if (!map.pois.some((p) => p.kind === 'clinic')) warn('no clinic: knocked-out players wake at a taxi rank');
-  for (const s of map.parkingSpots) if (!fin(s.x) || !fin(s.z) || !fin(s.heading)) { err('parking spot with a non-finite position'); break; }
+  for (const s of map.parkingSpots) if (!fin(s.x) || !fin(s.y) || !fin(s.z) || !fin(s.heading)) { err('parking spot with a non-finite position'); break; }
+  for (const s of map.parkingSpots) {
+    if (s.edge >= 0 && (!edges[s.edge] || !edges[s.edge].parking)) { err(`kerbside parking spot on lane ${s.edge}, which is not a parking lane`); break; }
+    const dy = s.y - map.heightAt(s.x, s.z, s.y);
+    if (Math.abs(dy) > M.heightCheckTolerance) { heightErr(`parking spot (${s.cls}, ${s.street ?? 'lot'})`, s.x, s.y, s.z, dy); break; }
+  }
   if (!fin(map.spawn.x) || !fin(map.spawn.z)) err('spawn is not finite');
   else if (map.isBlocked(map.spawn.x, map.spawn.z)) err('spawn is inside a building or water');
   const hit: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
@@ -954,6 +993,7 @@ export function validateCityMap(map: CityMap): MapReport {
       walkNodes: W.length,
       walkLinks: links / 2,
       largestWalkShare: +walkShare.toFixed(4),
+      heightMismatches: heightBad,
       pois: map.pois.length,
       taxiRanks: map.taxiRanks.length,
       parkingSpots: map.parkingSpots.length,

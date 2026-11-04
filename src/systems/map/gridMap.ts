@@ -48,7 +48,7 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
           id: edges.length, from: a.id, to: b.id, ...geo, trimStart: trimA, trimEnd: trimB, speed: TT.cruiseSpeed,
           cls: alongX ? clsOfZ(a.j) : 'residential', name: alongX ? streetNamesZ[a.j] : streetNamesX[a.i],
           roadId: alongX ? `ew${a.j}` : `ns${a.i}`, lane: k, lanesSameDir: lanes, offset: off, oneway: false,
-          roundabout: false, bridge: false, halfWidth: half, twin: -1,
+          roundabout: false, bridge: false, halfWidth: half, twin: -1, parking: false, // parked cars stand outside the traffic lanes
         };
         edges.push(e);
         nodes[a.id].out.push(e.id);
@@ -90,7 +90,7 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
   // ---------- parking: the generator's street spots, plus kerb spots along both sides of the boulevard ----------
   const hit: LaneHit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
   const streetAt = (x: number, z: number) => (index.nearestLane(x, z, 30, false, hit) ? edges[hit.edge].name : null);
-  const parkingSpots: ParkingSpot[] = g.parkingSpots.map((s) => ({ x: s.x, y: 0, z: s.z, heading: s.heading, cls: 'residential', street: streetAt(s.x, s.z), lot: -1 }));
+  const parkingSpots: ParkingSpot[] = g.parkingSpots.map((s) => ({ x: s.x, y: 0, z: s.z, heading: s.heading, cls: 'residential', street: streetAt(s.x, s.z), lot: -1, edge: -1, s: 0 }));
   {
     const kerbOff = roadHalfZ[lastJ] - V.parkingKerbGap;
     const clear = V.parkedClearOfPoi;
@@ -98,7 +98,7 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
       for (let x = xs[i] + roadHalfX[i] + V.parkingJunctionGap; x < xs[i + 1] - roadHalfX[i + 1] - V.parkingJunctionGap; x += V.kerbSlotSpacing)
         for (const [z, heading] of [[zs[lastJ] - kerbOff, -Math.PI / 2], [zs[lastJ] + kerbOff, Math.PI / 2]]) {
           if (pois.some((p) => (p.curbX - x) ** 2 + (p.curbZ - z) ** 2 < clear * clear)) continue;
-          parkingSpots.push({ x, y: 0, z, heading, cls: 'secondary', street: streetNamesZ[lastJ], lot: -1 });
+          parkingSpots.push({ x, y: 0, z, heading, cls: 'secondary', street: streetNamesZ[lastJ], lot: -1, edge: -1, s: 0 });
         }
   }
 

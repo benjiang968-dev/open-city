@@ -44,6 +44,20 @@ const RAW = {
     levelStep: 1.2, // metres: heightAt(x, z, y) counts a deck as underfoot if its top is at most this far above y
     minStrongShare: 0.9, // validateCityMap: the largest strongly connected road component must hold this share of lanes
     minWalkShare: 0.95, // validateCityMap: the largest connected walk component must hold this share of walk nodes
+    heightCheckTolerance: 0.5, // validateCityMap: lane points, walk nodes and parking spots may be this far (m) off heightAt
+    // kerbside parking (real maps; see ParkingSpot / LaneEdge.parking in map/cityMap.ts)
+    parkingBand: 2.1, // metres from the kerb kept for parked cars; a parked car's centre sits half of this from the kerb
+    parkingMinHalfWidth: 3.2, // metres: a two-way street with one lane each way gets parking (on one kerb) only if this wide
+    parkingCrossingGap: 5, // metres of kerb kept free either side of a pedestrian crossing
+    parkingRankGap: 18, // metres of kerb kept free either side of a taxi rank
+    parkingBusStopGap: 12, // metres of kerb kept free either side of a bus stop
+    parkingLaneCost: 3, // RoadRouter: driving along a parking lane costs this many times its travel time (routes keep out)
+    // walk graph building (real maps)
+    walkNodeSpacing: 12, // metres between walk nodes along sidewalks and paths
+    walkJoinRange: 10, // metres: a path end joins the nearest walk node this close on its own level
+    walkBridgeRange: 30, // metres: a cut-off piece of the walk graph is joined to the main network if this close, else dropped
+    walkLevelGap: 1.5, // metres: walk nodes further apart in height than this are on different levels (never joined)
+    homePois: 160, // homes (rowhouses and flats) picked on the Georgetown map for people to live in
   },
 
   time: {
@@ -206,10 +220,15 @@ const RAW = {
       'pickup',
     ],
     ownedAtStart: 1, // the first N cars at the starting taxi rank are yours; the others belong to locals
-    // drivable parked cars per 100 m of kerb, by the parking spot's road class (both kerbs counted), or 'lot'
-    // (car park spaces). On the grid city the bay boulevard is 'secondary' and every other street
-    // 'residential'. Keep 'secondary' before 'residential': the order is the order cars are placed in.
-    parkedCarsPer100m: { primary: 0.6, secondary: 0.6, tertiary: 0.3, residential: 0.07, service: 0, parkway: 0, lot: 2.5 },
+    // drivable parked cars per 100 m of kerb, by the kerbside parking spot's road class (both kerbs counted; each
+    // spot stands for kerbSlotSpacing metres). On the grid city the bay boulevard is 'secondary' and every other
+    // street 'residential' (keep those two values: the grid is unchanged). Georgetown: M St, Wisconsin, K St,
+    // Pennsylvania are 'primary'/'secondary', P/Q/R St and Water St 'tertiary', the rowhouse streets 'residential';
+    // the parkway and the freeway never have parking. Keep 'secondary' before 'residential': the order is the order
+    // cars are placed in.
+    // (Georgetown numbers are coarse until the density pass: every parked car costs draw calls like a driven one)
+    parkedCarsPer100m: { primary: 0.3, secondary: 0.6, tertiary: 0.12, residential: 0.07, service: 0, parkway: 0 },
+    lotFill: 0.03, // share of car park bays with a parked car (lots fill after the kerbs)
     kerbSlotSpacing: 13, // metres of kerb one kerbside parking spot stands for (matches the grid generator's spacing)
     parkingKerbGap: 1.3, // metres from the road edge to a parked car's centre line (grid boulevard spots)
     parkingJunctionGap: 10, // metres of kerb kept free next to each junction (grid boulevard spots)
@@ -248,6 +267,7 @@ const RAW = {
     swerveDistance: 16, // player car approaching faster than swerveSpeed within this triggers a swerve
     swerveSpeed: 14, // m/s
     swerveOffset: 2.4, // metres sideways when swerving
+    sideGap: 0.15, // metres: another car counts as in our path if the gap between the two bodies' sides is less than this
     spawnMinDistFromPlayer: 25,
   },
 
