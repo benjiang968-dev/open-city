@@ -410,7 +410,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         awning(grd, sx, sz, w, sw + 0.4, y0 + gH - 0.9, ac, striped);
       }
     }
-    // ---- physics: one oriented box over the footprint
+    // ---- physics: an oriented box when the footprint is a rectangle, else a prism of the footprint itself (a box
+    // around a skewed quad reaches over the sidewalk: an invisible wall)
     const w0 = walls[0];
     let hu = 0, hv = 0;
     for (const p of P) {
@@ -418,7 +419,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       hv = Math.max(hv, Math.abs((p[0] - cx) * w0.nx + (p[1] - cz) * w0.nz));
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
-    phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    if (4 * hu * hv <= footArea(P) * 1.01 + 0.5) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    else if (!phys.prism(P.flat(), yMin, top)) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
   }
 
   // -------------------------------------------------------------------------------------------- helpers

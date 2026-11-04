@@ -6,7 +6,7 @@ import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, densify, lerp, offsetLine, pointInPoly, SegGrid } from './geoDoc';
 import { lin, shade, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
-import { B, K, type GeoRaster } from './terrain';
+import { B, K, bakeAprons, type GeoRaster } from './terrain';
 
 const G = TUNING.geo;
 
@@ -16,6 +16,7 @@ const BANK_N = 2.6; // m of stone/grass bank on the north side of the canal
 const BANK_S = 5.6; // m on the south (river) side: coping + the towpath
 const BANK_ABOVE = 1.1; // m from canal water to the banks
 const APRON = 7.5; // m of terrain-coloured apron draped beyond the canal corridor (covers the terrain mesh hole edge)
+const APRON_DROP = 0.12; // m the apron sits below natural ground (so terrain triangles that do exist stay on top)
 /** Rock Creek water level (m) by z (south), from the spec's levels by latitude. */
 const CREEK_LEVELS: [number, number][] = [[-832.6, 11], [-466.3, 8], [-310.8, 6], [133.2, 2], [655, 0.5], [760, 0.2]];
 const CREEK_HALF = { north: 7, mouth: 12 };
@@ -125,26 +126,37 @@ export function rasterizeWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster) {
     }
   }
   h.set(t);
-  // canal corridor: bed, walls, banks; a hole in the terrain mesh
-  const P = W.canal;
+  // canal corridor: bed, walls, banks; a hole in the terrain mesh. Each cell takes its NEAREST segment of the same
+  // densified line the mesh is built from (buildWater), with the mesh's heights: bed = deeper pound of the segment,
+  // banks ramp from one pound's level to the next across the segment that holds a lock step.
+  const P = densify(W.canal, 4);
+  const best = new Map<number, number>(); // cell -> index into seg (nearest segment so far)
+  const seg: number[] = []; // per visit: d, t, side, i
   for (let i = 1; i < P.length; i++) {
     const a = P[i - 1], b = P[i];
     ras.forSegment(a[0], a[1], b[0], b[1], CANAL_HALF + BANK_S, (o, d, tt, side) => {
-      const x = lerp(a[0], b[0], tt);
-      // forSegment's side +1 is z- of a westward segment: the canal runs east->west, so +1 = north
-      const north = side > 0;
-      const lim = north ? CANAL_HALF + BANK_N : CANAL_HALF + BANK_S;
-      if (d > lim) return;
-      const lvl = W.canalLevelAt(x);
-      if (d <= CANAL_HALF) {
-        h[o] = lvl - G.canalDepth;
-        k[o] = (k[o] & ~K.PARK) | K.WATER | K.WALL;
-      } else {
-        h[o] = lvl + BANK_ABOVE;
-        k[o] = (k[o] & ~(K.WATER | K.PARK)) | K.WALK;
-      }
-      band[o] = B.HOLE;
+      const prev = best.get(o);
+      if (prev !== undefined && seg[prev] <= d) return;
+      best.set(o, seg.length);
+      seg.push(d, tt, side, i);
     });
+  }
+  for (const [o, q] of best) {
+    const d = seg[q], tt = seg[q + 1], side = seg[q + 2], i = seg[q + 3];
+    // nothing beyond the two ends of the line: the mesh has no end caps (the canal opens into Rock Creek / the edge)
+    if ((i === 1 && tt <= 0) || (i === P.length - 1 && tt >= 1)) continue;
+    // forSegment's side +1 is the right of travel; the canal runs east->west, so +1 = north (as offsetLine in buildWater)
+    const lim = side > 0 ? CANAL_HALF + BANK_N : CANAL_HALF + BANK_S;
+    if (d > lim) continue;
+    const lA = W.canalLevelAt(P[i - 1][0]), lC = W.canalLevelAt(P[i][0]);
+    if (d <= CANAL_HALF) {
+      h[o] = Math.max(lA, lC) - G.canalDepth;
+      k[o] = (k[o] & ~K.PARK) | K.WATER | K.WALL;
+    } else {
+      h[o] = lerp(lA, lC, tt) + BANK_ABOVE;
+      k[o] = (k[o] & ~(K.WATER | K.PARK)) | K.WALK;
+    }
+    band[o] = B.HOLE;
   }
 }
 
@@ -282,7 +294,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
         const C0: Pt = [lerp(e0[0], f0[0], u1), lerp(e0[1], f0[1], u1)], C1: Pt = [lerp(e1[0], f1[0], u1), lerp(e1[1], f1[1], u1)];
         const cx = (A0[0] + C1[0]) / 2, cz = (A0[1] + C1[1]) / 2;
         if (ras.kindAt(cx, cz) & K.WATER || ras.bandAt(cx, cz) === B.HOLE) continue;
-        const y = (p: Pt) => ras.heightAt(p[0], p[1]) - (ras.bandAt(p[0], p[1]) === B.NONE ? 0.12 : 0.36);
+        const y = (p: Pt) => ras.heightAt(p[0], p[1]) - (ras.bandAt(p[0], p[1]) === B.NONE ? APRON_DROP : 0.36);
         const ya0 = y(A0), yc0 = y(C0), yc1 = y(C1), ya1 = y(A1);
         const g = chunks.buf('ground', cx, cz);
         g.quad(A0[0], ya0, A0[1], C0[0], yc0, C0[1], C1[0], yc1, C1[1], A1[0], ya1, A1[1], shade(COL.grassBank, 0.96 + 0.04 * Math.sin(cx * 0.1)), 0, 1, 0);
@@ -290,6 +302,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
       }
     }
   }
+  bakeAprons(ras, APRON_DROP);
   {
     const m = new THREE.Mesh(canalWater.geometry(), canalMat);
     m.name = 'canal';
@@ -358,7 +371,15 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
       }
       prev = cur;
     }
-    phys.box(mx, (ya + yc) / 2 + 1.0, mz, L / 2, 0.6, 0.08, ux, uz); // side rails (approx) keep people on
+    // side rails keep people on: a thin slab per side and segment, following the arch (not one box down the middle)
+    for (let q = 1; q < wd.pts.length; q++) {
+      const p0 = wd.pts[q - 1], p1 = wd.pts[q], y0 = Math.min(wd.h[q - 1], wd.h[q]), y1 = Math.max(wd.h[q - 1], wd.h[q]);
+      const sl = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 2;
+      for (const sd of [-1, 1]) {
+        const cx = (p0[0] + p1[0]) / 2 + rx * (hw - 0.05) * sd, cz = (p0[1] + p1[1]) / 2 + rz * (hw - 0.05) * sd;
+        phys.box(cx, (y0 + y1 + 1.05) / 2, cz, sl + 0.02, (y1 + 1.05 - y0) / 2, 0.05, ux, uz);
+      }
+    }
   }
 
   // ---- Rock Creek water: a sloped ribbon a little wider than the cut (its edges hide under the banks)

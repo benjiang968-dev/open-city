@@ -78,7 +78,7 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
     const s0 = e.trimA, s1 = e.L - e.trimB;
     if (s1 - s0 < 0.05) continue;
     const X = sections(e, s0, s1);
-    // frontage strip: pave to the building line unless a lot, park, water or a building is there
+    // frontage strip: pave to the building line unless a lot, park or water is there
     for (const side of [-1, 1]) {
       const f = new Uint8Array(X.length);
       for (let i = 1; i < X.length; i++) {
@@ -86,7 +86,9 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
         const o = (e.hw + G.sidewalkWidth + FRONTAGE / 2) * side;
         const x = (p.x + q.x) / 2 + ((p.rx + q.rx) / 2) * o, z = (p.z + q.z) / 2 + ((p.rz + q.rz) / 2) * o;
         const kk = ras.kindAt(x, z);
-        f[i] = e.deck || kk & (K.BUILDING | K.WATER | K.PARK) || lots.some((l) => pointInPoly(x, z, l.pts)) ? 0 : 1;
+        // (a building there is fine: it stands on the paving, and without it a sliver of no ground opens between the
+        // back of the sidewalk and a facade that is less than FRONTAGE back)
+        f[i] = e.deck || kk & (K.WATER | K.PARK) || lots.some((l) => pointInPoly(x, z, l.pts)) ? 0 : 1;
       }
       if (side < 0) e.fillL = f; else e.fillR = f;
     }

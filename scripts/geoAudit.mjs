@@ -51,7 +51,13 @@ const report = await page.evaluate(() => {
   const rec = (name, x, z, err, note) => {
     const c = C(name);
     c.n++;
-    if (!Number.isFinite(err)) { c.miss++; return; }
+    if (!Number.isFinite(err)) {
+      c.miss++;
+      const k = cellKey(x, z);
+      const m = ((c.missCells ??= {})[k] ??= { n: 0, at: [r2(x), r2(z), note ?? ''] });
+      m.n++;
+      return;
+    }
     const a = Math.abs(err);
     c.sumAbs += a;
     if (a > c.max) { c.max = a; c.maxAt = [r2(x), r2(z), r2(err), note ?? '']; }
@@ -86,11 +92,18 @@ const report = await page.evaluate(() => {
       else name = k & K.PARK ? 'park' : k & K.WALK ? 'walk-on-terrain' : 'terrain';
       const h = g.heightAt(x, z);
       const y = groundAt(x, h + 1.2, z);
-      rec(name, x, z, y - h);
+      if (Number.isFinite(y)) rec(name, x, z, y - h);
+      else {
+        // no ground under it: inside a building / shelter box (raster edge, harmless) or a real hole
+        castDownShape(x, h + 1.2, z, o2);
+        rec(o2[1] === 1 && o2[0] > h - 0.01 ? name + ':inBox' : name + ':HOLE', x, z, NaN);
+      }
       // anything else standing here (boxes = buildings / shelters, cylinders = posts / trunks)
       castDownShape(x, h + 40, z, o2);
       if (o2[1] !== 6 && o2[0] > h + 0.5) {
-        if (o2[1] === 1 && (k & (K.WALK | K.LOT))) addOb(obst.boxOverWalk, x, z, `top ${r2(o2[0] - h)} m above`);
+        let nearB = false;
+        for (let dz = -1.5; dz <= 1.5 && !nearB; dz += 0.75) for (let dx = -1.5; dx <= 1.5; dx += 0.75) if (g.kindAt(x + dx, z + dz) & K.BUILDING) { nearB = true; break; }
+        if (o2[1] === 1 && (k & (K.WALK | K.LOT)) && !nearB) addOb(obst.boxOverWalk, x, z, `top ${r2(o2[0] - h)} m above`);
         if (o2[1] === 1 && (k & K.ROAD)) addOb(obst.boxOverRoad, x, z, `top ${r2(o2[0] - h)} m above`);
         if (o2[1] === 10 && b === 1) addOb(obst.cylOnRoad, x, z, `top ${r2(o2[0] - h)} m above`);
       }
@@ -325,7 +338,7 @@ const report = await page.evaluate(() => {
     const [cx, cz] = [P2.reduce((s, p) => s + p[0], 0) / P2.length, P2.reduce((s, p) => s + p[1], 0) / P2.length];
     if (road || walkProper > 1 || junction || lot > 1)
       bOver.push({ id: b.id, type: b.type, at: [r2(cx), r2(cz)], roadCells: road / 4, maxIntoRoad: r2(maxRoad), sidewalkCells: walkProper / 4, maxIntoSidewalk: r2(maxWalk), junctionOrRasterRoad: junction / 4, lotCells: lot / 4, deckCells: deck / 4 });
-    // physics box (same construction as facades.ts): first wall's axis, extents about the vertex mean
+    // physics box (same construction as facades.ts): first wall's axis, extents about the vertex mean (rectangles only)
     let w0 = null;
     for (let i = 0; i < P2.length; i++) {
       const p = P2[i], q = P2[(i + 1) % P2.length];
@@ -349,6 +362,8 @@ const report = await page.evaluate(() => {
     for (let i = 0, j = P2.length - 1; i < P2.length; j = i++) area += (P2[j][0] - P2[i][0]) * (P2[j][1] + P2[i][1]);
     area = Math.abs(area / 2);
     const boxArea = 4 * hu * hv;
+    // facades.ts uses a footprint prism (exact) when the box would be bigger than the footprint
+    if (boxArea > area * 1.01 + 0.5) continue;
     if (spillWalk > 2 || boxArea > area * 1.15 + 4)
       bBox.push({ id: b.id, type: b.type, at: [r2(cx), r2(cz)], verts: P2.length, area: Math.round(area), boxArea: Math.round(boxArea), spillM2: spill / 4, spillOverWalkableM2: spillWalk / 4 });
     void maxOut;
@@ -360,7 +375,8 @@ const report = await page.evaluate(() => {
   const summary = {};
   for (const [k, c] of Object.entries(cls)) {
     const cells = Object.entries(c.cells).sort((a, b) => b[1].n - a[1].n).slice(0, 15).map(([key, v]) => ({ cell: key, n: v.n, worst: v.at }));
-    summary[k] = { n: c.n, bad5cm: c.bad, bad15cm: c.bad15, miss: c.miss, meanAbsCm: r2((c.sumAbs / Math.max(1, c.n - c.miss)) * 100), maxM: r2(c.max), maxAt: c.maxAt, topCells: cells };
+    const missCells = Object.entries(c.missCells ?? {}).sort((a, b) => b[1].n - a[1].n).slice(0, 25).map(([key, v]) => ({ cell: key, n: v.n, at: v.at }));
+    summary[k] = { missCells, n: c.n, bad5cm: c.bad, bad15cm: c.bad15, miss: c.miss, meanAbsCm: r2((c.sumAbs / Math.max(1, c.n - c.miss)) * 100), maxM: r2(c.max), maxAt: c.maxAt, topCells: cells };
   }
   const obSum = {};
   for (const [k, m] of Object.entries(obst)) {

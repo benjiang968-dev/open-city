@@ -526,6 +526,9 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
         e.prof[k] = lerp(e.a.h, e.b.h, u * u * (3 - 2 * u));
         continue;
       }
+      // the plateaus under the junction surfaces are flat at the node height (lanes cross them at that height)
+      if (s <= tA) { e.prof[k] = e.a.h; continue; }
+      if (s >= e.L - tB) { e.prof[k] = e.b.h; continue; }
       const wA = s <= tA ? 1 : cosFall((s - tA) / lamA);
       const wB = s >= e.L - tB ? 1 : cosFall((e.L - tB - s) / lamB);
       e.prof[k] = S[k] + corrA * wA + corrB * wB;

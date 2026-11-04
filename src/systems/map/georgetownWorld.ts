@@ -455,40 +455,54 @@ function exportEdge(net: RoadNet, e: REdge): GeoRoadPoly {
   };
 }
 
-/** Spatial index over deck surfaces (road decks and walkable structures) for roadSurfaceAt / walkSurfaceAt. */
+/**
+ * Spatial index over deck surfaces (road decks and walkable structures) for roadSurfaceAt / walkSurfaceAt. Road decks
+ * cover the carriageway plus a sidewalk only on the sides that have one (raised by the kerb), so a query beside a
+ * deck that has no sidewalk on that side falls through to the ground below.
+ */
 function buildDeckIndex(net: RoadNet, walkDecks: { pts: Pt[]; hw: number; h: number[] }[]) {
-  // flat arrays: ax, az, bx, bz, ha, hb, hw, walkOnly
+  // flat arrays per segment: ax, az, bx, bz, ha, hb, carriageway half width, left extent, right extent, walkOnly
+  const N = 10;
   const S: number[] = [];
   const grid = new SegGrid(16);
+  const kerb = G.kerbHeight;
   for (const e of net.edges) {
     if (!e.deck) continue;
-    const X = sections(e, 0, e.L);
-    const hw = e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 0.3;
+    const X = sections(e, e.trimA, e.L - e.trimB);
     for (let i = 1; i < X.length; i++) {
-      const id = S.length / 8;
-      S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), hw, 0);
-      grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, hw);
+      const sm = (X[i - 1].s + X[i].s) / 2;
+      const sw = (side: number) => (side < 0 ? e.swL : e.swR) && !e.noSw.some((r) => r[0] === side && sm >= r[1] && sm <= r[2]);
+      const wl = e.hw + (sw(-1) ? G.sidewalkWidth : 0), wr = e.hw + (sw(1) ? G.sidewalkWidth : 0);
+      const id = S.length / N;
+      S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), e.hw, wl, wr, 0);
+      grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, Math.max(wl, wr) + 0.5);
     }
   }
   for (const w of walkDecks) {
     for (let i = 1; i < w.pts.length; i++) {
-      const id = S.length / 8;
-      S.push(w.pts[i - 1][0], w.pts[i - 1][1], w.pts[i][0], w.pts[i][1], w.h[i - 1], w.h[i], w.hw, 1);
+      const id = S.length / N;
+      S.push(w.pts[i - 1][0], w.pts[i - 1][1], w.pts[i][0], w.pts[i][1], w.h[i - 1], w.h[i], w.hw, w.hw, w.hw, 1);
       grid.add(w.pts[i - 1][0], w.pts[i - 1][1], w.pts[i][0], w.pts[i][1], id, w.hw);
     }
   }
   let cbRef: ((h: number) => void) | null = null;
-  let walkRef = false;
+  let walkRef = false, qx = 0, qz = 0;
   const visit = (_seg: number, id: number, d: number, t: number) => {
-    const o = id * 8;
-    if (d > S[o + 6]) return;
-    if (S[o + 7] === 1 && !walkRef) return;
-    cbRef!(S[o + 4] + (S[o + 5] - S[o + 4]) * t);
+    const o = id * N;
+    if (S[o + 9] === 1 && !walkRef) return;
+    // side of the query point: + right of travel (as roadMesh sections)
+    const right = (qx - S[o]) * -(S[o + 3] - S[o + 1]) + (qz - S[o + 1]) * (S[o + 2] - S[o]) > 0;
+    const lim = right ? S[o + 8] : S[o + 7];
+    if (d > lim + 0.05) return;
+    const h = S[o + 4] + (S[o + 5] - S[o + 4]) * t;
+    cbRef!(S[o + 9] === 0 && d > S[o + 6] ? h + kerb : h);
   };
   return {
     query(x: number, z: number, walk: boolean, cb: (h: number) => void) {
       cbRef = cb;
       walkRef = walk;
+      qx = x;
+      qz = z;
       grid.query(x, z, visit);
       cbRef = null;
     },

@@ -58,6 +58,8 @@ export class GeoRaster {
   t: Float32Array | null;
   k: Uint8Array;
   band: Uint8Array;
+  /** 1 where a terrain triangle covers the cell (set by buildTerrainMesh, dropped by bakeAprons). */
+  meshed: Uint8Array | null = null;
   constructor(x0: number, z0: number, x1: number, z1: number) {
     this.x0 = x0;
     this.z0 = z0;
@@ -287,16 +289,33 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
       if (above < 1.6) c = mixc(c, above < 0.4 ? COL.mud : COL.sand, clamp((1.6 - above) / 1.2, 0, 1));
       vc[v] = shade(c, 0.94 + 0.08 * noise);
     }
-  const keepTri = (a: number, b: number, c: number) => {
+  const band = ras.band, kind = ras.k, rnx = ras.nx;
+  // raster cells (local indices) inside the triangle that are natural ground (band NONE, not water)
+  const coversNatural = (i0: number, j0: number, tri: number, flip: number) => {
+    for (let dj = 0; dj <= st; dj++)
+      for (let di = 0; di <= st; di++) {
+        const u = di / st, v = dj / st;
+        const inT = flip ? (tri === 0 ? u <= v : u >= v) : tri === 0 ? u + v <= 1 : u + v >= 1;
+        if (!inT) continue;
+        const ii = i0 * st + di, jj = j0 * st + dj;
+        if (ii >= rnx || jj >= ras.nz) continue;
+        const o = jj * rnx + ii;
+        if (band[o] === B.NONE && !(kind[o] & K.WATER)) return true;
+      }
+    return false;
+  };
+  const keepTri = (a: number, b: number, c: number, i: number, j: number, tri: number, flip: number) => {
     const ba = vb[a], bb = vb[b], bc = vb[c];
     if (ba === B.HOLE || bb === B.HOLE || bc === B.HOLE) return false; // the canal corridor and its aprons cover this
-    if (ba === B.BUILDING && bb === B.BUILDING && bc === B.BUILDING) return false;
-    const covered = (q: number) => q === B.ROAD || q === B.FLAT || q === B.BUILDING;
-    if (covered(ba) && covered(bb) && covered(bc) && ba !== B.BUILDING) return false;
     // deep under the river / canal / creek water (opaque water hides it)
     if (vy[a] < -0.9 && vy[b] < -0.9 && vy[c] < -0.9) return false;
+    // fully under roads / sidewalks / buildings: hidden, unless it is the only ground over a strip of natural cells
+    // (a gap narrower than the 5 m mesh between a sidewalk and a building, an alley): then keep it (dipped)
+    const covered = (q: number) => q === B.ROAD || q === B.FLAT || q === B.BUILDING;
+    if (covered(ba) && covered(bb) && covered(bc)) return coversNatural(i, j, tri, flip);
     return true;
   };
+  const kept = new Uint8Array((nx - 1) * (nz - 1) * 2);
   let tris = 0;
   for (let j = 0; j + 1 < nz; j++)
     for (let i = 0; i + 1 < nx; i++) {
@@ -308,13 +327,40 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
       // alternate the diagonal for a less regular look
       const flip = (i + j) & 1;
       const T = flip ? [[v00, v01, v11, x0, z0, x0, z1, x1, z1], [v00, v11, v10, x0, z0, x1, z1, x1, z0]] : [[v00, v01, v10, x0, z0, x0, z1, x1, z0], [v10, v01, v11, x1, z0, x0, z1, x1, z1]];
-      for (const [a, b, c, ax, az, bx, bz, cx, cz] of T) {
-        if (!keepTri(a, b, c)) continue;
+      for (let t = 0; t < 2; t++) {
+        const [a, b, c, ax, az, bx, bz, cx, cz] = T[t];
+        if (!keepTri(a, b, c, i, j, t, flip)) continue;
+        kept[(j * (nx - 1) + i) * 2 + t] = 1;
         emitSmooth(buf, ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz, vc[a], vc[b], vc[c], nx, vy, st, ras.x0, ras.z0);
         pb.tri(ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz);
         tris++;
       }
     }
+  // Bake: natural cells take the height of the terrain triangle over them, so heightAt agrees with what is drawn and
+  // collided (the mesh is 5 m and dips under road bands; the 1 m raster alone sits up to 0.3 m above it). Cells with
+  // no terrain triangle (beside the canal corridor) are marked for the canal aprons (bakeAprons).
+  const meshed = new Uint8Array(ras.nx * ras.nz);
+  for (let jj = 0; jj < ras.nz; jj++) {
+    const j = Math.floor(jj / st);
+    if (j + 1 >= nz) continue;
+    for (let ii = 0; ii < rnx; ii++) {
+      const i = Math.floor(ii / st);
+      if (i + 1 >= nx) continue;
+      const o = jj * rnx + ii;
+      const u = (ii - i * st) / st, v = (jj - j * st) / st;
+      const flip = (i + j) & 1;
+      const t = flip ? (u <= v ? 0 : 1) : u + v <= 1 ? 0 : 1;
+      if (!kept[(j * (nx - 1) + i) * 2 + t]) continue;
+      meshed[o] = 1;
+      if (band[o] !== B.NONE || (kind[o] & K.WATER)) continue;
+      const v00 = j * nx + i, y00 = vy[v00], y10 = vy[v00 + 1], y01 = vy[v00 + nx], y11 = vy[v00 + nx + 1];
+      let y: number;
+      if (flip) y = t === 0 ? y00 + (y11 - y01) * u + (y01 - y00) * v : y00 + (y10 - y00) * u + (y11 - y10) * v;
+      else y = t === 0 ? y00 + (y10 - y00) * u + (y01 - y00) * v : y11 + (y11 - y01) * (u - 1) + (y11 - y10) * (v - 1);
+      hq[o] = Math.round(clamp(y, -300, 300) * 100);
+    }
+  }
+  ras.meshed = meshed;
   return tris;
 }
 
@@ -338,6 +384,18 @@ function emitSmooth(buf: import('./meshKit').MeshBuf, ax: number, ay: number, az
   const emit = (x: number, y: number, z: number, c: number) => { nrm(x, z); buf.vert(x, y, z, N[0], N[1], N[2], c); };
   if (up > 0) { emit(ax, ay, az, ca); emit(bx, by, bz, cb); emit(cx, cy, cz, cc); }
   else { emit(ax, ay, az, ca); emit(cx, cy, cz, cc); emit(bx, by, bz, cb); }
+}
+
+/**
+ * After the canal aprons are drawn (APRON_DROP below the raster where no terrain triangle covers the ground): natural
+ * cells without a terrain triangle take the apron height, so heightAt matches the apron collider there.
+ */
+export function bakeAprons(ras: GeoRaster, drop: number) {
+  const m = ras.meshed;
+  if (!m) return;
+  const band = ras.band, k = ras.k, hq = ras.hq, d = Math.round(drop * 100);
+  for (let o = 0; o < m.length; o++) if (!m[o] && band[o] === B.NONE && !(k[o] & K.WATER)) hq[o] -= d;
+  ras.meshed = null;
 }
 
 /** A coarse apron of land beyond the map edges so the world doesn't end in a cliff (no physics). */
