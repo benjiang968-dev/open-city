@@ -1819,3 +1819,44 @@ export async function geoplay(page, S) {
   });
   return out;
 }
+
+// Life on the streets (MAP=georgetown node scripts/shot.mjs x geolife): crowd density from the map. For each check the
+// game clock is held at an hour, the player stands on a pavement, the crowd settles for `settle` game seconds, then the
+// active people inside the same-size window (WINDOW m round the spot) are counted, with the F3 numbers (the density
+// target, the real-world head count it comes from, the active count) and the computed people per metre there.
+const WINDOW = 60;
+async function crowdAt(page, place, hour, settle = 40) {
+  return page.evaluate(([place, hour, settle, R]) => {
+    const w = window.__oc, c = w.city, run = window.__ocRun;
+    const p = typeof place === 'string' ? window.__mh.place(place) : place;
+    const n = c.walk.nodes[c.nearestWalk(p.x, p.z, p.y ?? NaN)];
+    if (w.player.vehicle) { w.input.pressed.add('KeyE'); run(0.3); }
+    w.player.body.setTranslation({ x: n.x, y: n.y + 1.2, z: n.z }, true);
+    w.dayNight.hour = hour;
+    for (let t = 0; t < settle; t += 5) { w.dayNight.hour = hour; run(5); }
+    w.dayNight.hour = hour;
+    window.__ocDensity.update();
+    const pd = w.pedDensity;
+    const inWin = w.peds.filter((q) => q.active && !q.hidden && Math.hypot(q.pos.x - n.x, q.pos.z - n.z) < R);
+    const arch = {};
+    for (const q of inWin) arch[q.archetype] = (arch[q.archetype] || 0) + 1;
+    const dens = window.__ocDensity.around(n.x, n.z, R);
+    return {
+      place: typeof place === 'string' ? place : `${Math.round(n.x)},${Math.round(n.z)}`, at: [Math.round(n.x), Math.round(n.z)], street: n.street, hour,
+      inWindow: inWin.length, arch, f3: { target: pd.target, real: Math.round(pd.real), active: pd.active, near: pd.near, budget: w.settings.pedBudget },
+      perMetre: +dens.perMetre.toFixed(4), metresPerPerson: dens.perMetre ? Math.round(1 / dens.perMetre) : null, pavementM: Math.round(dens.metres), shopsMax: dens.shops,
+    };
+  }, [place, hour, settle, WINDOW]);
+}
+
+export async function geolife(page, S) {
+  await S.start(page);
+  const out = {};
+  out.mstLunch = await crowdAt(page, 'M St at Wisconsin Ave', 12.5);
+  out.st29Lunch = await crowdAt(page, '29th St between N and P', 12.5);
+  out.mstNight = await crowdAt(page, 'M St at Wisconsin Ave', 2.5);
+  out.waterfrontEvening = await crowdAt(page, 'waterfront', 19.5);
+  out.waterfrontMorning = await crowdAt(page, 'waterfront', 9);
+  out.ratioLunch = out.st29Lunch.inWindow ? +(out.mstLunch.inWindow / out.st29Lunch.inWindow).toFixed(1) : null;
+  return out;
+}

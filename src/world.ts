@@ -23,6 +23,7 @@ import type { ItemsState } from './systems/worldItems';
 import type { InventoryState } from './systems/inventory';
 import type { CombatState } from './systems/combat';
 import type { CrowdRender } from './systems/crowdRender';
+import type { PedDensityState } from './systems/pedDensity';
 import type { HurtFxState } from './systems/hurtFx';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
@@ -66,6 +67,8 @@ export interface World {
   combat: CombatState;
   crowd: CrowdRender;
   hurtFx: HurtFxState;
+  /** Crowd density from the map: busyness per walk link, the target around the player (pedDensity.ts). */
+  pedDensity: PedDensityState;
   /** The map (road and walk graphs, places, lookups). Every system reads the city through this interface. */
   city: CityMap;
   player: PlayerState;

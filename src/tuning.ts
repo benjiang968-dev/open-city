@@ -283,10 +283,43 @@ const RAW = {
   },
 
   peds: {
-    maxPopulation: 60, // people created at load (the quality preset activates 30 / 45 / 60 of them)
-    recycleDistance: 230, // metres: walkers further than this (and out of view) are moved closer to you
-    respawnMin: 70, // metres from you where they reappear (always out of view)
-    respawnMax: 170,
+    maxPopulation: 60, // people created at load (the quality preset's pedBudget caps how many are active: 30 / 45 / 60)
+    recycleDistance: 140, // metres: walkers further than this (and out of view) are moved back near you, to a busy spot
+    // Crowd density from the map (pedDensity.ts): every walk link gets people-per-metre from the road beside it (or
+    // its path kind), the shops / cafes / restaurants / bars near it and the hour; the links around you add up to a
+    // real-world head count, which is scaled to the quality budget. People appear and leave out of view to follow it.
+    density: {
+      radius: 90, // metres around you whose pavements set the crowd target (about what you can see on a street)
+      shopRadius: 40, // metres: shops, cafes, restaurants and bars this close to a walk link make it busier
+      shopKinds: ['shop', 'cafe', 'diner', 'bar', 'market'], // place kinds that count as shops
+      perShop: 0.0125, // people per metre of pavement per shop nearby, at the peak of the 'shops' day curve
+      shopCap: 14, // shops counted at most per link (a busy block is busy, not absurd)
+      crossingShopShare: 0.5, // crossings get this share of their shop term (people cross, they don't linger)
+      roadSearch: 16, // metres: a sidewalk takes its road class from the nearest lane this close
+      // people per metre at the peak of the link's day curve: sidewalks by the class of the road beside them ('homes'
+      // curve), path kinds by kind (towpath and park paths: 'outdoor'; waterfront and plazas: 'waterfront')
+      base: { primary: 0.03, secondary: 0.026, tertiary: 0.03, residential: 0.035, service: 0.01, parkway: 0.004, towpath: 0.04, path: 0.022, waterfront: 0.12, plaza: 0.1, crossing: 0.008 },
+      // hourly multipliers of those peaks, hour 0..23 (linear in between)
+      hours: {
+        shops: [0.12, 0.07, 0.04, 0.03, 0.03, 0.05, 0.12, 0.25, 0.4, 0.5, 0.6, 0.8, 1, 1, 0.8, 0.7, 0.7, 0.75, 0.8, 0.8, 0.7, 0.5, 0.3, 0.2], // lunch rush, then dinner
+        homes: [0.06, 0.03, 0.02, 0.02, 0.03, 0.1, 0.35, 0.7, 0.8, 0.5, 0.45, 0.5, 0.55, 0.55, 0.5, 0.55, 0.7, 0.85, 0.9, 0.75, 0.55, 0.35, 0.2, 0.1], // commutes, quiet nights
+        waterfront: [0.1, 0.05, 0.03, 0.02, 0.02, 0.05, 0.15, 0.25, 0.3, 0.35, 0.45, 0.55, 0.7, 0.7, 0.65, 0.65, 0.7, 0.8, 0.95, 1, 1, 0.85, 0.5, 0.25], // evenings
+        outdoor: [0.02, 0.01, 0.01, 0.01, 0.02, 0.15, 0.6, 0.8, 0.6, 0.45, 0.45, 0.5, 0.6, 0.55, 0.5, 0.55, 0.7, 0.9, 1, 0.8, 0.45, 0.2, 0.08, 0.04], // early joggers, after-work walks
+      },
+      fullBudgetAt: { grid: 24, georgetown: 100 } as Record<string, number>, // by map: the real head count near you that fills the quality's whole pedBudget (Georgetown: M St at lunch); smaller counts scale down in proportion. The grid city has one place per block face (each standing for a row of shops), so its counts run ~4x lower: 24 keeps its downtown afternoon crowd at the full budget, as before
+      minActive: 4, // never fewer people than this near you, even at 4 am
+      updateInterval: 0.5, // seconds between recomputing the target around you
+      changesPerSecond: 4, // people added or removed per second at most while the crowd follows the target
+      slack: 1, // the crowd may be this many people off the target before anyone is added or removed
+      spawnMinDist: 28, // metres: new people appear at least this far from you, and out of view
+      despawnMinDist: 40, // metres: people leave only this far from you, and out of view
+      outdoorBoost: { towpath: 8, waterfront: 5, path: 3, plaza: 2 }, // dog walkers and joggers: spawn weight on these path kinds
+      outdoorRouteCost: 0.5, // dog walkers and joggers: towpath, waterfront and park paths cost this share of their length (routes prefer them)
+      outdoorTripChance: 0.6, // chance a dog walker or jogger heads for a towpath / waterfront spot rather than a park or pier
+      outdoorTripRange: 450, // metres: how far away that spot may be
+      errandChance: 0.55, // chance someone heads to a shop or cafe near them instead of their routine stop
+      errandRange: 150, // metres: how far that shop may be
+    },
     kidScale: 0.62, // size of children next to adults
     capsuleRange: 35, // metres: people's collision capsules are only active this close to you
     dogBarkDistance: 7, // metres: dogs bark at you when you're this close

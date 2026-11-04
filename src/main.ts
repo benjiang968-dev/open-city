@@ -15,6 +15,7 @@ import { createHud, showHud, updateHud } from './systems/hud';
 import { createDebug, updateDebug } from './systems/debug';
 import { spawnTraffic, updateTraffic, syncTraffic } from './systems/traffic';
 import { spawnPeds, updatePeds } from './systems/pedestrians';
+import { createPedDensity, densityAround, updatePedDensity } from './systems/pedDensity';
 import { updateNpcMemory } from './systems/npcMemory';
 import { createPolice, spawnPolicePool, updatePolice, drivePolice, syncPolice } from './systems/police';
 import { JobManager } from './systems/economy/jobManager';
@@ -91,6 +92,7 @@ async function boot() {
   scatterItems(w);
   spawnTraffic(w);
   spawnPolicePool(w);
+  w.pedDensity = createPedDensity(w); // crowd density from the map (shops, road class, time of day)
   spawnPeds(w);
   assignCarOwners(w); // every parked car that isn't yours belongs to someone (or nobody)
   w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
@@ -131,6 +133,7 @@ async function boot() {
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
+  (window as unknown as { __ocDensity: unknown }).__ocDensity = { around: (x: number, z: number, r: number) => densityAround(w, x, z, r), update: () => updatePedDensity(w, 0, true) };
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {
