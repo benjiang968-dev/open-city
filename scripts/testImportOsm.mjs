@@ -2,7 +2,7 @@
 // Writes only to a temp folder (never src/data).   Usage: node scripts/testImportOsm.mjs [outDir]
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -63,6 +63,9 @@ check('business and building names are dropped, street/water/park names kept', (
   }
   for (const p of doc.pois) assert.equal(p.name, undefined);
   for (const b of doc.buildings) assert.equal(b.name, undefined);
+  // A drive-through and a parking aisle carry business names even though they contain a street word.
+  assert.equal(doc.roads.find((r) => r.id === 'w160').name, null, 'drive-through name dropped');
+  assert.equal(doc.roads.find((r) => r.id === 'w161').name, null, 'parking-aisle name dropped');
 });
 
 check('projection: x east, z south, distances match haversine within 0.5%', () => {
@@ -203,5 +206,19 @@ if (names) {
     assert.ok(names.POI_FALLBACK.shop.includes(names.poiName('shop=no_such_value', 'n1')));
   });
 }
+
+check('a cut-off download or an Overpass error fails without writing anything', () => {
+  const bad = [
+    ['cut.osm', fixture.slice(0, fixture.indexOf('<way id="140">'))],
+    ['remark.osm', fixture.replace('</osm>', '<remark> runtime error: Query timed out in "query" at line 3 after 301 seconds. </remark>\n</osm>')],
+  ];
+  for (const [name, xml] of bad) {
+    const inp = join(outDir, name), o = join(outDir, `${name}.json`);
+    writeFileSync(inp, xml);
+    const r = spawnSync(process.execPath, ['scripts/importOsm.mjs', inp, '--out', o], { encoding: 'utf8' });
+    assert.equal(r.status, 1, `${name} exits 1`);
+    assert.ok(!existsSync(o), `${name} writes no output`);
+  }
+});
 
 console.log(`${checks} checks passed`);

@@ -125,6 +125,10 @@ const PROP_KINDS = [
 ];
 /** Names on service roads, paths and bridge outlines are kept only if they look like a street or trail name. */
 const STREET_WORD = /\b(street|st|place|pl|alley|aly|avenue|ave|road|rd|lane|ln|court|ct|way|drive|dr|terrace|ter|circle|cir|parkway|pkwy|freeway|fwy|expressway|bridge|row|walk|mews|trail|towpath|path|steps|boulevard|blvd|highway|hwy|square|sq|crescent|close|esplanade|promenade|tunnel|ramp|nw|ne|sw|se)\b/i;
+/** Names that belong to a business even when they contain a street word ("Burger Barn Drive-Thru", "Mart Parking Lane"). */
+const BUSINESS_WORD = /drive[- ]?th(ru|rough)|\bparking\b|\bgarage\b/i;
+/** Service roads of these kinds belong to a business or a car park: their names are never kept. */
+const UNNAMED_SERVICE = new Set(['drive-through', 'parking_aisle', 'driveway']);
 
 // =================================================================================================== main
 const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -194,6 +198,10 @@ async function main() {
   const osm = await parseOsmFile(input);
   const tParse = performance.now();
   if (osm.n === 0) die(`${input} has no <node> elements; is it OSM XML?`);
+  // A cut-off download or an Overpass timeout would otherwise write a half-empty map over the good one.
+  if (!osm.complete) die(`${input} ends before </osm>, so the download looks cut off. Download it again (see data/osm/README.md).`);
+  const failed = osm.remarks.find((r) => /error|timed out|out of memory/i.test(r));
+  if (failed) die(`${input} holds an Overpass error, so its data is incomplete: ${failed}\n  Download it again (see data/osm/README.md).`);
   // Convert; if the file comes out over the size target, simplify harder (up to 4x) before giving up with a warning.
   let res, text;
   for (const k of args.simplify ? [args.simplify] : [1, 2, 4]) {
@@ -287,7 +295,7 @@ async function parseOsmFile(path) {
 
   const osm = {
     index: new Map(), lat: new Float64Array(1 << 16), lon: new Float64Array(1 << 16), n: 0,
-    nodeTags: new Map(), ways: [], rels: [], bounds: null, osmBase: null, generator: null, remarks: [],
+    nodeTags: new Map(), ways: [], rels: [], bounds: null, osmBase: null, generator: null, remarks: [], complete: false,
   };
   const addNode = (id, lat, lon) => {
     if (osm.n === osm.lat.length) {
@@ -318,6 +326,7 @@ async function parseOsmFile(path) {
   const onTag = (close, name, attrStr, buf, start, end) => {
     if (close) {
       if (name === 'node' || name === 'way' || name === 'relation') finish();
+      else if (name === 'osm') osm.complete = true;
       else if (name === 'remark' && remarkStart >= 0) osm.remarks.push(decodeXml(buf.slice(remarkStart, start).trim()));
       return;
     }
@@ -887,7 +896,7 @@ function buildingHeight(t) {
   if (lv > 0) return { h: lv * LEVEL_HEIGHT + (rl > 0 ? rl * ROOF_LEVEL_HEIGHT : 0), src: 'levels' };
   return { h: BUILDING_TYPE_HEIGHT[t.building] ?? DEFAULT_BUILDING_HEIGHT, src: 'estimate' };
 }
-const streetName = (name) => (name && STREET_WORD.test(name) ? name : null);
+const streetName = (name) => (name && STREET_WORD.test(name) && !BUSINESS_WORD.test(name) ? name : null);
 
 // ================================================================================================ convert
 function convert(osm, crop, inputPath, k = 1) {
@@ -1051,13 +1060,15 @@ function convert(osm, crop, inputPath, k = 1) {
       });
       continue;
     }
+    // Service roads and paths keep a name only if it reads like a street or trail; drive-throughs, parking aisles
+    // and driveways never keep one (those names are usually a business's).
+    const name = !isRoad || hw === 'service' ? (UNNAMED_SERVICE.has(t.service) ? null : streetName(t.name)) : t.name || null;
     const pieces = clipPolyline(refsToPts(w.refs, true), rect);
     pieces.forEach((pts, i) => {
       const o = outLine(pts, SIMPLIFY_LINE * k);
       if (!o) return;
       const part = pieces.length > 1 ? { part: i } : {};
       if (isRoad) {
-        const name = hw === 'service' ? streetName(t.name) : t.name || null;
         const road = {
           id, name, highway: hw, lanes: Number.parseInt(t.lanes, 10) || null, oneway: parseOneway(t), bridge, tunnel, layer,
           junction: t.junction || null, maxspeed: parseSpeedKmh(t.maxspeed), ...part, pts: o,
@@ -1071,7 +1082,7 @@ function convert(osm, crop, inputPath, k = 1) {
         roadPieces.push({ id, t, pts, layer, bridge, tunnel, name: road.name });
       } else {
         const kind = hw === 'footway' && (t.footway === 'sidewalk' || t.footway === 'crossing') ? t.footway : hw;
-        const f = { id, kind, name: streetName(t.name), ...part, pts: o };
+        const f = { id, kind, name, ...part, pts: o };
         if (bridge) f.bridge = 1;
         if (tunnel) f.tunnel = 1;
         if (layer) f.layer = layer;
@@ -1079,7 +1090,7 @@ function convert(osm, crop, inputPath, k = 1) {
         footways.push(f);
         footPieces.push({ id, f, t, pts, bridge });
       }
-      if (bridge) bridges.push({ id, src: isRoad ? 'road' : 'path', name: isRoad && hw !== 'service' ? t.name || null : streetName(t.name), layer, ...part, pts: o });
+      if (bridge) bridges.push({ id, src: isRoad ? 'road' : 'path', name, layer, ...part, pts: o });
     });
   }
 

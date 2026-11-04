@@ -6,7 +6,7 @@
 export const POI_NAMES: Record<string, readonly string[]> = {
   // Food and drink
   'amenity=cafe': ['Daily Grind', 'Steam & Saucer', 'Crema Corner', 'Half Past Latte', 'Kettle & Crumb', 'The Slow Pour'],
-  'amenity=restaurant': ['Copper Spoon', 'The Long Table', 'Brick & Basil', 'Saltgrass Kitchen', 'Lantern House', 'Fennel & Fig'],
+  'amenity=restaurant': ['Copper Spoon', 'The Long Table', 'Brick & Basil', 'Pewter Fork Kitchen', 'Lantern House', 'Fennel & Fig'],
   'amenity=fast_food': ['Feast Food', 'Bun Voyage', 'Quickbite Counter', 'Snack Attack Grill', 'Hot Paper Bag'],
   'amenity=bar': ['The Tipsy Heron', 'Last Orders', 'The Copper Still', 'Velvet Hour', 'Ninth Pour'],
   'amenity=pub': ['The Crooked Kettle', 'Ploughshare Arms', 'The Lamp & Ladder', 'The Old Tow Rope', 'The Muddy Boot'],
@@ -49,11 +49,11 @@ export const POI_NAMES: Record<string, readonly string[]> = {
   'shop=electronics': ['Circuit Corner', 'Volt Box', 'Plug & Play', 'Diode Depot'],
   'shop=mobile_phone': ['Signal Bar', 'Pocket Tech', 'Screen Savers', 'Ringtone'],
   'shop=bicycle': ['Spoke & Chain', 'Two Wheels', 'Pedal Pushers', 'Gear Ratio'],
-  'shop=sports': ['Fieldhouse Sports', 'Final Whistle', 'Trackside Sports', 'Kit Bag'],
+  'shop=sports': ['Fieldhouse Sports', 'Final Whistle', 'Trackside Sports', 'Locker Twelve'],
   'shop=outdoor': ['Trailhead Outfitters', 'Basecamp', 'Ridge & River', 'Tent Pole'],
   'shop=toys': ['Toy Chest', 'Spinning Top', 'Marble Jar', 'Play Box'],
   'shop=music': ['Vinyl Groove', 'B-Side Records', 'Treble Clef', 'Needle Drop'],
-  'shop=pet': ['Paws & Whiskers', 'Fetch', 'Tail Wag', 'Kibble Corner'],
+  'shop=pet': ['Paws & Whiskers', 'Biscuit Tin Pets', 'Tail Wag', 'Kibble Corner'],
   'shop=tobacco': ['Ember & Leaf', 'Smoke Ring', 'Pipe Dream', 'Ash & Oak'],
   'shop=dry_cleaning': ['Fresh Press', 'Crease Lightning', 'Spotless', 'Steam Team'],
   'shop=laundry': ['Spin Cycle', 'Suds Club', 'Clean Slate Laundry', 'Tumble'],
@@ -61,7 +61,7 @@ export const POI_NAMES: Record<string, readonly string[]> = {
   'shop=variety_store': ['Everything Shelf', 'Bits & Bobs', 'Dollar Drawer', 'Odds & Ends'],
   'shop=department_store': ['Hartwell & Finch', 'The Emporium', 'Five Floors', 'Grand Arcade'],
   // Vehicles
-  'shop=car': ['Gearshift Motors', 'Open Road Autos', 'Chrome & Co. Motors', 'Mileage Motors', "Dealer's Choice Cars"],
+  'shop=car': ['Gearshift Motors', 'Long Haul Autos', 'Chrome & Co. Motors', 'Mileage Motors', "Dealer's Choice Cars"],
   'shop=car_repair': ['Torque & Sons Auto', 'Wrench Works', 'Busted Bumper Garage', 'Spark & Piston', 'Axle Alley'],
   'shop=car_parts': ['Part Bin', 'Bolt Bucket', 'Spare Parts Depot', 'Carburettor Corner'],
   'amenity=fuel': ['Pump & Go', 'Fillwell', 'Tankside Fuel', 'Octane Corner'],
@@ -92,7 +92,7 @@ export const POI_NAMES: Record<string, readonly string[]> = {
   'amenity=arts_centre': ['The Kiln', 'Open Studio', 'Workshop Gallery', 'Assembly Rooms'],
   'amenity=community_centre': ['Neighbourhood Hall', 'The Commons', 'Rowhouse Community Centre', 'Gathering Place'],
   // Tourism
-  'tourism=hotel': ['Lamplighter Hotel', 'Tidewater Suites', 'Cobblestone Inn', 'The Brass Lantern', 'Hotel Meridiem'],
+  'tourism=hotel': ['Lamplighter Hotel', 'Tidewater Suites', 'Wrenfield Inn', 'The Brass Lantern', 'The Larkmoor Hotel'],
   'tourism=guest_house': ['Ivy Door Guest House', 'Rowhouse Rooms', 'The Spare Room', 'Blue Shutter B&B'],
   'tourism=museum': ['Museum of Small Things', 'Hall of Curiosities', 'River Heritage Museum', 'The Ironworks Gallery', 'Cabinet of Maps'],
   'tourism=gallery': ['The White Wall', 'Frame & Hang', 'Gallery Nine', 'Sketchbook Gallery'],

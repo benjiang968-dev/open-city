@@ -41,6 +41,8 @@ The script prints:
 - how many roads, footways, buildings, POIs, water areas, waterways, parks, car parks, bridges and street props it
   kept, and whether it found the C&O Canal and its towpath;
 - the output file size (target under 3 MB; it simplifies harder by itself if needed);
+- if the file is cut off (no closing `</osm>`) or holds an Overpass error, it stops without writing anything, so
+  download it again;
 - **suspicious areas** to check on openstreetmap.org, each with lat/lon and a link: buildings that sit on a road,
   streets with no sidewalk tagging nearby, and areas (like the Potomac) cut by the download box, where the script
   had to guess which side is water.

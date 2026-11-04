@@ -6,7 +6,7 @@
      outside the crop); a cafe with a real-looking name; a complete pond multipolygon with an island; a river
      multipolygon cut by the download box (one member missing) along the south-west corner; a canal (centre line
      plus a 12 m wide water area that also runs out of the download box) with an unnamed path beside it and a
-     footbridge over it; a park and a car park. -->
+     footbridge over it; a park and a car park; a drive-through and a parking aisle named after businesses. -->
 <osm version="0.6" generator="open-city fixture">
   <bounds minlat="38.8990" minlon="-77.0740" maxlat="38.9140" maxlon="-77.0480"/>
   <node id="1" lat="38.9014953" lon="-77.0723746"/>
@@ -83,6 +83,10 @@
   <node id="85" lat="38.9009548" lon="-77.0697230"/>
   <node id="86" lat="38.9012250" lon="-77.0697230"/>
   <node id="87" lat="38.9012250" lon="-77.0700689"/>
+  <node id="160" lat="38.9005044" lon="-77.0683395"/>
+  <node id="161" lat="38.9005044" lon="-77.0678784"/>
+  <node id="162" lat="38.9003242" lon="-77.0683395"/>
+  <node id="163" lat="38.9003242" lon="-77.0676478"/>
   <way id="101">
     <nd ref="1"/>
     <nd ref="2"/>
@@ -228,6 +232,20 @@
     <tag k="amenity" v="parking"/>
     <tag k="parking" v="surface"/>
     <tag k="name" v="Fixture Lot"/>
+  </way>
+  <way id="160">
+    <nd ref="160"/>
+    <nd ref="161"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="drive-through"/>
+    <tag k="name" v="Blue Heron Drive-Thru"/>
+  </way>
+  <way id="161">
+    <nd ref="162"/>
+    <nd ref="163"/>
+    <tag k="highway" v="service"/>
+    <tag k="service" v="parking_aisle"/>
+    <tag k="name" v="Fixture Lot Lane"/>
   </way>
   <relation id="201">
     <member type="way" ref="122" role="outer"/>
