@@ -795,9 +795,11 @@ const RAW = {
   quality: {
     default: 'medium', // preset used until the player picks one in the pause menu
     // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player
-    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, pedBudget: 30 },
-    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1024, pedBudget: 45 },
-    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, pedBudget: 60 },
+    // textureRes = px per side of every baked surface map (procedural PBR, render/texBake.ts); anisotropy = texture
+    // filtering samples; textureDetail 1 = normal maps and baked occlusion on, 0 = off (cheaper pixels)
+    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, pedBudget: 30, textureRes: 256, anisotropy: 2, textureDetail: 0 },
+    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1024, pedBudget: 45, textureRes: 512, anisotropy: 8, textureDetail: 1 },
+    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, pedBudget: 60, textureRes: 1024, anisotropy: 16, textureDetail: 1 },
   },
 
   debug: {

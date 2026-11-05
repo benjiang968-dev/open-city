@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { GROUPS } from '../../physicsGroups';
+import { inferSurface } from '../render/palette';
 
 // ------------------------------------------------------------------------------------------ colours
 /** sRGB hex (0xRRGGBB) to packed LINEAR bytes, which is what three.js expects in vertex colours. */
@@ -14,17 +15,17 @@ for (let i = 0; i < 256; i++) {
 export function lin(hex: number): number {
   return (S2L[(hex >> 16) & 255] << 16) | (S2L[(hex >> 8) & 255] << 8) | S2L[hex & 255];
 }
-/** Scale a packed linear colour (f > 1 brightens, clamped). */
+/** Scale a packed linear colour (f > 1 brightens, clamped). Keeps the surface tag (render/surfaces.ts). */
 export function shade(c: number, f: number): number {
   const r = Math.min(255, Math.round(((c >> 16) & 255) * f));
   const g = Math.min(255, Math.round(((c >> 8) & 255) * f));
   const b = Math.min(255, Math.round((c & 255) * f));
-  return (r << 16) | (g << 8) | b;
+  return (c & 0x7f000000) | (r << 16) | (g << 8) | b;
 }
-/** Mix two packed linear colours. */
+/** Mix two packed linear colours (the surface tag of `a` is kept). */
 export function mixc(a: number, b: number, t: number): number {
   const m = (s: number) => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t);
-  return (m(16) << 16) | (m(8) << 8) | m(0);
+  return (a & 0x7f000000) | (m(16) << 16) | (m(8) << 8) | m(0);
 }
 
 // ------------------------------------------------------------------------------------------ mesh buffer
@@ -38,6 +39,8 @@ export class MeshBuf {
   col: Uint8Array;
   uv: Float32Array | null;
   ex: Uint8Array | null;
+  /** Surface id per vertex (top byte of the colour, render/surfaces.ts surf()): the aSurf attribute. */
+  srf: Uint8Array;
   n = 0;
   /** Current facade attributes (tileA, tileB, altBay, seed) for buffers that carry them. */
   exA = 0; exB = 0; exC = 255; exD = 0;
@@ -47,6 +50,7 @@ export class MeshBuf {
     this.pos = new Float32Array(cap * 3);
     this.nor = new Int8Array(cap * 3);
     this.col = new Uint8Array(cap * 3);
+    this.srf = new Uint8Array(cap);
     this.uv = withUv ? new Float32Array(cap * 2) : null;
     this.ex = withEx ? new Uint8Array(cap * 4) : null;
   }
@@ -57,6 +61,7 @@ export class MeshBuf {
     const p = new Float32Array(cap * 3); p.set(this.pos); this.pos = p;
     const n = new Int8Array(cap * 3); n.set(this.nor); this.nor = n;
     const c = new Uint8Array(cap * 3); c.set(this.col); this.col = c;
+    const sf = new Uint8Array(cap); sf.set(this.srf); this.srf = sf;
     if (this.uv) { const u = new Float32Array(cap * 2); u.set(this.uv); this.uv = u; }
     if (this.ex) { const e = new Uint8Array(cap * 4); e.set(this.ex); this.ex = e; }
   }
@@ -68,6 +73,7 @@ export class MeshBuf {
     this.pos[o] = x; this.pos[o + 1] = y; this.pos[o + 2] = z;
     this.nor[o] = Math.round(nx * 127); this.nor[o + 1] = Math.round(ny * 127); this.nor[o + 2] = Math.round(nz * 127);
     this.col[o] = (c >> 16) & 255; this.col[o + 1] = (c >> 8) & 255; this.col[o + 2] = c & 255;
+    this.srf[i] = (c >>> 24) & 127;
     if (this.uv) {
       if (this.uvFn) this.uvFn(x, y, z, this.uv, i * 2);
       else { this.uv[i * 2] = u; this.uv[i * 2 + 1] = v; }
@@ -152,12 +158,27 @@ export class MeshBuf {
     g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, n * 3), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(this.nor.slice(0, n * 3), 3, true));
     g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, n * 3), 3, true));
+    g.setAttribute('aSurf', new THREE.BufferAttribute(surfaces(this.srf, this.col, n), 1, false));
     if (this.uv) g.setAttribute('uv', new THREE.BufferAttribute(this.uv.slice(0, n * 2), 2));
     if (this.ex) g.setAttribute('aFac', new THREE.BufferAttribute(this.ex.slice(0, n * 4), 4, false));
     g.computeBoundingSphere();
     g.computeBoundingBox();
     return g;
   }
+}
+
+/** Surface ids for n vertices: the tagged ones as given, untagged ones inferred from their palette colour. */
+function surfaces(srf: Uint8Array, col: Uint8Array, n: number): Uint8Array {
+  const out = srf.slice(0, n);
+  const cache = new Map<number, number>();
+  for (let i = 0; i < n; i++) {
+    if (out[i]) continue;
+    const c = (col[i * 3] << 16) | (col[i * 3 + 1] << 8) | col[i * 3 + 2];
+    let s = cache.get(c);
+    if (s === undefined) cache.set(c, (s = inferSurface(c)));
+    out[i] = s;
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------------------------------ render chunks

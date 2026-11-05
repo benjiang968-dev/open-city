@@ -4,6 +4,7 @@
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, pointInPoly } from './geoDoc';
 import { lin, mixc, shade, type RenderChunks, type PhysChunks } from './meshKit';
+import { SURF, surf } from '../render/surfaces';
 
 /** Kind flags stored per 1 m cell. */
 export const K = {
@@ -35,17 +36,17 @@ const BAND_DIP = 0.3; // m the terrain mesh sits below road/sidewalk surfaces
 const BLEND_CELL = 4; // m, coarse grid used to blend terrain into road bands
 const BLEND_RADIUS = 4; // coarse cells (box blur radius, applied twice)
 const COL = {
-  grass: lin(0x7fae5a),
-  grassDry: lin(0x9db467),
-  park: lin(0x6aa64c),
-  cemetery: lin(0x5f9446),
-  yard: lin(0x7ea558),
-  earth: lin(0x8a7357),
-  mud: lin(0x7d7158),
-  sand: lin(0xc9b98f),
-  bed: lin(0x5d6a55),
-  outer: lin(0x6f9650),
-  outerFar: lin(0x56794a),
+  grass: surf(SURF.TERRAIN, lin(0x7fae5a)),
+  grassDry: surf(SURF.TERRAIN, lin(0x9db467)),
+  park: surf(SURF.TERRAIN, lin(0x6aa64c)),
+  cemetery: surf(SURF.TERRAIN, lin(0x5f9446)),
+  yard: surf(SURF.TERRAIN, lin(0x7ea558)),
+  earth: surf(SURF.TERRAIN, lin(0x8a7357)),
+  mud: surf(SURF.TERRAIN, lin(0x7d7158)),
+  sand: surf(SURF.TERRAIN, lin(0xc9b98f)),
+  bed: surf(SURF.TERRAIN, lin(0x5d6a55)),
+  outer: surf(SURF.TERRAIN, lin(0x6f9650)),
+  outerFar: surf(SURF.TERRAIN, lin(0x56794a)),
 };
 
 export class GeoRaster {

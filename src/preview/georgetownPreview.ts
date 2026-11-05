@@ -8,6 +8,8 @@ import { createDayNight, updateDayNight } from '../systems/dayNight';
 import { buildGeorgetownWorld, type GeoQuality, type GeoWorld } from '../systems/map/georgetownWorld';
 import type { GeoDoc } from '../systems/map/geoDoc';
 import type { World } from '../world';
+import { bakeLook, createLook } from '../systems/render/look';
+import { createTexSheet } from '../systems/render/texSheet';
 
 type View = { pos: [number, number, number]; look: [number, number, number]; hour: number; fov: number; abs?: boolean; deck?: boolean };
 /** Named camera views (x, z are map metres; y is metres above the ground there unless abs). */
@@ -81,11 +83,14 @@ async function boot() {
   const quality = (['low', 'medium', 'high'].includes(params.get('quality') ?? '') ? params.get('quality') : 'medium') as GeoQuality;
   const seed = Number(params.get('seed') ?? TUNING.world.defaultSeed) || TUNING.world.defaultSeed;
   const dn = createDayNight(scene);
-  const geo: GeoWorld = buildGeorgetownWorld(scene, RAPIER, physics, doc, { seed, quality });
+  const look = createLook(quality);
+  bakeLook(look, renderer, quality);
+  const geo: GeoWorld = buildGeorgetownWorld(scene, RAPIER, physics, doc, { seed, quality, look });
   document.getElementById('loading')!.remove();
   const SHADOW = { low: [false, 512], medium: [true, 1024], high: [true, 2048] } as const;
   const applyQ = (q: GeoQuality) => {
     geo.setQuality(q);
+    bakeLook(look, renderer, q);
     const [on, size] = SHADOW[q];
     const changed = renderer.shadowMap.enabled !== on;
     renderer.shadowMap.enabled = on;
@@ -99,7 +104,10 @@ async function boot() {
 
   // a fake World with only what updateDayNight reads
   const target = new THREE.Object3D();
-  const fake = { dayNight: dn, player: { mesh: target, vehicle: null }, camera, scene, renderer, city: geo } as unknown as World;
+  const fake = { dayNight: dn, player: { mesh: target, vehicle: null }, camera, scene, renderer, city: geo, look } as unknown as World;
+  // texture sheet (debug): every baked layer, albedo above normals; ?texsheet=1 or __geo.texSheet(true)
+  const sheet = createTexSheet(look);
+  let showSheet = params.get('texsheet') === '1';
   let hour = 15;
   const state = { yaw: 0, pitch: 0, view: 'aerial' };
   const setCam = (px: number, py: number, pz: number, lx: number, ly: number, lz: number) => {
@@ -177,7 +185,8 @@ async function boot() {
     updateDayNight(fake, 0);
     geo.update(now / 1000, camera);
     renderer.info.reset();
-    renderer.render(scene, camera);
+    if (showSheet) renderer.render(sheet.scene, sheet.camera);
+    else renderer.render(scene, camera);
     perf.calls = renderer.info.render.calls;
     perf.tris = renderer.info.render.triangles;
     perf.cpuMs = perf.cpuMs * 0.9 + (performance.now() - t0) * 0.1;
@@ -218,6 +227,8 @@ async function boot() {
   (window as unknown as { __geo: unknown }).__geo = {
     ready: true,
     stats: geo.stats,
+    look,
+    texSheet: (on: boolean) => { showSheet = on; },
     geo,
     doc,
     castDown,

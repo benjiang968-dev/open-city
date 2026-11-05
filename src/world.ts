@@ -29,6 +29,7 @@ import type { CrowdRender } from './systems/crowdRender';
 import type { PedDensityState } from './systems/pedDensity';
 import type { ParkedState } from './systems/parkedCars';
 import type { HurtFxState } from './systems/hurtFx';
+import type { Look } from './systems/render/look';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -64,6 +65,8 @@ export interface World {
   cam: CameraState;
   dayNight: DayNightState;
   weather: WeatherState;
+  /** Baked surface maps and the uniforms every world material shares (render/look.ts). */
+  look: Look;
   prof: Profiler;
   settings: SettingsState;
   itemsState: ItemsState;

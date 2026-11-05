@@ -44,6 +44,7 @@ import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtFx';
+import { createLook, bakeLook } from './systems/render/look';
 
 async function boot() {
   await RAPIER.init();
@@ -79,9 +80,12 @@ async function boot() {
     prof: new Profiler(), settings: createSettings(), police: createPolice(), jobs: new JobManager(), audio: createAudio(), dialogue: new ScriptedProvider(),
   } as unknown as World;
   w.dayNight = createDayNight(scene);
+  // procedural PBR surface maps, baked on the GPU before any world material is built (render/texBake.ts)
+  w.look = createLook(w.settings.quality);
+  bakeLook(w.look, renderer, w.settings.quality);
   applyQuality(w, w.settings.quality, true);
   const tMap = performance.now();
-  w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality); // ?map= picks the map; the seed never does
+  w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality, w.look); // ?map= picks the map; the seed never does
   w.city.setQuality?.(w.settings.quality);
   const mapMs = performance.now() - tMap;
   w.weather = createWeather(w);
