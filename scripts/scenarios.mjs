@@ -2265,7 +2265,7 @@ export async function fallthrough(page) {
     const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     // below: the feet sank under the collider they stand on; mapLow / mapHigh: that collider is more than 5 cm under /
     // over map.heightAt there; hover: the feet rest more than 0.25 m above it (a capsule on a slope rests a little up)
-    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, mapLow: 0, mapHigh: 0, hover: 0, ledge: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
+    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, raised: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, mapLow: 0, mapHigh: 0, hover: 0, ledge: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
     const examples = { below: [], mapLow: [], mapHigh: [], hover: [], ledge: [], insideBuilding: [], notSettled: [], onProp: {} };
     let maxRest = 0;
     const capsule = new R.Capsule(hh, rad);
@@ -2281,14 +2281,28 @@ export async function fallthrough(page) {
       const g = c.heightAt(x, z);
       // a post, trunk or wall standing on the spot: nothing to land on there
       if (w.physics.intersectionWithShape({ x, y: g + hh + rad + 0.25, z }, { x: 0, y: 0, z: 0, w: 1 }, capsule, undefined, STATIC) !== null) { st.occupied++; continue; }
-      const top = g + 2;
+      // 2 m above the ground; where that is inside something (a bridge deck or pier over the spot), 2 m above the top
+      // of it (the player falls onto the deck: dropping a capsule inside a solid tests nothing)
+      let top = g + 2;
+      const inSolid = (y) => w.physics.intersectionWithShape({ x, y: y + hh + rad, z }, { x: 0, y: 0, z: 0, w: 1 }, capsule, undefined, STATIC) !== null;
+      if (inSolid(top)) {
+        const roof = H.floor(x, g + 60, z, 60);
+        if (roof && roof.y > g + 0.3) top = roof.y + 2;
+        if (inSolid(top)) { st.occupied++; continue; }
+        st.raised++;
+      }
       P.body.setTranslation({ x, y: top + hh + rad, z }, true);
       P.body.setNextKinematicTranslation({ x, y: top + hh + rad, z });
-      P.vy = 0;
-      let settled = false;
-      for (let f = 0; f < 90; f++) {
+      P.vy = 0; P.knockT = 0; w.input.keys.clear();
+      // at rest: on the ground and no longer moving (a capsule that lands on a steep bank is grounded while it still
+      // slides down it for a few frames)
+      let settled = false, still = 0, lastY = NaN;
+      for (let f = 0; f < 120; f++) {
         window.__ocStep(1);
-        if (f > 20 && P.grounded && Math.abs(P.vy) < 1.5) { settled = true; window.__ocStep(3); break; }
+        const y = P.body.translation().y;
+        still = P.grounded && Math.abs(y - lastY) < 0.002 ? still + 1 : 0;
+        lastY = y;
+        if (f > 20 && still >= 4) { settled = true; break; }
       }
       const p = P.body.translation();
       const feet = p.y - hh - rad;

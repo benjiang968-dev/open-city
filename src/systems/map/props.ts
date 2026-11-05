@@ -30,10 +30,37 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     return d;
   };
 
+  /**
+   * Synthesized map data (doc.meta.synthetic): a tree or lamp the data puts on a sidewalk moves to that sidewalk's
+   * furnishing strip, `off` m from the kerb at the same distance along the street, so it never stands in the walking
+   * line (the data's sidewalk lines and the generator's road widths differ: on Dumbarton St and Potomac St 137 data
+   * trees stood right on the sidewalks' walk links). Off the sidewalk (yards, parks, frontage) or with real data: as
+   * given. Null: on a sidewalk at a junction corner, where there is no strip to move to.
+   */
+  const toStrip = (x: number, z: number, off: number): [number, number] | null => {
+    if (!doc.meta.synthetic) return [x, z];
+    let best = Infinity, bestE = -1;
+    info.edgeGrid.query(x, z, (_s, id, d) => { const e = net.edges[id]; if (!e.deck && d < best) { best = d; bestE = id; } });
+    if (bestE < 0) return [x, z];
+    const e = net.edges[bestE];
+    const pr = net.project(e, x, z);
+    const side = pr.off >= 0 ? 1 : -1, lat = Math.abs(pr.off);
+    if (!(side > 0 ? e.swR : e.swL) || lat < e.hw - 0.3 || lat > e.hw + G.sidewalkWidth) return [x, z];
+    // at a junction corner (the corner's walk links cut across the sidewalk to the kerb there): no strip
+    if (pr.s < e.trimA + G.cornerRadius || pr.s > e.L - e.trimB - G.cornerRadius) return null;
+    if (e.cuts.some((c) => c[0] === side && pr.s > c[1] - 2 && pr.s < c[2] + 2)) return null; // a dropped kerb (driveway)
+    const q = pointAtS(e, pr.s), o = (e.hw + off) * side;
+    return [q.x - q.uz * o, q.z + q.ux * o];
+  };
+
   // ------------------------------------------------------------------------------------- lamps
   const lamps: { x: number; y: number; z: number }[] = [];
   // (not where the road now runs: Washington Circle is snapped to a true circle, which put a few data lamps in its lanes)
-  for (const p of doc.props) if (p[2] === 'lamp' && roadDist(p[0], p[1]) > 0.3) lamps.push({ x: p[0], y: ras.heightAt(p[0], p[1]), z: p[1] });
+  for (const p of doc.props) {
+    if (p[2] !== 'lamp') continue;
+    const q = toStrip(p[0], p[1], G.streetLampKerbOffset) ?? [p[0], p[1]]; // at a corner: where the data has it
+    if (q && roadDist(q[0], q[1]) > 0.3 && !(ras.kindAt(q[0], q[1]) & (K.BUILDING | K.WATER))) lamps.push({ x: q[0], y: ras.heightAt(q[0], q[1]), z: q[1] });
+  }
   for (const l of extraLamps) lamps.push({ x: l.x, y: l.y, z: l.z });
   const lampPositions = new Float32Array(lamps.length * 3);
   lamps.forEach((l, i) => { lampPositions[i * 3] = l.x; lampPositions[i * 3 + 1] = l.y; lampPositions[i * 3 + 2] = l.z; });
@@ -94,9 +121,21 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     treeGrid.add(x, z, x, z, trees.length - 1, 4);
   };
   for (const p of doc.props) if (p[2] === 'tree') {
-    const k = ras.kindAt(p[0], p[1]);
+    const q = toStrip(p[0], p[1], G.streetTreeKerbOffset);
+    if (!q) continue;
+    const [x, z] = q;
+    const k = ras.kindAt(x, z);
     if (k & (K.ROAD | K.BUILDING | K.WATER)) continue;
-    addTree(p[0], p[1], false);
+    if (x !== p[0] || z !== p[1]) {
+      // moved to the strip: not in a driveway, a crossing or a lamp's place
+      if (k & K.LOT) continue;
+      if (info.crossings.some((cr) => Math.hypot(cr.x - x, cr.z - z) < 7)) continue; // the walk links bend to it
+      let clash = false;
+      lampGrid.query(x, z, (_s, _p, d) => { if (d < G.streetTreeLampGap) clash = true; });
+      treeGrid.query(x, z, (_s, _p, d) => { if (d < G.streetTreeLampGap) clash = true; });
+      if (clash) continue;
+    }
+    addTree(x, z, false);
   }
   // street trees on the shopping streets, where the sidewalk has room
   const busStops = doc.props.filter((p) => p[2] === 'bus_stop');

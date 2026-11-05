@@ -252,6 +252,15 @@ export class PhysChunks {
   colliders = 0;
   /** Collider handle -> solid kind (read by the audit and the F4 view). */
   readonly tags = new SolidTags();
+  /**
+   * Kinds whose trimesh triangles are handed back by finishTrimeshes (the walking surfaces map.heightAt reads, see
+   * surfaceIndex.ts): kind -> list of xyz triangle soups. Empty unless a kind is registered with keepTriangles.
+   */
+  readonly kept = new Map<SolidKind, Float32Array[]>();
+  /** Keep the triangles of these kinds when the trimeshes are built (finishTrimeshes). */
+  keepTriangles(...kinds: SolidKind[]) {
+    for (const k of kinds) if (!this.kept.has(k)) this.kept.set(k, []);
+  }
   constructor(R: typeof RAPIER, world: RAPIER.World, size: number) {
     this.R = R;
     this.world = world;
@@ -341,6 +350,7 @@ export class PhysChunks {
     for (const [k, b] of this.tris) {
       if (b.n < 3) continue;
       const verts = b.pos.slice(0, b.n * 3);
+      this.kept.get(this.trisKind.get(k)!)?.push(verts);
       const idx = new Uint32Array(b.n);
       for (let i = 0; i < b.n; i++) idx[i] = i;
       const d = this.R.ColliderDesc.trimesh(verts, idx, 0 as RAPIER.TriMeshFlags);

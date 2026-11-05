@@ -373,7 +373,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     const ya = endY(a[0] - ux * 0.5, a[1] - uz * 0.5), yc = endY(c[0] + ux * 0.5, c[1] + uz * 0.5);
     const mx = (a[0] + c[0]) / 2, mz = (a[1] + c[1]) / 2;
     const buf = chunks.buf('ground', mx, mz);
-    const pb = phys.ground(mx, mz);
+    const pb = phys.trimesh(mx, mz, 'deck'); // a deck over the towpath, not ground (map.heightAt reads ground)
     const segs = 10, hw = 1.4;
     const rx = -uz, rz = ux;
     chunks.tag('decor'); // deck edges (the deck itself is in the trimesh)

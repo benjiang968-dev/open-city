@@ -210,7 +210,9 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
       const hp = net.profAt(e, p.s), hq = net.profAt(e, q.s);
       const mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2;
       const buf = chunks.buf('ground', mx, mz);
-      const pb = phys.ground(mx, mz);
+      // a deck's carriageway, kerbs and sidewalks are deck colliders (map.heightAt without a height is the ground
+      // under the bridge, surfaceIndex.ts)
+      const pb = e.deck ? phys.trimesh(mx, mz, 'deck') : phys.ground(mx, mz);
       const hw = e.hw;
       const Lpx = p.x - p.rx * hw, Lpz = p.z - p.rz * hw, Rpx = p.x + p.rx * hw, Rpz = p.z + p.rz * hw;
       const Lqx = q.x - q.rx * hw, Lqz = q.z - q.rz * hw, Rqx = q.x + q.rx * hw, Rqz = q.z + q.rz * hw;
@@ -265,9 +267,10 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
 
   // ---------------------------------------------------------------- junctions and corners
   for (const n of net.nodes) {
+    const deckNode = n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
     if (n.outline.length >= 6) {
       const buf = chunks.buf('ground', n.x, n.z);
-      const pb = phys.ground(n.x, n.z);
+      const pb = deckNode ? phys.trimesh(n.x, n.z, 'deck') : phys.ground(n.x, n.z);
       const O = n.outline, m = O.length / 2;
       const col = junctionCol(n);
       for (let i = 0; i < m; i++) {
@@ -276,7 +279,7 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
         pb.tri(n.x, n.h, n.z, O[i * 2], n.h, O[i * 2 + 1], O[j * 2], n.h, O[j * 2 + 1]);
       }
     }
-    for (const c of n.corners) cornerMesh(n, c.pts, c.outward, c.armA.edge.deck && c.armB.edge.deck ? sw : sw + FRONTAGE);
+    for (const c of n.corners) { const dk = c.armA.edge.deck && c.armB.edge.deck; cornerMesh(n, c.pts, c.outward, dk ? sw : sw + FRONTAGE, dk); }
     for (const path of n.kerbs) {
       const buf = chunks.buf('ground', n.x, n.z);
       for (let i = 2; i < path.length; i += 2) {
@@ -292,9 +295,9 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
     for (const a of n.arms) if (a.edge.hw > (best?.hw ?? 0)) best = a.edge;
     return best ? roadCol(best) : COL.asphalt;
   }
-  function cornerMesh(n: RNode, P: number[], N: number[], sw: number) {
+  function cornerMesh(n: RNode, P: number[], N: number[], sw: number, deck: boolean) {
     const buf = chunks.buf('ground', n.x, n.z);
-    const pb = phys.ground(n.x, n.z);
+    const pb = deck ? phys.trimesh(n.x, n.z, 'deck') : phys.ground(n.x, n.z);
     const y0 = n.h, y1 = n.h + kerb;
     const wc = walkCol(n.x);
     for (let i = 2; i < P.length; i += 2) {

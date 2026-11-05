@@ -229,14 +229,24 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     }
   };
 
+  /**
+   * A flat slab split into the 120 m static-body tiles. One cuboid a kilometre across made Rapier's shape casts
+   * (GJK, whose tolerance grows with the shape's size) about 9 cm wrong: the character controller sank 5 cm into the
+   * grid's ground while standing still at a third of the spots tried.
+   */
+  const addTiledSlab = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, kind: SolidKind) => {
+    for (let tx = x0; tx < x1 - 1e-6; tx = Math.min(x1, (Math.floor(tx / 120) + 1) * 120))
+      for (let tz = z0; tz < z1 - 1e-6; tz = Math.min(z1, (Math.floor(tz / 120) + 1) * 120))
+        addBoxCollider(tx, y0, tz, Math.min(x1, (Math.floor(tx / 120) + 1) * 120), y1, Math.min(z1, (Math.floor(tz / 120) + 1) * 120), kind);
+  };
   // land base (grass) and the ground collider
   const landX0 = bounds.minX - 40, landX1 = bounds.maxX + 40, landZ0 = bounds.minZ - 40;
   tag('ground');
   ground.quadY(landX0, landZ0, landX1, coastZ, 0, COL.grass);
-  addBoxCollider(landX0, -2, landZ0, landX1, 0, coastZ, 'ground');
+  addTiledSlab(landX0, -2, landZ0, landX1, 0, coastZ, 'ground');
   // sea floor and seawall face
   const seaZ1 = bounds.maxZ + 60;
-  addBoxCollider(landX0, -T.seaFloorDepth - 2, coastZ, landX1, -T.seaFloorDepth, seaZ1, 'ground');
+  addTiledSlab(landX0, -T.seaFloorDepth - 2, coastZ, landX1, -T.seaFloorDepth, seaZ1, 'ground');
   const seaFloor = new GeoBuilder();
   seaFloor.quadY(landX0, coastZ, landX1, seaZ1, -T.seaFloorDepth, C('#5f7d73'));
   tag('decor'); // the seawall face below the land's edge (the land box edge collides)

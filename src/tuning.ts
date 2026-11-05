@@ -798,6 +798,11 @@ const RAW = {
     canalDepth: 1.6, // m of water in the canal
     creekDepth: 1.2, // m of water in Rock Creek
     stallWidth: 2.6, // m: painted parking bay width in car parks
+    // synthesized street furniture (map data marked synthetic) on a sidewalk stands in the furnishing strip by the
+    // kerb, out of the walking line along the sidewalk's middle (TUNING.geo.sidewalkWidth / 2 from the kerb)
+    streetTreeKerbOffset: 0.7, // m from the kerb to a street tree's trunk (a 0.3 m trunk leaves the walking line clear)
+    streetLampKerbOffset: 0.45, // m from the kerb to a street lamp's post
+    streetTreeLampGap: 2, // m: a synthesized street tree moved to the strip is dropped if a lamp stands this close
     stallLength: 5.2, // m: parking bay length
     lotAisle: 6.6, // m: aisle between bay rows
   },
