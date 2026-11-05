@@ -360,17 +360,47 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
   // ---- footbridges over the canal (path bridges in the data)
   for (const f of doc.footways) {
     if (!f.bridge || f.kind === 'sidewalk' || f.kind === 'crossing' || f.pts.length < 2) continue;
-    const a = f.pts[0], c = f.pts[f.pts.length - 1];
-    const L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    let a = f.pts[0], c = f.pts[f.pts.length - 1];
+    let L = Math.hypot(c[0] - a[0], c[1] - a[1]);
     const ux = (c[0] - a[0]) / L, uz = (c[1] - a[1]) / L;
+    const canalDist = (x: number, z: number) => { let d = Infinity; W.canalGrid.query(x, z, (_s, _p, dd) => { if (dd < d) d = dd; }); return d; };
     // an end on a canal bank lands at the bank's height (the raster blends the bank into the land there, which left
     // the deck end hanging 0.8 m above the bank)
-    const endY = (x: number, z: number) => {
-      let d = Infinity;
-      W.canalGrid.query(x, z, (_s, _p, dd) => { if (dd < d) d = dd; });
-      return d <= CANAL_HALF + BANK_N ? W.canalLevelAt(x) + BANK_ABOVE : ras.heightAt(x, z);
-    };
-    const ya = endY(a[0] - ux * 0.5, a[1] - uz * 0.5), yc = endY(c[0] + ux * 0.5, c[1] + uz * 0.5);
+    const endY = (x: number, z: number) => (canalDist(x, z) <= CANAL_HALF + BANK_N ? W.canalLevelAt(x) + BANK_ABOVE : ras.heightAt(x, z));
+    // The north end: the data ends it on the narrow north bank, under the retaining wall up to the land (2.7 m at
+    // the 33rd St footbridge), so nobody could get on from the north. It runs on just over the wall's coping (which
+    // stays: the deck rests on it) and, where the land beyond is lower than that, a short ramp takes it down.
+    let landN = NaN;
+    let ramp: number[] | null = null;
+    {
+      const aN = a[1] <= c[1], p = aN ? a : c, ox = aN ? -ux : ux, oz = aN ? -uz : uz;
+      let eW = -1;
+      if (canalDist(p[0], p[1]) <= CANAL_HALF + BANK_N + 0.5) for (let e = 0; e <= 8; e += 0.05) if (canalDist(p[0] + ox * e, p[1] + oz * e) >= CANAL_HALF + BANK_N) { eW = e; break; }
+      if (eW >= 0) {
+        const wx = p[0] + ox * eW, wz = p[1] + oz * eW;
+        // the land 0.8 m outside the wall, as the corridor's wall takes it (across the deck's width: the coping's top
+        // follows it between the wall's segment ends)
+        const bank = W.canalLevelAt(wx) + BANK_ABOVE;
+        let out = -Infinity;
+        for (const sd of [-1.5, 0, 1.5]) out = Math.max(out, ras.heightAt(wx + ox * 0.8 - uz * sd, wz + oz * 0.8 + ux * sd));
+        if (out - bank > 0.5 && !(ras.kindAt(wx + ox * 1.2, wz + oz * 1.2) & (K.BUILDING | K.ROAD | K.WATER))) {
+          const top = Math.max(bank, out) + 0.25 + 0.08; // the coping's top, and a little
+          const ex = wx + ox * 0.75, ez = wz + oz * 0.75; // past the 0.45 m coping
+          landN = top - 0.05; // (the deck adds 0.05 to its ends)
+          if (aN) a = [ex, ez]; else c = [ex, ez];
+          L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+          const land = ras.heightAt(ex + ox * 0.5, ez + oz * 0.5);
+          if (top - land > 0.25) {
+            const len = clamp((top - land) / 0.3, 1, 3); // no steeper than 0.3 (17 degrees)
+            const fx = ex + ox * len, fz = ez + oz * len;
+            ramp = [ex, top, ez, fx, ras.heightAt(fx, fz) - 0.02, fz];
+          }
+        }
+      }
+    }
+    const aIsNorth = a[1] <= c[1];
+    const ya = landN === landN && aIsNorth ? landN : endY(a[0] - ux * 0.5, a[1] - uz * 0.5);
+    const yc = landN === landN && !aIsNorth ? landN : endY(c[0] + ux * 0.5, c[1] + uz * 0.5);
     const mx = (a[0] + c[0]) / 2, mz = (a[1] + c[1]) / 2;
     const buf = chunks.buf('ground', mx, mz);
     const pb = phys.trimesh(mx, mz, 'deck'); // a deck over the towpath, not ground (map.heightAt reads ground)
@@ -403,6 +433,14 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
         }
       }
       prev = cur;
+    }
+    if (ramp) {
+      // the ramp from the north end down to the land (deck kind: map.heightAt without a height is the land under it)
+      const [x0, y0, z0, x1, y1, z1] = ramp;
+      const q0 = [x0 - rx * hw, z0 - rz * hw, x0 + rx * hw, z0 + rz * hw], q1 = [x1 - rx * hw, z1 - rz * hw, x1 + rx * hw, z1 + rz * hw];
+      buf.quad(q0[0], y0, q0[1], q0[2], y0, q0[3], q1[2], y1, q1[3], q1[0], y1, q1[1], COL.wood, 0, 1, 0);
+      pb.quad(q0[0], y0, q0[1], q0[2], y0, q0[3], q1[2], y1, q1[3], q1[0], y1, q1[1]);
+      for (const sd of [0, 2]) buf.wall(q0[sd], q0[sd + 1], q1[sd], q1[sd + 1], y0 - 0.35, y0, y1 - 0.05, y1, COL.darkWood, sd ? rx : -rx, sd ? rz : -rz);
     }
     // side rails keep people on: a thin slab per side and segment, following the arch (not one box down the middle)
     for (let q = 1; q < wd.pts.length; q++) {
