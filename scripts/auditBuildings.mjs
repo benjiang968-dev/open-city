@@ -311,7 +311,7 @@ R.walks = await page.evaluate((isGeo) => {
     const p = pick(kinds, signed);
     if (!p) continue;
     const f = H.facadeOf(p);
-    tryDoor(label, f.x, f.z, -f.ux, -f.uz, f.L + 1.5, { poi: p.name, poiKind: p.kind, cat: p.cat ?? null, street: p.street, building: f.building, doorIsPavementPoint: f.x !== p.door.x });
+    tryDoor(label, f.x, f.z, -f.ux, -f.uz, f.L + 1.5, { poi: p.name, poiKind: p.kind, cat: p.cat ?? null, street: p.street, building: f.building, doorIsPavementPoint: Math.abs(f.L - Math.hypot(p.door.x - p.x, p.door.z - p.z)) > 0.01, poiDoorToFacadeM: +(f.L - Math.hypot(p.door.x - p.x, p.door.z - p.z)).toFixed(2) });
     if (label === 'shop door') window.__abShop = { dx: f.x, dz: f.z, nx: -f.ux, nz: -f.uz };
   }
   return res;
