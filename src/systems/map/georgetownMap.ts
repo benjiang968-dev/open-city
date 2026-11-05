@@ -150,9 +150,12 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
       if (e[0].name !== e[1].name || straightness < Math.cos(M.passThroughMaxBend)) cornerAt[i] = 1;
     });
   }
+  // a dead end for traffic counts route pieces only: 33rd St ending in a driveway is a dead end where cars turn round
+  const routeDeg = new Int32Array(J.length);
+  for (const P of polys) { const r = roadById.get(P.roadId); if (r?.service && NOT_ROUTES.has(r.service)) continue; routeDeg[P.nodeA]++; routeDeg[P.nodeB]++; }
   const nodes: RoadNode[] = J.map((j) => ({
     id: j.id, x: j.x, y: j.y, z: j.z, out: [], in: [], roundabout: j.roundabout, signals: j.signals, stop: j.stop,
-    deadEnd: j.degree <= 1, junction: j.degree >= 3 || ((j.signals || j.stop) && j.degree >= 2) || cornerAt[j.id] === 1,
+    deadEnd: j.degree <= 1 || (!doc.meta.synthetic && routeDeg[j.id] <= 1), junction: j.degree >= 3 || ((j.signals || j.stop) && j.degree >= 2) || cornerAt[j.id] === 1,
   }));
   const passThrough = (id: number) => !nodes[id].junction && !nodes[id].deadEnd;
   const edges: LaneEdge[] = [];
