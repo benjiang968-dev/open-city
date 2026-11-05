@@ -6,7 +6,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning';
 import { attachLampLights, createDayNight, updateDayNight, updateSky } from '../systems/dayNight';
 import { buildGeorgetownWorld, type GeoQuality, type GeoWorld } from '../systems/map/georgetownWorld';
-import type { GeoDoc } from '../systems/map/geoDoc';
+import { loadGeoDoc } from '../systems/map/geoDoc';
 import type { World } from '../world';
 import { bakeLook, createLook } from '../systems/render/look';
 import { createTexSheet } from '../systems/render/texSheet';
@@ -79,8 +79,7 @@ async function boot() {
   const physics = new RAPIER.World({ x: 0, y: -TUNING.vehicles.gravity, z: 0 });
   (physics as unknown as { mapNewSoftBodies: () => void }).mapNewSoftBodies = () => {};
 
-  const res = await fetch(new URL('../data/georgetown.json', import.meta.url).href);
-  const doc = (await res.json()) as GeoDoc;
+  const doc = await loadGeoDoc();
   const quality = (['low', 'medium', 'high'].includes(params.get('quality') ?? '') ? params.get('quality') : 'medium') as GeoQuality;
   const seed = Number(params.get('seed') ?? TUNING.world.defaultSeed) || TUNING.world.defaultSeed;
   const dn = createDayNight(scene);

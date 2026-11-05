@@ -2,13 +2,14 @@
 // road / water queries; this file turns its road polygons and junctions into the lane graph traffic drives on, lays
 // the walk graph (sidewalks, crossings, paths, the towpath, the waterfront), names the places (POIs from the data,
 // homes, parks, the waterfront), places taxi ranks and parking, and paints the minimap. Contract: map/cityMap.ts.
-// The data is a hand-authored approximation (meta.synthetic, see meta.attribution), not OpenStreetMap.
+// The data is real (OpenStreetMap via Overture Maps, scripts/importOverture.mjs) or, as a fallback, the hand-authored
+// approximation (meta.synthetic, scripts/georgetownFromSpec.mjs); see meta.attribution.
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../../tuning';
 import { poiName } from '../../data/poiNames';
 import type { GeoDoc, Pt } from './geoDoc';
-import { hashStr, pointInPoly } from './geoDoc';
+import { hashStr, loadGeoDoc, pointInPoly } from './geoDoc';
 import { buildGeorgetownWorld, type GeoQuality, type GeoRoadPoly, type GeoWorld } from './georgetownWorld';
 import type { Look } from '../render/look';
 import { SIGN_CATS } from './facades';
@@ -39,6 +40,8 @@ const RANKS: { name: string; street: string; cross: string; along: number; lane:
   { name: 'Taxi Rank, Upper Wisconsin', street: 'Wisconsin Ave NW', cross: 'P St NW', along: 45, lane: 1, heading: Math.PI },
 ];
 /** Waterfront places (kind 'pier'): name and a point on the promenade / boardwalk they snap to. */
+/** Park names the game uses as places (a public open space by its name's last word); other names stay unused. */
+const PARK_NAME = /\b(Park|Garden|Gardens|Lawn|Memorial|Square|Circle|Green|Common|Playground|Field|Fields|Triangle)$/;
 const WATERFRONT = [
   { name: 'Waterfront Promenade', x: -420, z: 430 },
   { name: 'Harbour Boardwalk', x: 120, z: 585 },
@@ -65,6 +68,8 @@ const kindOf = (cat: string) => KIND[cat] ?? (cat.startsWith('office=') ? 'offic
 /** Dealerships (pickDealershipPois takes garages in POI order): real car shops first, then repair shops, then fuel. */
 const POI_ORDER = (cat: string) => (cat === 'shop=car' ? 0 : cat === 'shop=car_repair' ? 1 : 2);
 const RESIDENTIAL = new Set(['terrace', 'house', 'apartments', 'residential']);
+/** Service road kinds that get no lanes in the road graph (they stay drivable surfaces). */
+const NOT_ROUTES = new Set(['driveway', 'parking_aisle', 'drive-through', 'alley']);
 
 /** Road class from the data's highway tag (parking aisles, driveways and anything unusual drive as 'service'). */
 function classOf(highway: string, name: string): RoadClass {
@@ -74,11 +79,43 @@ function classOf(highway: string, name: string): RoadClass {
   return 'service';
 }
 
+/**
+ * Lane directions that lead nowhere: one-way pieces into a node that no route leaves and from which no road reaches
+ * the map's edge (real data: the approaches to the omitted K St underpass and Potomac Freeway tunnel end at the
+ * portal; traffic drove in and circled at the end). Found by a reverse search from the map-edge exits over the route
+ * pieces' lane directions. Returns poly index -> bits (1: forward lanes trapped, 2: backward lanes trapped).
+ */
+function trapDirections(polys: GeoRoadPoly[], J: GeoWorld['junctions'], roadById: Map<string, GeoDoc['roads'][number]>, bounds: { minX: number; maxX: number; minZ: number; maxZ: number }): Map<number, number> {
+  const route = (P: GeoRoadPoly) => { const r = roadById.get(P.roadId); return !(r?.service && NOT_ROUTES.has(r.service)); };
+  const inAdj: number[][] = J.map(() => []);
+  const deg = new Int32Array(J.length);
+  polys.forEach((P) => {
+    if (!route(P)) return;
+    deg[P.nodeA]++; deg[P.nodeB]++;
+    if (P.lanes.some((l) => l.dir === 1)) inAdj[P.nodeB].push(P.nodeA);
+    if (P.lanes.some((l) => l.dir === -1)) inAdj[P.nodeA].push(P.nodeB);
+  });
+  const m = TUNING.traffic.mapEdgeRange;
+  const ok = new Uint8Array(J.length);
+  const stack: number[] = [];
+  J.forEach((j, i) => {
+    if (deg[i] === 1 && (j.x < bounds.minX + m || j.x > bounds.maxX - m || j.z < bounds.minZ + m || j.z > bounds.maxZ - m)) { ok[i] = 1; stack.push(i); }
+  });
+  while (stack.length) { const n = stack.pop()!; for (const p of inAdj[n]) if (!ok[p]) { ok[p] = 1; stack.push(p); } }
+  const out = new Map<number, number>();
+  polys.forEach((P, i) => {
+    if (!route(P)) return;
+    let bits = 0;
+    if (P.lanes.some((l) => l.dir === 1) && !ok[P.nodeB]) bits |= 1;
+    if (P.lanes.some((l) => l.dir === -1) && !ok[P.nodeA]) bits |= 2;
+    if (bits) out.set(i, bits);
+  });
+  return out;
+}
+
 /** Fetch the map data (only when this map is picked: loadMap imports this module on demand). */
 export async function loadGeorgetownDoc(): Promise<GeoDoc> {
-  const res = await fetch(new URL('../../data/georgetown.json', import.meta.url).href);
-  if (!res.ok) throw new Error(`Georgetown map data: HTTP ${res.status}`);
-  return (await res.json()) as GeoDoc;
+  return loadGeoDoc();
 }
 
 // ======================================================================================================
@@ -116,15 +153,19 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
       if (e[0].name !== e[1].name || straightness < Math.cos(M.passThroughMaxBend)) cornerAt[i] = 1;
     });
   }
+  // a dead end for traffic counts route pieces only: 33rd St ending in a driveway is a dead end where cars turn round
+  const routeDeg = new Int32Array(J.length);
+  for (const P of polys) { const r = roadById.get(P.roadId); if (r?.service && NOT_ROUTES.has(r.service)) continue; routeDeg[P.nodeA]++; routeDeg[P.nodeB]++; }
   const nodes: RoadNode[] = J.map((j) => ({
     id: j.id, x: j.x, y: j.y, z: j.z, out: [], in: [], roundabout: j.roundabout, signals: j.signals, stop: j.stop,
-    deadEnd: j.degree <= 1, junction: j.degree >= 3 || ((j.signals || j.stop) && j.degree >= 2) || cornerAt[j.id] === 1,
+    deadEnd: j.degree <= 1 || (!doc.meta.synthetic && routeDeg[j.id] <= 1), junction: j.degree >= 3 || ((j.signals || j.stop) && j.degree >= 2) || cornerAt[j.id] === 1,
   }));
   const passThrough = (id: number) => !nodes[id].junction && !nodes[id].deadEnd;
   const edges: LaneEdge[] = [];
   /** per poly: lane edge ids by direction (index = lane, 0 kerbside); parked-car offset per side (pts-right +1 / left -1) */
   const polyLanes: { fwd: number[]; bwd: number[]; parkR: boolean; parkL: boolean; cls: RoadClass }[] = [];
   const band = M.parkingBand;
+  const trapDir = trapDirections(polys, J, roadById, bounds);
   polys.forEach((P, pi) => {
     const road = roadById.get(P.roadId);
     const cls = classOf(P.highway, P.name);
@@ -154,6 +195,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     }
     const info = { fwd: [] as number[], bwd: [] as number[], parkR, parkL, cls };
     polyLanes.push(info);
+    // driveways, parking aisles and alleys (real data) are surfaces you can drive on, not routes: no lanes for traffic,
+    // police or routing (cars kept turning into every driveway and backing out of it)
+    if (road?.service && NOT_ROUTES.has(road.service)) return;
     // trims: none at pass-through nodes; at a dead end (mostly roads leaving the map) room to turn round before it
     const trimAt = (node: number, t: number) => (passThrough(node) ? 0 : nodes[node].deadEnd ? Math.max(t, M.deadEndTurnRoom) : t);
     const tA = trimAt(P.nodeA, P.trimA), tB = trimAt(P.nodeB, P.trimB);
@@ -168,7 +212,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
       }
       return raw;
     };
+    const trapped = trapDir.get(pi) ?? 0; // bit 1: forward lanes lead nowhere, bit 2: backward ones
     for (const dir of [1, -1] as const) {
+      if (trapped & (dir === 1 ? 1 : 2)) continue;
       const offs = dir === 1 ? fwdOff : bwdOff;
       offs.forEach((off, k) => {
         const raw = flatten(atOffset(P, off));
@@ -177,8 +223,8 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
         const e: LaneEdge = {
           id: edges.length, from: dir === 1 ? P.nodeA : P.nodeB, to: dir === 1 ? P.nodeB : P.nodeA, pts, cum, len: cum[cum.length - 1],
           trimStart: dir === 1 ? tA : tB, trimEnd: dir === 1 ? tB : tA, speed, cls, name: P.name || null, roadId: P.roadId,
-          lane: k, lanesSameDir: offs.length, offset: dir === 1 ? off : -off, oneway: P.oneway !== 0, roundabout: ring,
-          bridge: P.deck, halfWidth: hw, twin: -1, left: -1, right: -1,
+          lane: k, lanesSameDir: offs.length, offset: dir === 1 ? off : -off, oneway: P.oneway !== 0 || trapped !== 0, roundabout: ring,
+          bridge: P.deck, halfWidth: hw, twin: -1, left: -1, right: -1, stopSign: J[dir === 1 ? P.nodeB : P.nodeA].stopEdges.includes(P.edge),
           parking: k === 0 && (dir === 1 ? parkR : parkL),
         };
         edges.push(e);
@@ -191,6 +237,11 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     for (let k = 0; k < info.bwd.length; k++) if (info.fwd.length) edges[info.bwd[k]].twin = info.fwd[Math.min(k, info.fwd.length - 1)];
   });
   linkLaneNeighbours(edges);
+  // real data: lanes lie on the surface the colliders have. The raster gives overlapping carriageways to the nearest
+  // centre line and blends driveway mouths, kerbs and car-park aisles, so a lane on its own road's profile floated or
+  // sank up to 2.5 m there (traffic counted cars on the wrong level). The surface nearest the lane's own height keeps
+  // decks and the roads under them apart.
+  if (!doc.meta.synthetic) for (const e of edges) { const p = e.pts; for (let k = 0; k < p.length; k += 3) p[k + 1] = geo.roadSurfaceAt(p[k], p[k + 2], p[k + 1]); }
   const oneWayCheck = checkOneWays(doc, polys, edges, polyLanes);
   const ringCheck = checkRing(polys, roadById, edges, polyLanes);
   const tRoads = performance.now();
@@ -301,6 +352,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   // parks: one entrance each, on the walk network at the park's edge
   for (const pk of doc.parks) {
     if (!pk.name || pk.kind === 'landuse=cemetery') continue;
+    // only a name that reads as a public open space; real data also names a boathouse business ("... Boat Center")
+    // and an institution's garden by its initials as parks, and real business names never reach the player
+    if (!PARK_NAME.test(pk.name) || /\b[A-Z]{2,}\b|\b(Center|Centre|Club|Inc|LLC|Co)\b/.test(pk.name)) continue;
     const c = centroid(pk.pts);
     const n = walk[nearestWalk(c[0], c[1])];
     if (Math.hypot(n.x - c[0], n.z - c[1]) > 400) continue;
@@ -387,30 +441,41 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
    * `heading`, the piece of `street` whose lane there points closest to it.
    */
   function streetSpot(street: string, cross: string, along: number, lane: 1 | -1, heading?: number): { edge: number; s: number } | null {
-    const node = nodes.find((n) => {
-      const names = new Set([...n.in, ...n.out].map((i) => edges[i].name));
-      return names.has(street) && names.has(cross);
+    // the junction of `street` with `cross` (a name prefix: real data spells "Washington Circle NW"); if they never
+    // meet (Key Bridge lands on ramps), the junction of `street` nearest the cross road
+    const crossOf = (n: string | null) => !!n && (n === cross || n.startsWith(`${cross} `));
+    let node = nodes.find((n) => {
+      const names = [...n.in, ...n.out].map((i) => edges[i].name);
+      return names.includes(street) && names.some(crossOf);
     });
+    if (!node) {
+      let bd = 80;
+      for (const n of nodes) {
+        if (!n.junction || ![...n.in, ...n.out].some((i) => edges[i].name === street)) continue;
+        for (const e of edges) {
+          if (!crossOf(e.name)) continue;
+          for (let k = 0; k < e.pts.length; k += 9) { const d = Math.hypot(e.pts[k] - n.x, e.pts[k + 2] - n.z); if (d < bd) { bd = d; node = n; } }
+        }
+      }
+    }
     if (!node) return null;
-    // the poly of `street` leaving that node that is long enough, preferring straight on
-    const cand = polys.map((P, pi) => ({ P, pi })).filter(({ P }) => P.name === street && (P.nodeA === node.id || P.nodeB === node.id) && !P.deck);
+    // the kerbside lane of `street` about `along` metres from that junction (leaving it: lane 1, arriving: -1), clear of
+    // junction boxes; real data splits a street at every driveway, so the spot may lie a few pieces away
+    const node0 = node;
     let best: { edge: number; s: number } | null = null, bestScore = -Infinity;
-    for (const { P, pi } of cand) {
-      const atStart = P.nodeA === node.id;
-      const L = polyLength(P);
-      const sFromNode = Math.min(Math.max(along, 0), L - 8);
-      // lane leaving the node: travels away from it
-      const leaving = atStart ? polyLanes[pi].fwd : polyLanes[pi].bwd;
-      const arriving = atStart ? polyLanes[pi].bwd : polyLanes[pi].fwd;
-      const list = lane === 1 ? leaving : arriving;
-      if (!list.length) continue;
-      const e = edges[list[0]];
+    for (const e of edges) {
+      if (e.name !== street || e.bridge || e.lane !== 0) continue;
       const lo = e.trimStart + 4, hi = e.len - e.trimEnd - 4;
-      if (hi < lo) continue; // all junction box
-      const s = Math.max(lo, Math.min(hi, lane === 1 ? sFromNode : e.len - sFromNode)); // as close to `along` as fits
-      laneSample(e, s, LP);
-      const score = heading === undefined ? 0 : Math.cos(LP.heading - heading);
-      if (score > bestScore) { bestScore = score; best = { edge: e.id, s }; }
+      if (hi < lo) continue;
+      for (let s = lo; s <= hi; s += 3) {
+        laneSample(e, s, LP);
+        const d = Math.hypot(LP.x - node0.x, LP.z - node0.z);
+        if (d > along + 60) continue;
+        const toward = (node0.x - LP.x) * Math.sin(LP.heading) + (node0.z - LP.z) * Math.cos(LP.heading);
+        if ((lane === -1) !== (toward > 0)) continue;
+        const score = -Math.abs(d - along) + (heading === undefined ? 0 : 15 * Math.cos(LP.heading - heading));
+        if (score > bestScore) { bestScore = score; best = { edge: e.id, s }; }
+      }
     }
     return best;
   }
@@ -531,17 +596,19 @@ function checkOneWays(doc: GeoDoc, polys: GeoRoadPoly[], edges: LaneEdge[], lane
 
 /** Washington Circle: a one-way ring whose lanes run counter-clockwise seen from above (US right-hand traffic). */
 function checkRing(polys: GeoRoadPoly[], roadById: Map<string, GeoDoc['roads'][number]>, edges: LaneEdge[], lanes: { fwd: number[]; bwd: number[] }[]) {
-  let cx = 0, cz = 0, n = 0, ccw = 0, cw = 0, ringEdges = 0;
+  let n = 0, ccw = 0, cw = 0, ringEdges = 0;
   const ringNodes = new Set<number>();
+  // one centre per ring (real data has Washington Circle and Sheridan Circle)
+  const centre = new Map<string, { x: number; z: number; n: number }>();
   polys.forEach((P, pi) => {
     if (roadById.get(P.roadId)?.junction !== 'roundabout') return;
     ringNodes.add(P.nodeA);
     ringNodes.add(P.nodeB);
-    for (let i = 0; i < P.centre.length; i += 3) { cx += P.centre[i]; cz += P.centre[i + 2]; n++; }
+    const c = centre.get(P.roadId) ?? centre.set(P.roadId, { x: 0, z: 0, n: 0 }).get(P.roadId)!;
+    for (let i = 0; i < P.centre.length; i += 3) { c.x += P.centre[i]; c.z += P.centre[i + 2]; c.n++; n++; }
     ringEdges += lanes[pi].fwd.length + lanes[pi].bwd.length;
   });
   if (!n) return { ringEdges: 0, ringNodes: 0, spokes: 0, ccw: 0, cw: 0, problem: 'no roundabout in the data' };
-  cx /= n; cz /= n;
   const spokeRoads = new Set<string>();
   for (const e of edges) {
     if (!e.roundabout) {
@@ -549,6 +616,8 @@ function checkRing(polys: GeoRoadPoly[], roadById: Map<string, GeoDoc['roads'][n
       continue;
     }
     // sign of (point - centre) x travel in a north-up view (x right, north = -z): positive = counter-clockwise
+    const c = centre.get(e.roadId)!;
+    const cx = c.x / c.n, cz = c.z / c.n;
     const k = Math.floor(e.pts.length / 6) * 3;
     const px = e.pts[k] - cx, pn = -(e.pts[k + 2] - cz);
     const tx = e.pts[k + 3] - e.pts[k], tn = -(e.pts[k + 5] - e.pts[k + 2]);
@@ -748,7 +817,9 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
       if (covered) continue;
       const kl = sampleAt(atOffset(P, -P.halfWidth + 0.4), S, s, [0, 0, 0]);
       const kr = sampleAt(atOffset(P, P.halfWidth - 0.4), S, s, [0, 0, 0]);
-      const xl = add(kl[0], kl[1], kl[2], 'crossing', P.name || null), xr = add(kr[0], kr[1], kr[2], 'crossing', P.name || null);
+      // (heights from the surface people walk on there: the road's own profile can differ from the raster where
+      // carriageways overlap, as beside the raised K St bridge end at Rock Creek)
+      const xl = add(kl[0], geo.walkSurfaceAt(kl[0], kl[2], kl[1]), kl[2], 'crossing', P.name || null), xr = add(kr[0], geo.walkSurfaceAt(kr[0], kr[2], kr[1]), kr[2], 'crossing', P.name || null);
       W.link(el, xl); W.link(xl, xr); W.link(xr, er);
     }
   });

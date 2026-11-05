@@ -102,7 +102,8 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
   const pits = new MeshBuf();
   for (const e of net.edges) {
     if (e.deck) continue;
-    const spec = SHOPPING.find((s) => s.name === e.name);
+    // (imported data brings its own street trees as synthesized props; only the knowledge-based map plants them here)
+    const spec = doc.meta.synthetic ? SHOPPING.find((s) => s.name === e.name) : undefined;
     if (!spec) continue;
     for (const side of [-1, 1]) {
       if (!(side < 0 ? e.swL : e.swR)) continue;
@@ -197,11 +198,12 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
   const sigSpots: { x: number; y: number; z: number; ux: number; uz: number; len: number; heads: number[]; node: number }[] = [];
   const stopSpots: { x: number; y: number; z: number; ux: number; uz: number }[] = [];
   for (const n of net.nodes) {
-    if (!n.signals && !n.stop) continue;
+    if (!n.signals && !n.stop && !n.arms.some((A) => A.stop)) continue;
     if (n.roundabout) continue;
     for (const A of n.arms) {
       const nIn = inbound(A);
       if (!nIn) continue;
+      if (!n.signals && !n.stop && !A.stop) continue; // a stop sign on some approaches only
       const e = A.edge;
       const s = Math.min(e.L / 2, A.trim + (n.signals ? 2.5 : 1.5));
       const q = pointAtS(e, A.atStart ? s : e.L - s);
@@ -323,6 +325,9 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       if (ras.kindAt(ex, ez) & (K.BUILDING | K.ROAD)) continue;
       // local +z (the back panel) points away from the road
       const bx = -q.uz * side, bz = q.ux * side;
+      // the whole shelter (4.3 m long) clear of roads and buildings, not just its middle: next to a driveway mouth
+      // (real data) its end stood 2 m into Wisconsin Ave
+      if ([[-2.2, -0.8], [2.2, -0.8], [-2.2, 0.8], [2.2, 0.8]].some(([a, b2]) => ras.kindAt(ex + q.ux * a + bx * b2, ez + q.uz * a + bz * b2) & (K.BUILDING | K.ROAD))) continue;
       shelters.push({ x: ex, y: ras.heightAt(ex, ez), z: ez, yaw: Math.atan2(bx, bz) });
       phys.box(ex + bx * 0.58, ras.heightAt(ex, ez) + 1.2, ez + bz * 0.58, 2, 1.2, 0.06, q.ux, q.uz);
     }

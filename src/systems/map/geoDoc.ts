@@ -15,6 +15,11 @@ export interface GeoRoad {
   layer: number;
   junction: string | null;
   maxspeed: number | null;
+  /** Kerb-to-kerb width (m); imported data carries an estimate (est: 1) or the mapped width. */
+  width?: number;
+  est?: number;
+  service?: string;
+  access?: string;
   sidewalk?: string;
   surface?: string;
   pts: Pt[];
@@ -37,7 +42,13 @@ export interface GeoBuilding {
   h: number;
   type: string;
   levels: number;
+  /** height from neighbours or a class default, not the data */
+  est?: number;
+  /** underside height (m) for buildings over a passage */
+  minH?: number;
+  roof?: string;
   pts: Pt[];
+  holes?: Pt[][];
 }
 export interface GeoPoi {
   id: string;
@@ -53,6 +64,8 @@ export interface GeoArea {
   name: string | null;
   pts: Pt[];
   holes?: Pt[][];
+  /** Water level (m) per vertex of a waterway line (imported: Rock Creek). */
+  levels?: number[];
 }
 export interface GeoParking {
   id: string;
@@ -69,7 +82,8 @@ export interface GeoHeights {
   nz: number;
   data: number[];
 }
-export type GeoProp = [number, number, string];
+/** [x, z, kind] from the data, or [x, z, kind, 1] when synthesized by the importer. */
+export type GeoProp = [number, number, string] | [number, number, string, number];
 
 export interface GeoDoc {
   meta: {
@@ -78,6 +92,8 @@ export interface GeoDoc {
     bounds: { x0: number; z0: number; x1: number; z1: number };
     origin: { lat: number; lon: number };
     metresPerDegree: { lat: number; lon: number };
+    /** Real data: places and CC BY 4.0 building footprints ship in their own files (own licences), see loadGeoDoc. */
+    companions?: { pois: string; buildings: string };
   };
   roads: GeoRoad[];
   footways: GeoFootway[];
@@ -88,9 +104,33 @@ export interface GeoDoc {
   parks: GeoArea[];
   parking: GeoParking[];
   bridges: { id: string; src: string; name: string | null; layer: number; pts: Pt[] }[];
-  landmarks: unknown;
+  landmarks: { canal?: { waterways: string[]; water: string[]; levels?: number[]; locks?: { name: string; x: number; z: number; length: number }[] }; towpath?: string[] } | null;
   props: GeoProp[];
   heights: GeoHeights;
+}
+
+/**
+ * Fetch the Georgetown map data: src/data/georgetown.json and, for real data, its companion files (licensed apart from
+ * the ODbL main file): the places (CDLA-Permissive-2.0) become `pois`, and the Esri Community Maps footprints
+ * (CC BY 4.0) join `buildings`. The knowledge-based map (npm run gen-georgetown) is one file with no companions.
+ */
+export async function loadGeoDoc(): Promise<GeoDoc> {
+  const get = async (url: string) => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Georgetown map data: HTTP ${res.status} for ${url}`);
+    return res.json();
+  };
+  const doc = (await get(new URL('../../data/georgetown.json', import.meta.url).href)) as GeoDoc;
+  if (doc.meta.companions) {
+    // (static URLs so the build bundles them; the names match meta.companions written by scripts/importOverture.mjs)
+    const [places, ccby] = await Promise.all([
+      get(new URL('../../data/georgetown-places.json', import.meta.url).href) as Promise<{ pois: GeoPoi[] }>,
+      get(new URL('../../data/georgetown-buildings-ccby.json', import.meta.url).href) as Promise<{ buildings: GeoBuilding[] }>,
+    ]);
+    doc.pois = places.pois;
+    doc.buildings = doc.buildings.concat(ccby.buildings);
+  }
+  return doc;
 }
 
 // ------------------------------------------------------------------------------------------- helpers

@@ -159,7 +159,7 @@ async function boot() {
   (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
-  (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
+  (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city), roadLimits: TUNING.geo.roadLimits };
   (window as unknown as { __ocTraffic: unknown }).__ocTraffic = {
     placeOnEdge: (car: AiCar, edge: number, s0: number) => placeOnEdge(w, car, edge, s0),
     resetStats: () => resetTrafficStats(w.trafficSim.stats),
