@@ -6,7 +6,10 @@ import type { InputState } from './systems/input';
 import type { CityMap } from './systems/map/cityMap';
 import type { PlayerState } from './systems/player';
 import type { Vehicle } from './systems/vehicles';
-import type { TrafficCar } from './systems/traffic';
+import type { TrafficCar, TrafficSim } from './systems/traffic';
+import type { JunctionState } from './systems/junctions';
+import type { TrafficPopulation } from './systems/trafficPopulation';
+import type { SignalHeads } from './systems/signalHeads';
 import type { Ped } from './systems/pedestrians';
 import type { PoliceState } from './systems/police';
 import type { JobManager } from './systems/economy/jobManager';
@@ -23,6 +26,8 @@ import type { ItemsState } from './systems/worldItems';
 import type { InventoryState } from './systems/inventory';
 import type { CombatState } from './systems/combat';
 import type { CrowdRender } from './systems/crowdRender';
+import type { PedDensityState } from './systems/pedDensity';
+import type { ParkedState } from './systems/parkedCars';
 import type { HurtFxState } from './systems/hurtFx';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
@@ -66,11 +71,21 @@ export interface World {
   combat: CombatState;
   crowd: CrowdRender;
   hurtFx: HurtFxState;
+  /** Crowd density from the map: busyness per walk link, the target around the player (pedDensity.ts). */
+  pedDensity: PedDensityState;
+  /** Every parked car on the map, the pool of drivable stand-ins near you, the instanced parked-car meshes. */
+  parked: ParkedState;
   /** The map (road and walk graphs, places, lookups). Every system reads the city through this interface. */
   city: CityMap;
   player: PlayerState;
   vehicles: Vehicle[];
+  /** AI traffic cars driving now (the preset's count; the rest wait in trafficSim.pool). */
   traffic: TrafficCar[];
+  trafficSim: TrafficSim;
+  trafficPop: TrafficPopulation;
+  /** Junction control: moves, conflicts, signal phases and lights (junctions.ts). */
+  junctions: JunctionState;
+  signalHeads: SignalHeads;
   peds: Ped[];
   police: PoliceState;
   jobs: JobManager;

@@ -29,6 +29,8 @@
 //    lanes spread over the whole width (offsets can be negative for the left lanes).
 //  - twin: the opposite-direction edge on the same segment with the same lane index (or the closest one), -1 if
 //    one-way. bridge: the lane is on a bridge (its pts carry the deck height).
+//  - left / right: the neighbouring lane in the SAME direction on the same segment (same from, to and roadId; lane
+//    index + 1 / - 1), -1 if none. Traffic changes lanes between them. Maps call linkLaneNeighbours(edges) once.
 //  - parking: cars are parked along this lane's kerb (its ParkingSpots carry `edge` = this lane). On a road with two
 //    or more lanes each way the kerbside lane IS the parking lane: traffic keeps out of it when another lane goes the
 //    same way (RoadRouter also avoids it). On a narrow two-way street with parking on one kerb, the lane pts are
@@ -81,7 +83,10 @@ export interface RoadNode {
   out: number[]; // lane edge ids leaving this node
   in: number[]; // lane edge ids arriving at this node
   roundabout: boolean;
+  /** Traffic lights control the node (ignored on a roundabout ring: entering traffic yields there). */
   signals: boolean;
+  /** Stop signs on every approach (an all-way stop). */
+  stop: boolean;
   deadEnd: boolean;
   /** Cars stop or yield here (see the contract above). false = pass-through. */
   junction: boolean;
@@ -111,6 +116,9 @@ export interface LaneEdge {
   bridge: boolean;
   halfWidth: number; // kerb-to-kerb half width of the whole road
   twin: number; // opposite-direction edge on the same segment, -1 if one-way
+  /** Same-direction neighbour lanes on this segment (lane + 1 = further from the kerb / lane - 1), -1 if none. */
+  left: number;
+  right: number;
   /** Cars park along this lane's kerb (see the contract): traffic avoids it when another lane goes the same way. */
   parking: boolean;
 }
@@ -142,6 +150,8 @@ export interface Poi {
   walkNode: number;
   /** The name is painted on the building's sign (real maps): systems that rename places must keep it. */
   signed?: boolean;
+  /** The map data's category (OSM-style, e.g. 'shop=car', 'amenity=parking'), if the map has one. */
+  cat?: string;
 }
 
 export interface ParkingSpot {
@@ -155,6 +165,8 @@ export interface ParkingSpot {
   /** The parking lane this kerbside spot stands in (-1 in a car park), and the distance along it. */
   edge: number;
   s: number;
+  /** Metres of kerb this kerbside spot stands for (spot spacing); default TUNING.vehicles.kerbSlotSpacing. */
+  span?: number;
 }
 
 /** A named street for minimap labels: its centre line as x,z pairs. */
@@ -322,6 +334,19 @@ export function projectOnLane(e: LaneEdge, x: number, z: number, out: LaneHit): 
   }
   out.dist = Math.sqrt(best);
   return out;
+}
+
+/**
+ * Fill every edge's left / right neighbour: the lane one further from (left) or nearer to (right) the kerb going the
+ * same way on the same segment (same from, to and roadId). Call once after building the edges.
+ */
+export function linkLaneNeighbours(edges: LaneEdge[]): void {
+  const byKey = new Map<string, number>();
+  for (const e of edges) byKey.set(`${e.from}|${e.to}|${e.roadId}|${e.lane}`, e.id);
+  for (const e of edges) {
+    e.left = byKey.get(`${e.from}|${e.to}|${e.roadId}|${e.lane + 1}`) ?? -1;
+    e.right = byKey.get(`${e.from}|${e.to}|${e.roadId}|${e.lane - 1}`) ?? -1;
+  }
 }
 
 /** Build pts/cum/len for a lane from a flat x,y,z list. */
@@ -736,17 +761,22 @@ export class WalkRouter {
     this.heap = new Heap(n * 4);
   }
 
-  /** Path from walk node a to b, both included: node count, or -1 if unreachable. */
-  path(a: number, b: number): number {
+  /**
+   * Path from walk node a to b, both included: node count, or -1 if unreachable. `cost` (optional, per walk node):
+   * a link costs its length times the mean of its two nodes' factors (e.g. < 1 on the towpath for people who
+   * prefer it); `minCost` must be the smallest factor in it, so the A* estimate stays a lower bound.
+   */
+  path(a: number, b: number, cost?: Float32Array, minCost = 1): number {
     const nodes = this.map.walk.nodes;
     const st = ++this.stamp;
     const goal = nodes[b];
     const heap = this.heap;
+    const hk = cost ? Math.min(1, minCost) : 1;
     heap.n = 0;
     this.g[a] = 0;
     this.prev[a] = -1;
     this.seen[a] = st;
-    heap.push(Math.hypot(nodes[a].x - goal.x, nodes[a].z - goal.z), a);
+    heap.push(Math.hypot(nodes[a].x - goal.x, nodes[a].z - goal.z) * hk, a);
     let found = false;
     while (heap.n > 0) {
       const n = heap.pop();
@@ -758,12 +788,12 @@ export class WalkRouter {
         const m = nb[i];
         if (this.done[m] === st) continue;
         const o = nodes[m];
-        const g = this.g[n] + Math.hypot(o.x - node.x, o.z - node.z);
+        const g = this.g[n] + Math.hypot(o.x - node.x, o.z - node.z) * (cost ? (cost[n] + cost[m]) * 0.5 : 1);
         if (this.seen[m] !== st || g < this.g[m]) {
           this.seen[m] = st;
           this.g[m] = g;
           this.prev[m] = n;
-          heap.push(g + Math.hypot(o.x - goal.x, o.z - goal.z), m);
+          heap.push(g + Math.hypot(o.x - goal.x, o.z - goal.z) * hk, m);
         }
       }
     }
@@ -865,6 +895,12 @@ export function validateCityMap(map: CityMap): MapReport {
       const t = edges[e.twin];
       if (!t || t.from !== e.to || t.to !== e.from) err(`edge ${i} twin ${e.twin} is not the reverse edge`);
     } else if (!e.oneway) warn(`two-way edge ${i} (${e.name ?? e.roadId}) has no twin`);
+    for (const [side, nb] of [['left', e.left], ['right', e.right]] as const) {
+      if (nb === -1 || nb === undefined) continue;
+      const o = edges[nb];
+      if (!o || o.from !== e.from || o.to !== e.to || o.roadId !== e.roadId || o.lane !== e.lane + (side === 'left' ? 1 : -1)) err(`edge ${i} ${side} neighbour ${nb} is not the next lane of the same segment`);
+      else if ((side === 'left' ? o.right : o.left) !== i) err(`edge ${i} ${side} neighbour ${nb} does not link back`);
+    }
     // the lane must actually start and end at its nodes (within the road's width)
     const a = nodes[e.from], b = nodes[e.to], p = e.pts, l = p.length - 3;
     const dA = Math.hypot(p[0] - a.x, p[2] - a.z), dB = Math.hypot(p[l] - b.x, p[l + 2] - b.z);

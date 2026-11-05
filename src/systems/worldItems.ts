@@ -37,6 +37,8 @@ export interface ItemsState {
   target: WorldItem | null; // item the player is looking at
   marker: THREE.Mesh;
   eventQueue: RAPIER.EventQueue;
+  /** Seeded items left out at load because their spot was no good (in a wall, water, at an edge). */
+  skipped: number;
 }
 
 const CAPACITY = 160; // per item type
@@ -62,18 +64,21 @@ export function createItems(w: World): ItemsState {
   const marker = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 4).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
   marker.visible = false;
   w.scene.add(marker);
-  return { items: [], art, meshes, material, byCollider: new Map(), target: null, marker, eventQueue: new w.R.EventQueue(true) };
+  return { items: [], art, meshes, material, byCollider: new Map(), target: null, marker, eventQueue: new w.R.EventQueue(true), skipped: 0 };
 }
 
-/** Create an item at rest on the ground at (x, z) (or `lift` metres above the ground, e.g. stacked, if given). */
-export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: number, lift?: number): WorldItem | null {
+/**
+ * Create an item at rest on the ground at (x, z) (or `lift` metres above the ground, e.g. stacked, if given). `near`:
+ * the height of the surface it belongs on (a bridge deck's walk node), so it lands on the deck, not the ground below.
+ */
+export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: number, lift?: number, near?: number): WorldItem | null {
   const S = w.itemsState;
   const im = S.meshes[type];
   if (im.count >= CAPACITY) return null;
   const R = w.R;
   const a = S.art[type];
   const def = IT.defs[type];
-  const y = w.city.heightAt(x, z) + (lift ?? 0.02);
+  const y = w.city.heightAt(x, z, near) + (lift ?? 0.02);
   q4.setFromEuler(new THREE.Euler(0, yaw, a.restRotZ, 'YXZ'));
   const body = w.physics.createRigidBody(
     R.RigidBodyDesc.dynamic()
@@ -190,6 +195,27 @@ export function scatterItems(w: World): void {
     const nx = p.curbX - p.x, nz = p.curbZ - p.z, l = Math.hypot(nx, nz) || 1;
     return { tx: -nz / l, tz: nx / l, nx: nx / l, nz: nz / l };
   };
+  /**
+   * A sane resting spot: not inside a building, not in the water, not in the carriageway (unless `road`), and on
+   * level ground: the surface a little way out on all four sides is within maxStep of it (never at the edge of a
+   * bridge deck, a pier, a kerb or a stair). `near`: the height of the surface it belongs on (decks).
+   */
+  const fits = (x: number, z: number, near?: number, road = false) => {
+    if (c.isBlocked(x, z) || (!road && c.isRoad(x, z))) return false;
+    const y = c.heightAt(x, z, near);
+    if (c.isWater(x, z) && y <= c.waterLevelAt(x, z) + IT.waterClearance) return false;
+    const e = IT.edgeProbe, b = IT.wallProbe;
+    for (let k = 0; k < 4; k++) {
+      const ox = k === 0 ? 1 : k === 1 ? -1 : 0, oz = k === 2 ? 1 : k === 3 ? -1 : 0;
+      if (c.isBlocked(x + ox * b, z + oz * b) || Math.abs(c.heightAt(x + ox * e, z + oz * e, y + 0.5) - y) > IT.maxStep) return false;
+    }
+    return true;
+  };
+  let skipped = 0;
+  const put = (type: ItemId, x: number, z: number, yaw: number, lift?: number, near?: number, road = false) => {
+    if (!fits(x, z, near, road)) { skipped++; return; }
+    spawnItem(w, type, x, z, yaw, lift, near);
+  };
   // litter along pavements
   const litter: ItemId[] = ['bottle', 'can', 'can', 'bottle', 'bag'];
   for (let k = 0; k < IT.litterCount; k++) {
@@ -199,51 +225,62 @@ export function scatterItems(w: World): void {
     const t = rng.range(0.15, 0.85);
     const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1;
     const off = rng.range(-1.1, 1.1);
-    spawnItem(w, rng.pick(litter), a.x + dx * t - (dz / l) * off, a.z + dz * t + (dx / l) * off, rng.range(0, Math.PI * 2));
+    put(rng.pick(litter), a.x + dx * t - (dz / l) * off, a.z + dz * t + (dx / l) * off, rng.range(0, Math.PI * 2), undefined, a.y + (b.y - a.y) * t);
   }
   // rubbish bags and boxes by shops, diners, bars and markets
   for (const p of pois) {
     if (!['shop', 'diner', 'bar', 'market', 'cafe'].includes(p.kind)) continue;
     const { tx, tz, nx, nz } = tangentOf(p);
+    const py = c.walk.nodes[p.walkNode]?.y;
     if (rng.chance(IT.bagClusterChance)) {
       const s = rng.range(2.5, 4) * (rng.chance(0.5) ? 1 : -1);
-      for (let k = 0; k < rng.int(1, 3); k++) spawnItem(w, 'bag', p.x + tx * (s + k * 0.45) - nx * 1.0, p.z + tz * (s + k * 0.45) - nz * 1.0, rng.range(0, 6));
+      for (let k = 0; k < rng.int(1, 3); k++) put('bag', p.x + tx * (s + k * 0.45) - nx * 0.75, p.z + tz * (s + k * 0.45) - nz * 0.75, rng.range(0, 6), undefined, py);
     }
     if (rng.chance(IT.boxChance)) {
       const s = rng.range(-4, -2.5);
-      spawnItem(w, 'box', p.x + tx * s - nx * 1.1, p.z + tz * s - nz * 1.1, rng.range(0, 6));
-      if (rng.chance(0.5)) spawnItem(w, 'box', p.x + tx * s - nx * 1.1, p.z + tz * s - nz * 1.1, rng.range(0, 6), 0.32);
+      const bx = p.x + tx * s - nx * 0.8, bz = p.z + tz * s - nz * 0.8;
+      if (fits(bx, bz, py)) {
+        spawnItem(w, 'box', bx, bz, rng.range(0, 6), undefined, py);
+        if (rng.chance(0.5)) spawnItem(w, 'box', bx, bz, rng.range(0, 6), 0.32, py);
+      } else skipped++;
     }
   }
-  // roadworks: lines of cones along a kerb
-  const taken = (x: number, z: number) => w.vehicles.some((v) => Math.hypot(v.px - x, v.pz - z) < 9);
+  // roadworks: lines of cones along a kerb (where no car is parked)
+  const taken = (x: number, z: number) => w.vehicles.some((v) => Math.hypot(v.px - x, v.pz - z) < 9) || (w.parked?.cars.some((r) => Math.hypot(r.x - x, r.z - z) < 9) ?? false);
   for (let k = 0, tries = 0; k < IT.coneClusters && tries < 200; tries++) {
     const s = rng.pick(c.parkingSpots);
-    if (taken(s.x, s.z)) continue;
+    if (s.cls === 'lot' || taken(s.x, s.z)) continue;
     const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
-    for (let i = 0; i < IT.conesPerCluster; i++) spawnItem(w, 'cone', s.x + fx * (i * 2.4 - 3.6), s.z + fz * (i * 2.4 - 3.6), 0);
+    for (let i = 0; i < IT.conesPerCluster; i++) put('cone', s.x + fx * (i * 2.4 - 3.6), s.z + fz * (i * 2.4 - 3.6), 0, undefined, s.y, true);
     k++;
   }
   // brick piles against the south side of a few buildings (skipped where that spot is inside something)
   for (let k = 0; k < IT.brickPiles; k++) {
     const b = rng.pick(c.buildings);
     const x = (b.minX + b.maxX) / 2 + rng.range(-3, 3), z = b.maxZ + 0.9;
-    if (c.isBlocked(x, z)) continue;
+    if (!fits(x, z) || !fits(x + 0.5, z)) { skipped++; continue; }
     for (let i = 0; i < IT.bricksPerPile; i++) spawnItem(w, 'brick', x + (i % 3) * 0.24 - 0.24, z, 0, 0.02 + Math.floor(i / 3) * 0.072);
   }
-  // bats by the gym, wrenches at the garage (fallbacks keep every seed stocked)
+  // bats by the gym, wrenches at the garage (fallbacks keep every seed stocked); on the pavement in front of the door
+  // if the spot by the wall is no good
   const gyms = pois.filter((p) => p.kind === 'gym');
   const garages = pois.filter((p) => p.kind === 'garage');
-  for (const p of (gyms.length ? gyms : pois.filter((q) => q.kind === 'park')).slice(0, IT.gymsWithBats)) {
+  const atDoor = (type: ItemId, p: (typeof pois)[number], along: number, out: number, yaw: number) => {
     const { tx, tz, nx, nz } = tangentOf(p);
-    for (let i = 0; i < IT.batsPerGym; i++) spawnItem(w, 'bat', p.x + tx * (2.5 + i * 0.5) - nx * 1.0, p.z + tz * (2.5 + i * 0.5) - nz * 1.0, rng.range(0, 0.4));
+    const py = c.walk.nodes[p.walkNode]?.y;
+    const x = p.x + tx * along - nx * out, z = p.z + tz * along - nz * out;
+    if (fits(x, z, py)) spawnItem(w, type, x, z, yaw, undefined, py);
+    else if (fits(p.x + tx * along * 0.5, p.z + tz * along * 0.5, py)) spawnItem(w, type, p.x + tx * along * 0.5, p.z + tz * along * 0.5, yaw, undefined, py);
+    else skipped++;
+  };
+  for (const p of (gyms.length ? gyms : pois.filter((q) => q.kind === 'park')).slice(0, IT.gymsWithBats)) {
+    for (let i = 0; i < IT.batsPerGym; i++) atDoor('bat', p, 2.5 + i * 0.5, 1.0, rng.range(0, 0.4));
   }
   for (const p of garages.length ? garages : pois.filter((q) => q.kind === 'market').slice(0, 1)) {
-    const { tx, tz, nx, nz } = tangentOf(p);
-    for (let i = 0; i < IT.wrenchesPerGarage; i++) spawnItem(w, 'wrench', p.x + tx * (1.5 + i * 0.6) - nx * 1.0, p.z + tz * (1.5 + i * 0.6) - nz * 1.0, rng.range(0, 6));
+    for (let i = 0; i < IT.wrenchesPerGarage; i++) atDoor('wrench', p, 1.5 + i * 0.6, 1.0, rng.range(0, 6));
   }
+  w.itemsState.skipped = skipped;
 }
-
 /** Render a small icon for each item type (used by the hotbar). */
 export function renderItemIcons(w: World): Record<ItemId, string> {
   const S = w.itemsState;
