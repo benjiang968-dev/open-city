@@ -18,7 +18,7 @@ import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasteri
 import { buildBridges, buildStairs, rasterizeStairs } from './bridges';
 import { buildBuildings, createFacadeMaterial, rasterizeBuildings } from './facades';
 import { buildMonuments } from './monuments';
-import { buildLots, rasterizeLots, type GeoLot } from './lots';
+import { buildLots, conformToLots, planLots, rasterizeLots, type GeoLot } from './lots';
 import { buildProps } from './props';
 
 const G = TUNING.geo;
@@ -180,8 +180,10 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   const dropped = buildingsUnderDecks(doc, net, ras);
   for (const id of clipped.drop) dropped.add(id);
   rasterizeBuildings(doc, ras, dropped);
+  const lotPlans = planLots(doc, ras, net);
+  conformToLots(net, lotPlans);
   rasterizeNet(net, ras, doc.parking);
-  const lotInfo = rasterizeLots(doc, ras, net);
+  const lotInfo = rasterizeLots(lotPlans, ras);
   const { plazaH } = rasterizePlaza(doc, ras);
   const stairs = rasterizeStairs(doc, ras);
   ras.blendBands();
@@ -378,7 +380,8 @@ function clipBuildingsToStreets(doc: GeoDoc, net: RoadNet): { clipped: string[];
   const SEGS = 1024;
   const grid = new SegGrid(32);
   for (const e of net.edges) {
-    if (e.deck) continue;
+    // (real data: a driveway or alley never cuts a building; the importer ends it at the facade)
+    if (e.deck || (!doc.meta.synthetic && (e.cls === 'service' || e.road.service))) continue;
     for (let k = 1; k < e.pts.length; k++) grid.add(e.pts[k - 1][0], e.pts[k - 1][1], e.pts[k][0], e.pts[k][1], e.id * SEGS + k, e.hw + G.sidewalkWidth + 2);
   }
   const MARGIN = 0.3; // m left between the back of the sidewalk and the cut facade

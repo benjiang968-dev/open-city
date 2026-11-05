@@ -31,11 +31,11 @@ import { clipArea, clipPolyline, clipRingSH, centroid, distPointSeg2, lineLength
 // =================================================================================================== area
 /**
  * Game area (lon/lat), about 2.0 km x 1.9 km: west past the Key Bridge landing into the Georgetown University campus,
- * east just past Washington Circle (to 22nd St NW), south into the Potomac (the waterfront, the Rock Creek mouth and
+ * east just past Washington Circle (22nd St NW and its sidewalks inside), south into the Potomac (the waterfront, the Rock Creek mouth and
  * the Watergate shore, north of Theodore Roosevelt Island), north past R St (the edge runs through Dumbarton Oaks,
  * Montrose Park, Oak Hill Cemetery and the Rock Creek woods east of Wisconsin Ave).
  */
-export const CROP = { minlon: -77.0726, minlat: 38.8986, maxlon: -77.0488, maxlat: 38.9157 };
+export const CROP = { minlon: -77.0726, minlat: 38.8986, maxlon: -77.0483, maxlat: 38.9157 };
 /** Frame origin: the knowledge-based map's (scripts/georgetownFromSpec.mjs), so old and new positions compare 1:1. */
 const ORIGIN = { lat: 38.9065, lon: -77.061 };
 const CACHE = 'data/overture';
@@ -106,6 +106,7 @@ const POI_MIN_CONFIDENCE = 0.55; // Overture places below this are skipped
 const OFFICE_MIN_CONFIDENCE = 0.8; // offices / professional services need more (most sit on upper floors)
 const MAX_OFFICES_PER_BUILDING = 2;
 const POI_BUILDING_SNAP = 10; // m: a place outside every footprint joins the nearest building this close
+const MIN_LANE_GAP = 2.6; // m: an alley between buildings is narrowed to its gap, never below this (one car)
 // Synthesized street furniture (flagged synth), never on top of real features.
 const SYNTH = {
   streetTreeStep: 12, // m between street trees on shopping streets
@@ -769,6 +770,70 @@ const buildingAt = (x, y, snap = 0) => {
   return found;
 };
 
+// ============================================================================================= service roads into buildings
+// A driveway into a garage, an alley under a building or a service road through a courtyard building would put a car
+// inside a building's walls (the world builds every footprint solid). Service roads are cut where they enter a
+// footprint (the part outside is kept: it now ends at the facade); streets are never cut (the world trims the
+// building back instead).
+{
+  const inside = (x, z) => !!buildingAt(x, -z, 0);
+  const out = [];
+  let cut = 0, dropped = 0;
+  const minorRoad = (r) => r.highway === 'service' || r.highway === 'road' || (!r.name && (r.highway === 'unclassified' || r.highway === 'living_street'));
+  for (const r of roads) {
+    if (!minorRoad(r) || r.bridge || r.tunnel) { out.push(r); continue; }
+    // walk the line at 1 m and split where it enters / leaves a footprint
+    const dense = [];
+    for (let i = 0; i < r.pts.length; i++) {
+      if (i > 0) {
+        const a = r.pts[i - 1], b = r.pts[i], L = Math.hypot(b[0] - a[0], b[1] - a[1]), n = Math.ceil(L);
+        for (let k = 1; k < n; k++) dense.push([r1(a[0] + ((b[0] - a[0]) * k) / n), r1(a[1] + ((b[1] - a[1]) * k) / n), 0]);
+      }
+      dense.push([r.pts[i][0], r.pts[i][1], 1]);
+    }
+    if (!dense.some((p) => inside(p[0], p[1]))) { out.push(r); continue; }
+    const runs = [];
+    let cur = [];
+    for (const p of dense) {
+      if (inside(p[0], p[1])) { if (cur.length) runs.push(cur); cur = []; continue; }
+      cur.push(p);
+    }
+    if (cur.length) runs.push(cur);
+    const keep = runs.filter((run) => lineLength(run) >= 4);
+    if (!keep.length) { dropped++; continue; }
+    cut++;
+    keep.forEach((run, i) => {
+      // keep the original vertices (connectors) and the cut ends; drop the 1 m helpers in between
+      const pts = run.filter((p, k) => p[2] === 1 || k === 0 || k === run.length - 1).map((p) => [p[0], p[1]]);
+      out.push(i === 0 ? { ...r, pts } : { ...r, id: uniqueId(r.id), pts });
+    });
+  }
+  roads.length = 0;
+  roads.push(...out);
+  stats.serviceIntoBuildings = { cut, dropped };
+  // narrow alleys and driveways between buildings: no wider than the gap (median distance to the nearest footprint on
+  // either side, sampled every 3 m), never under MIN_LANE_GAP (one car)
+  let narrowed = 0;
+  for (const r of roads) {
+    if (!minorRoad(r) || r.bridge || r.tunnel) continue;
+    const pts = r.pts.map(([x, z]) => [x, -z]);
+    const dl = [], dr = [];
+    sampleLine(pts, 3, (x, y, ux, uy) => {
+      for (const [side, arr] of [[1, dr], [-1, dl]]) {
+        for (let o = 0.5; o <= r.width / 2 + 0.5; o += 0.25) {
+          if (buildingAt(x + uy * side * o, y - ux * side * o, 0)) { arr.push(o); break; }
+        }
+      }
+    });
+    const n = Math.max(1, Math.round(lineLength(pts) / 3));
+    if (dl.length + dr.length < 0.3 * n) continue;
+    const med = (a) => (a.length ? a.sort((p, q) => p - q)[a.length >> 1] : r.width / 2 + 1);
+    const w = Math.max(MIN_LANE_GAP, Math.min(r.width, 2 * Math.min(med(dl), med(dr)) - 0.3));
+    if (w < r.width - 0.2) { r.width = Math.round(w * 4) / 4; r.lanes = 1; narrowed++; }
+  }
+  stats.serviceIntoBuildings.narrowed = narrowed;
+}
+
 // ============================================================================================= bridge areas
 for (const f of D.infrastructure) {
   const p = f.properties;
@@ -1041,7 +1106,7 @@ for (const rp of realProps) if (rp[2] !== 'signals' && rp[2] !== 'stop') props.p
 // the north-east (Kalorama is not Georgetown) and on the Virginia shore south of the Potomac (with Theodore Roosevelt
 // Island). Everything there is dropped and the land becomes woodland, so streets end at the woods or the river
 // instead of being cut mid-block. Roads crossing into a mask are cut at its edge (they lead off the map).
-const MASK_NE = [[300, -1021.3], [1058.2, -1021.3], [1058.2, -540], [960, -540], [880, -575], [811, -608], [742, -661], [706, -716], [640, -745], [540, -769], [471, -863]];
+const MASK_NE = [[300, -3000], [3000, -3000], [3000, -540], [960, -540], [880, -575], [811, -608], [742, -661], [706, -716], [640, -745], [540, -769], [471, -863]];
 const potomacCentre = (waterways.find((w) => w.kind === 'river')?.pts ?? []);
 const riverRings = water.filter((w) => w.kind === 'river').map((w) => w.pts);
 /** output-frame (x, z): outside the playable area? */
@@ -1368,7 +1433,7 @@ L.push(`  parks ${parks.length}: ${by(parks, (p) => p.kind).map(([k, v]) => `${k
 L.push(`  props ${props.length}: ${by(props, (p) => `${p[2]}${p[3] ? '*' : ''}`).map(([k, v]) => `${k} ${v}`).join(', ')} (* synth)`);
 L.push(`  signals: ${JSON.stringify(stats.signals)}`);
 L.push(`  terrain: z${heights.demZoom} (${heights.demPx.toFixed(1)} m/px) resampled to ${args.spacing} m (${heights.grid.nx} x ${heights.grid.nz}); river surface at ${heights.riverLevel.toFixed(2)} m NAVD88 = 0; range ${heights.grid.data.reduce((a, b) => Math.min(a, b))} .. ${heights.grid.data.reduce((a, b) => Math.max(a, b))} m`);
-L.push(`  clean edge: removed ${JSON.stringify(stats.masked)}`);
+L.push(`  clean edge: removed ${JSON.stringify(stats.masked)}; service roads cut at building footprints ${JSON.stringify(stats.serviceIntoBuildings)}`);
 L.push(`  dropped: ${Object.entries(stats.dropped).map(([k, v]) => `${k} ${v}`).join('; ')}`);
 for (const n of stats.notes) L.push(`  note: ${n}`);
 console.log(L.join('\n'));

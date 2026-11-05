@@ -128,6 +128,8 @@ export interface REdge {
 export interface RoadNet {
   nodes: RNode[];
   edges: REdge[];
+  /** the knowledge-based map (true) or imported real data (false) */
+  synthetic: boolean;
   /** Height of an edge's surface at arc length s. */
   profAt(e: REdge, s: number): number;
   /** Point and direction at arc length s. */
@@ -357,7 +359,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
       const s = (rx * -Bm.uz - rz * -Bm.ux) / det;
       const t = (A.ux * rz - A.uz * rx) / det;
       if (delta < Math.PI) {
-        const R = delta < 0.6 ? GORE_RADIUS : G.cornerRadius;
+        const R = delta < 0.6 ? GORE_RADIUS : cornerRadiusFor(A.edge, Bm.edge, synthetic);
         const d = Math.min(30, R / Math.tan(delta / 2));
         corners.push({ kind: 'in', s, t, d, R, X: [P0x + A.ux * s, P0z + A.uz * s] });
         req[k] = Math.max(req[k], Math.max(0, s) + d);
@@ -508,7 +510,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     }
     n.h = s / c;
   }
-  const net: RoadNet = { nodes, edges, profAt, pointAt: (e, s, o) => { const q = pointAtS(e, s); o.x = q.x; o.z = q.z; o.ux = q.ux; o.uz = q.uz; }, project: projectEdge };
+  const net: RoadNet = { nodes, edges, synthetic, profAt, pointAt: (e, s, o) => { const q = pointAtS(e, s); o.x = q.x; o.z = q.z; o.ux = q.ux; o.uz = q.uz; }, project: projectEdge };
   return net;
 
   function profAt(e: REdge, s: number): number {
@@ -520,6 +522,16 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const t = (s - c[lo]) / (c[hi] - c[lo] || 1);
     return e.prof[lo] + (e.prof[hi] - e.prof[lo]) * t;
   }
+}
+
+/** Kerb radius at a street corner: the spec map uses one radius; real data has driveways, alleys and tight corners. */
+function cornerRadiusFor(a: REdge, b: REdge, synthetic: boolean): number {
+  if (synthetic) return G.cornerRadius;
+  const minor = (e: REdge) => e.cls === 'service' || e.cls === 'road' || e.cls === 'living_street';
+  const local = (e: REdge) => e.cls === 'residential' || e.cls === 'unclassified';
+  if (minor(a) || minor(b)) return G.cornerRadiusService;
+  if (local(a) || local(b)) return G.cornerRadiusLocal;
+  return G.cornerRadius;
 }
 
 function shiftFreeway(pts: Pt[]): Pt[] {
@@ -610,6 +622,13 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       const wA = s <= tA ? 1 : cosFall((s - tA) / lamA);
       const wB = s >= e.L - tB ? 1 : cosFall((e.L - tB - s) / lamB);
       e.prof[k] = S[k] + corrA * wA + corrB * wB;
+      // leave each flat plateau with zero grade and ease into the street's grade (a vertical curve) instead of
+      // kinking at the junction's edge
+      if (!net.synthetic) {
+        const ease = Math.min(G.plateauEase, free * 0.3);
+        e.prof[k] = e.a.h + (e.prof[k] - e.a.h) * smoothStep((s - tA) / ease);
+        e.prof[k] = e.b.h + (e.prof[k] - e.b.h) * smoothStep((e.L - tB - s) / ease);
+      }
     }
   };
   // nodes inside a bridge (every arm a deck: real data splits a bridge where ramps join or its level changes) do not
@@ -667,8 +686,10 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
   }
   // bridge approaches: an at-grade edge leaving a raised deck end may not be steeper than maxGrade, so its other end
   // is raised too (a few hops at most). Without this the street ramped off the M St bridge over Rock Creek at 20 %
-  // with a crest that launches cars. Nodes that carry a deck keep their own height.
-  for (let hop = 0; hop < 4; hop++) {
+  // with a crest that launches cars. Nodes that carry a deck keep their own height. Real (imported) data: no hops: its
+  // bridge ends sit on real embankments, and in an interchange the hops lifted the Rock Creek valley roads by 11 m
+  // through a ramp up to the K St bridge.
+  for (let hop = 0; hop < (net.synthetic ? 4 : 0); hop++) {
     let changed = false;
     for (const e of atGrade) {
       for (const [R, O] of [[e.a, e.b], [e.b, e.a]] as [RNode, RNode][]) {
@@ -716,10 +737,16 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
     }
     // ease the kinks (vertical curves), keep plateaus exact
     const sm = smoothArr(e.prof, c, 12);
+    const free = e.L - e.trimA - e.trimB, ease = Math.min(G.plateauEase, free * 0.3);
     for (let k = 0; k < n; k++) {
       const s = c[k];
       if (s <= e.trimA + 0.01 || s >= e.L - e.trimB - 0.01) continue;
-      e.prof[k] = Math.max(sm[k], req[k] === -Infinity ? -Infinity : req[k] - 0.15);
+      let v = sm[k];
+      if (!net.synthetic) {
+        v = e.a.h + (v - e.a.h) * smoothStep((s - e.trimA) / ease);
+        v = e.b.h + (v - e.b.h) * smoothStep((e.L - e.trimB - s) / ease);
+      }
+      e.prof[k] = Math.max(v, req[k] === -Infinity ? -Infinity : req[k] - 0.15);
     }
   }
   conformOverlaps(net);
@@ -802,6 +829,10 @@ function conformOverlaps(net: RoadNet) {
   }
 }
 
+function smoothStep(t: number) {
+  const c = clamp(t, 0, 1);
+  return c * c * (3 - 2 * c);
+}
 function cosFall(t: number) {
   return t >= 1 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * clamp(t, 0, 1));
 }

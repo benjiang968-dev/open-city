@@ -130,7 +130,7 @@ async function boot() {
   (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
-  (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
+  (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city), roadLimits: TUNING.geo.roadLimits };
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {

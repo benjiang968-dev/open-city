@@ -1826,3 +1826,138 @@ export async function probe(page, S) {
   await S.start(page);
   return page.evaluate((src) => { const w = window.__oc, c = w.city, M = window.__ocMap; return eval(src); }, process.env.PROBE ?? 'null');
 }
+
+// Road smoothness audit (MAP=georgetown node scripts/shot.mjs x roadaudit): casts rays at the static colliders along
+// every lane (centre and both wheel tracks, every 0.5 m), across every junction (each arriving lane to each leaving
+// lane, straight chord) and along every walk link, and measures grade, grade change per metre, kinks (second
+// difference: bumps, seams, deck joins), cross-slope and the gap between the lane and the surface under it. Limits:
+// TUNING.geo.roadLimits. Prints counts over the limits, percentiles and the worst places.
+export async function roadaudit(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, M = window.__ocMap, Lm = M.roadLimits, R = w.R, P = w.physics;
+    const E = c.roads.edges, N = c.roads.nodes;
+    const ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+    const fixedOnly = (col) => { const b = col.parent(); return !b || b.isFixed(); };
+    const cast = (x, y, z, down) => {
+      ray.origin.x = x; ray.origin.y = y; ray.origin.z = z;
+      const hit = P.castRay(ray, down, true, undefined, undefined, undefined, undefined, fixedOnly);
+      return hit ? y - hit.timeOfImpact : NaN;
+    };
+    const main = new Set(['primary', 'secondary', 'trunk', 'parkway']);
+    const LP = { x: 0, y: 0, z: 0, heading: 0 };
+    const stat = () => ({ n: 0, over: 0, worst: [] });
+    const S2 = { grade: stat(), gradeChange: stat(), step: stat(), cross: stat(), gap: stat(), junction: stat(), walk: stat(), walkWall: stat(), holes: stat() };
+    const vals = { grade: [], gradeChange: [], step: [], cross: [] };
+    const byCls = {};
+    let rs = 7;
+    const rnd = () => ((rs = (Math.imul(rs, 1103515245) + 12345) >>> 0) / 4294967296);
+    let curEnd = false;
+    const note = (st, v, lim, where) => {
+      st.n++;
+      if (v > lim) {
+        st.over++;
+        const key = `${Object.keys(S2).find((k) => S2[k] === st)}:${where[1]}${curEnd ? ':end' : ''}`;
+        byCls[key] = (byCls[key] ?? 0) + 1;
+        // a reservoir sample of typical cases (the worst list only shows the extremes)
+        st.sample ??= [];
+        if (st.sample.length < 40) st.sample.push([+v.toFixed(3), ...where, curEnd ? 'end' : 'mid']);
+        else { const j = Math.floor(rnd() * st.over); if (j < 40) st.sample[j] = [+v.toFixed(3), ...where, curEnd ? 'end' : 'mid']; }
+        st.worst.push([+v.toFixed(3), ...where]);
+        if (st.worst.length > 4000) { st.worst.sort((a, b) => b[0] - a[0]); st.worst.length = 2000; }
+      }
+    };
+    const DS = 0.5;
+    for (const e of E) {
+      if (e.len < 2) continue;
+      const isMain = main.has(e.cls), isSvc = e.cls === 'service';
+      const n = Math.floor(e.len / DS) + 1;
+      const ys = new Float32Array(n);
+      const where = (s) => { curEnd = s < e.trimStart + 6 || s > e.len - e.trimEnd - 6; M.laneSample(e, s, LP); return [e.name ?? e.roadId, e.cls, Math.round(LP.x), Math.round(LP.z)]; };
+      for (let i = 0; i < n; i++) {
+        const s = Math.min(e.len, i * DS);
+        M.laneSample(e, s, LP);
+        const y = cast(LP.x, LP.y + 1.5, LP.z, 4);
+        ys[i] = y;
+        if (Number.isNaN(y)) { note(S2.holes, 1, 0.5, where(s)); continue; }
+        note(S2.gap, Math.abs(y - LP.y), Lm.maxSurfaceGap, where(s));
+        if (i % 2 === 0) {
+          const rx = -Math.cos(LP.heading) * 0.8, rz = Math.sin(LP.heading) * 0.8;
+          const yl = cast(LP.x - rx, LP.y + 1.5, LP.z - rz, 4), yr = cast(LP.x + rx, LP.y + 1.5, LP.z + rz, 4);
+          if (!Number.isNaN(yl) && !Number.isNaN(yr)) { const cs = Math.abs(yl - yr) / 1.6; vals.cross.push(cs); note(S2.cross, cs, Lm.maxCrossSlope, where(s)); }
+        }
+      }
+      // kinks: second difference over 0.5 m (a seam, a bump, a deck join); grades on a 4 m baseline
+      for (let i = 1; i + 1 < n; i++) {
+        if (Number.isNaN(ys[i - 1] + ys[i] + ys[i + 1])) continue;
+        const k = Math.abs(ys[i + 1] - 2 * ys[i] + ys[i - 1]);
+        vals.step.push(k);
+        note(S2.step, k, Lm.maxStep, where(i * DS));
+      }
+      const g = new Float32Array(n).fill(NaN);
+      for (let i = 4; i + 4 < n; i++) if (!Number.isNaN(ys[i - 4] + ys[i + 4])) g[i] = (ys[i + 4] - ys[i - 4]) / 4;
+      for (let i = 4; i + 4 < n; i++) {
+        if (Number.isNaN(g[i])) continue;
+        vals.grade.push(Math.abs(g[i]));
+        note(S2.grade, Math.abs(g[i]), isMain ? Lm.maxGradeMain : isSvc ? Lm.maxGradeService : Lm.maxGrade, where(i * DS));
+        if (i + 2 < n && i >= 2 && !Number.isNaN(g[i - 2] + g[i + 2])) {
+          const gc = Math.abs(g[i + 2] - g[i - 2]) / 2;
+          vals.gradeChange.push(gc);
+          note(S2.gradeChange, gc, isMain ? Lm.maxGradeChangeMain : isSvc ? Lm.maxGradeChangeService : Lm.maxGradeChange, where(i * DS));
+        }
+      }
+    }
+    // junctions: arriving lane end -> leaving lane start, a straight chord (the plateau and its seams with the arms)
+    for (const nd of N) {
+      if (!nd.junction) continue;
+      for (const ia of nd.in) for (const ob of nd.out) {
+        const a = E[ia], b = E[ob];
+        if (b.twin === a.id && !nd.deadEnd) continue;
+        M.laneSample(a, a.len - Math.min(a.len, 3), LP);
+        const ax = LP.x, ay = LP.y, az = LP.z;
+        M.laneSample(b, Math.min(b.len, 3), LP);
+        const bx = LP.x, by = LP.y, bz = LP.z;
+        const L = Math.hypot(bx - ax, bz - az);
+        if (L < 1) continue;
+        const m = Math.ceil(L / DS);
+        let y0 = NaN, y1 = NaN, worst = 0, wx = 0, wz = 0;
+        for (let i = 0; i <= m; i++) {
+          const t = i / m, x = ax + (bx - ax) * t, z = az + (bz - az) * t, yy = ay + (by - ay) * t;
+          const y = cast(x, yy + 1.5, z, 4);
+          if (!Number.isNaN(y + y0 + y1)) { const k = Math.abs(y - 2 * y1 + y0); if (k > worst) { worst = k; wx = x; wz = z; } }
+          y0 = y1; y1 = y;
+        }
+        note(S2.junction, worst, Lm.maxJunctionStep, [`${a.name ?? a.roadId} -> ${b.name ?? b.roadId}`, nd.id, Math.round(wx), Math.round(wz)]);
+      }
+    }
+    // walk links: steps along the way people walk (kerbs at crossings are 0.15 m)
+    const W = c.walk.nodes;
+    for (const a of W) for (const j of a.nbrs) {
+      if (j < a.id) continue;
+      const b = W[j];
+      const L = Math.hypot(b.x - a.x, b.z - a.z);
+      if (L < 0.5) continue;
+      const m = Math.ceil(L / DS);
+      let prev = NaN, worst = 0, wx = 0, wz = 0;
+      for (let i = 0; i <= m; i++) {
+        const t = i / m, x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t, yy = a.y + (b.y - a.y) * t;
+        const y = cast(x, yy + 1.2, z, 3);
+        if (!Number.isNaN(y + prev) && Math.abs(y - prev) > worst) { worst = Math.abs(y - prev); wx = x; wz = z; }
+        prev = y;
+      }
+      note(S2.walk, worst, Lm.maxWalkStep, [a.kind + '-' + b.kind, a.street ?? '', Math.round(wx), Math.round(wz)]);
+      if (worst > 0.45) note(S2.walkWall, worst, 0.45, [a.kind + '-' + b.kind, a.street ?? '', Math.round(wx), Math.round(wz)]);
+    }
+    const pct = (a, q) => { if (!a.length) return 0; a.sort((x, y) => x - y); return +a[Math.min(a.length - 1, Math.floor(a.length * q))].toFixed(3); };
+    curEnd = false;
+    const out = { limits: Lm, lanes: E.length, metrics: {}, areas: {}, byClass: byCls };
+    // where the over-limit samples are: 250 m cells
+    for (const [k, st] of Object.entries(S2)) for (const wv of st.worst) { const key = `${Math.floor(wv[wv.length - 2] / 250) * 250},${Math.floor(wv[wv.length - 1] / 250) * 250}`; out.areas[key] = (out.areas[key] ?? 0) + 1; }
+    for (const [k, st] of Object.entries(S2)) {
+      st.worst.sort((a, b) => b[0] - a[0]);
+      out.metrics[k] = { samples: st.n, over: st.over, worst: st.worst.slice(0, 12), sample: st.sample ?? [] };
+      if (vals[k]) Object.assign(out.metrics[k], { p50: pct(vals[k], 0.5), p99: pct(vals[k], 0.99), p999: pct(vals[k], 0.999), max: pct(vals[k], 1) });
+    }
+    return out;
+  });
+}

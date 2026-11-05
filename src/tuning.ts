@@ -631,6 +631,9 @@ const RAW = {
     sidewalkWidth: 3, // m from the kerb to the back of the sidewalk (the data's sidewalk lines run 1.5 m from the kerb)
     kerbHeight: 0.15, // m step from road to sidewalk; car wheels feel it, people step up it
     cornerRadius: 6, // m kerb radius at street corners
+    cornerRadiusLocal: 4.5, // m at corners with a residential street (real data; Georgetown's corners are tight)
+    cornerRadiusService: 2, // m where a driveway, alley or service road meets a street (real data)
+    plateauEase: 10, // m over which a road leaves a flat junction plateau into its grade (real data: no kink at the junction)
     maxGrade: 0.075, // steepest grade (rise/run) the generator gives ramps and bridge approaches
     roadClearance: 5, // m of headroom under a deck that crosses a road
     pathClearance: 2.6, // m of headroom under a deck that crosses a towpath or trail
@@ -641,6 +644,25 @@ const RAW = {
     gradeSeparation: 2.5, // m: overlapping carriageways closer in height than this are one surface (the smaller road conforms to the bigger); more is a real grade separation
     conformBlend: 12, // m over which a road blends into the surface of a bigger road it overlaps
     overlayTolerance: 0.25, // m: an at-grade road this far off the raster's surface is a grade separation (kept as its own surface)
+    /**
+     * Smoothness limits the road audit and drive test hold the generated roads to (MAP=georgetown node scripts/shot.mjs
+     * x roadaudit / roaddrive). Terrain keeps its hills; these bound what a road does on top of them.
+     */
+    roadLimits: {
+      maxGrade: 0.2, // rise/run on any lane, 4 m baseline (Georgetown's steepest real streets are 15-18 %)
+      maxGradeMain: 0.12, // primary, secondary, trunk and parkway lanes
+      maxGradeChange: 0.05, // grade change per metre along any lane (vertical curve; 0.05/m at 30 km/h is ~0.35 g)
+      maxGradeChangeMain: 0.03, // per metre on main roads (0.03/m at 50 km/h is ~0.6 g peak over a 1 m kink, softened by suspension)
+      maxGradeService: 0.25, // driveways, alleys, parking aisles (real ones are steep and short)
+      maxGradeChangeService: 0.08, // per metre on service roads (walking pace)
+      maxStep: 0.04, // m: a kink in the surface (second difference over 0.5 m samples) along a lane: a bump or a seam
+      maxCrossSlope: 0.08, // rise/run across the wheel tracks (1.6 m)
+      maxSurfaceGap: 0.3, // m between a lane's height and the collider under it (a hole, or a lane floating / buried)
+      maxJunctionStep: 0.06, // m: kink on a straight path through a junction (arm to arm: plateau seams)
+      maxWalkStep: 0.3, // m: a step along a walk link (kerbs are 0.15 m, two kerbs or a stair riser pair at most; the player climbs 0.45)
+      maxVertAccel: 4.5, // m/s²: peak chassis vertical acceleration (beyond gravity) in the drive test at street speed
+      maxAirtime: 0.08, // s with all four wheels off the ground in the drive test
+    },
     stairWallFrom: 0.2, // m: a stair's side walls start once it has risen this far above its foot (the flat run-in stays open)
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)

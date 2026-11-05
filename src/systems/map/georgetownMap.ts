@@ -399,25 +399,23 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
       }
     }
     if (!node) return null;
-    // the poly of `street` leaving that node that is long enough, preferring straight on
-    const cand = polys.map((P, pi) => ({ P, pi })).filter(({ P }) => P.name === street && (P.nodeA === node.id || P.nodeB === node.id) && !P.deck);
+    // the kerbside lane of `street` about `along` metres from that junction (leaving it: lane 1, arriving: -1), clear of
+    // junction boxes; real data splits a street at every driveway, so the spot may lie a few pieces away
+    const node0 = node;
     let best: { edge: number; s: number } | null = null, bestScore = -Infinity;
-    for (const { P, pi } of cand) {
-      const atStart = P.nodeA === node.id;
-      const L = polyLength(P);
-      const sFromNode = Math.min(Math.max(along, 0), L - 8);
-      // lane leaving the node: travels away from it
-      const leaving = atStart ? polyLanes[pi].fwd : polyLanes[pi].bwd;
-      const arriving = atStart ? polyLanes[pi].bwd : polyLanes[pi].fwd;
-      const list = lane === 1 ? leaving : arriving;
-      if (!list.length) continue;
-      const e = edges[list[0]];
+    for (const e of edges) {
+      if (e.name !== street || e.bridge || e.lane !== 0) continue;
       const lo = e.trimStart + 4, hi = e.len - e.trimEnd - 4;
-      if (hi < lo) continue; // all junction box
-      const s = Math.max(lo, Math.min(hi, lane === 1 ? sFromNode : e.len - sFromNode)); // as close to `along` as fits
-      laneSample(e, s, LP);
-      const score = heading === undefined ? 0 : Math.cos(LP.heading - heading);
-      if (score > bestScore) { bestScore = score; best = { edge: e.id, s }; }
+      if (hi < lo) continue;
+      for (let s = lo; s <= hi; s += 3) {
+        laneSample(e, s, LP);
+        const d = Math.hypot(LP.x - node0.x, LP.z - node0.z);
+        if (d > along + 60) continue;
+        const toward = (node0.x - LP.x) * Math.sin(LP.heading) + (node0.z - LP.z) * Math.cos(LP.heading);
+        if ((lane === -1) !== (toward > 0)) continue;
+        const score = -Math.abs(d - along) + (heading === undefined ? 0 : 15 * Math.cos(LP.heading - heading));
+        if (score > bestScore) { bestScore = score; best = { edge: e.id, s }; }
+      }
     }
     return best;
   }
