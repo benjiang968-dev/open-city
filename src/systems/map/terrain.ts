@@ -371,9 +371,11 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
     if (ba === B.HOLE || bb === B.HOLE || bc === B.HOLE) return false; // the canal corridor and its aprons cover this
     // deep under the river / canal / creek water (opaque water hides it)
     if (vy[a] < -0.9 && vy[b] < -0.9 && vy[c] < -0.9) return false;
-    // fully under roads / sidewalks / buildings: hidden, unless it is the only ground over a strip of natural cells
-    // (a gap narrower than the 5 m mesh between a sidewalk and a building, an alley): then keep it (dipped)
-    const covered = (q: number) => q === B.ROAD || q === B.FLAT || q === B.BUILDING;
+    // fully under roads / sidewalks: hidden, unless it is the only ground over a strip of natural cells (a gap
+    // narrower than the 5 m mesh between a sidewalk and a building, an alley): then keep it (dipped). Under buildings
+    // it stays (dipped): the gaps between neighbouring houses (0.3-1 m slots, the raster marks them as building) had
+    // no floor at all, and a player walking in fell to the safety floor.
+    const covered = (q: number) => q === B.ROAD || q === B.FLAT;
     if (covered(ba) && covered(bb) && covered(bc)) return coversNatural(i, j, tri, flip);
     return true;
   };

@@ -273,6 +273,8 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number
     const lowFirst = ha <= hb;
     const h0 = Math.min(ha, hb), h1 = Math.max(ha, hb);
     const rise = h1 - h0;
+    // what is left of a stair cut back out of the carriageways can be a single step: then it is just a path
+    if (rise < G.stairMinRise) continue;
     const slope = 0.62;
     const run = rise / slope;
     const total = Math.min(L - 1, run + landing * (nFlights - 1));
@@ -328,11 +330,28 @@ export function stairHoles(plans: StairPlan[]): Holes {
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (L < 0.05) continue;
       const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L, rx = -uz * hw, rz = ux * hw;
-      const ex = ux * 0.05, ez = uz * 0.05; // overlap the next segment a little
-      H.add([a[0] - ex - rx, a[1] - ez - rz, b[0] + ex - rx, b[1] + ez - rz, b[0] + ex + rx, b[1] + ez + rz, a[0] - ex + rx, a[1] - ez + rz]);
+      // at a bend the hole runs on past the joint (as the walking surface does, buildStairs); at the stair's two ends
+      // it stops exactly where the ramp stops (running on there left a slit down to the safety floor)
+      const e0 = jointExt(st.pts, i - 1, hw), e1 = jointExt(st.pts, i, hw);
+      const ax = a[0] - ux * e0, az = a[1] - uz * e0, bx = b[0] + ux * e1, bz = b[1] + uz * e1;
+      H.add([ax - rx, az - rz, bx - rx, bz - rz, bx + rx, bz + rz, ax + rx, az + rz]);
     }
   }
   return H;
+}
+
+/**
+ * How far a stair segment's walking surface and stairwell run on past an interior joint of the stair line (pts[j],
+ * 0 < j < last): far enough to close the wedge on the outside of the bend between the two segments' rectangles (half
+ * width hw), plus a 5 cm overlap. 0 at the stair's ends.
+ */
+function jointExt(pts: Pt[], j: number, hw: number): number {
+  if (j <= 0 || j >= pts.length - 1) return 0;
+  const ax = pts[j][0] - pts[j - 1][0], az = pts[j][1] - pts[j - 1][1], bx = pts[j + 1][0] - pts[j][0], bz = pts[j + 1][1] - pts[j][1];
+  const la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+  if (la < 1e-6 || lb < 1e-6) return 0.05;
+  const turn = Math.acos(clamp((ax * bx + az * bz) / (la * lb), -1, 1));
+  return 0.05 + hw * Math.tan(Math.min(turn, 1.2) / 2);
 }
 
 export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks, ras: GeoRaster) {
@@ -351,12 +370,16 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
       const buf = chunks.buf('ground', mx, mz);
       const pb = phys.trimesh(mx, mz, 'stair');
       const pw = phys.trimesh(mx, mz, 'stairWall');
+      // at a bend, the first and last pieces of the segment run on past the joint (see jointExt; the stairwell does too)
+      const hwIn = (w / 2) * STAIR_INNER;
+      const eA = jointExt(pts, i - 1, hwIn), eB = jointExt(pts, i, hwIn);
       // sample the ramp every 0.5 m: physics = smooth ramp; visuals = steps on flights, flat on landings
       const n = Math.max(1, Math.ceil(segL / 0.5));
       for (let k = 0; k < n; k++) {
         const s0 = cum[i - 1] + (segL * k) / n, s1 = cum[i - 1] + (segL * (k + 1)) / n;
-        const p0x = a[0] + ux * (s0 - cum[i - 1]), p0z = a[1] + uz * (s0 - cum[i - 1]);
-        const p1x = a[0] + ux * (s1 - cum[i - 1]), p1z = a[1] + uz * (s1 - cum[i - 1]);
+        const x0 = k === 0 ? eA : 0, x1 = k === n - 1 ? eB : 0;
+        const p0x = a[0] + ux * (s0 - cum[i - 1] - x0), p0z = a[1] + uz * (s0 - cum[i - 1] - x0);
+        const p1x = a[0] + ux * (s1 - cum[i - 1] + x1), p1z = a[1] + uz * (s1 - cum[i - 1] + x1);
         const h0 = st.h(s0), h1 = st.h(s1);
         pb.quad(p0x - rx, h0, p0z - rz, p0x + rx, h0, p0z + rz, p1x + rx, h1, p1z + rz, p1x - rx, h1, p1z - rz);
         // landings and the flat run-in / run-out: paved like the treads (only the flights get steps)
@@ -365,8 +388,9 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         for (const [fa, fb] of [...st.flights, [Infinity, Infinity] as [number, number]]) {
           const g0 = f0, g1 = Math.min(s1, fa);
           if (g1 - g0 > 0.01) {
-            const q0x = a[0] + ux * (g0 - cum[i - 1]), q0z = a[1] + uz * (g0 - cum[i - 1]);
-            const q1x = a[0] + ux * (g1 - cum[i - 1]), q1z = a[1] + uz * (g1 - cum[i - 1]);
+            const r0 = g0 === s0 ? x0 : 0, r1 = g1 === s1 ? x1 : 0;
+            const q0x = a[0] + ux * (g0 - cum[i - 1] - r0), q0z = a[1] + uz * (g0 - cum[i - 1] - r0);
+            const q1x = a[0] + ux * (g1 - cum[i - 1] + r1), q1z = a[1] + uz * (g1 - cum[i - 1] + r1);
             const y0 = st.h(g0), y1 = st.h(g1);
             buf.quad(q0x - rx, y0, q0z - rz, q0x + rx, y0, q0z + rz, q1x + rx, y1, q1z + rz, q1x - rx, y1, q1z - rz, shade(COL.step, 0.97), 0, 1, 0);
           }

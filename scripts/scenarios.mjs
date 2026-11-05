@@ -2250,18 +2250,19 @@ export async function stairs(page) {
  * Drops the player from 2 m at thousands of random points over the whole map (fixed sequence) and checks where the
  * feet come to rest: on a surface within 5 cm of map.heightAt (props, stoops and decks are reported separately:
  * landing on a bench is right), never below it, never inside a building. A capsule resting on a ledge's edge (its
- * centre over the lower floor) is counted as `ledge`, not as a hover. SAMPLES=<n> (default 2000).
+ * centre over the lower floor) is counted as `ledge`, not as a hover. SAMPLES=<n> (default 2000), FALL_SEED=<n> picks
+ * another fixed set of points.
  */
 export async function fallthrough(page) {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
   await page.evaluate(installWalkHelpers);
-  const n = Number(process.env.SAMPLES ?? 2000);
-  return page.evaluate((n) => {
+  const n = Number(process.env.SAMPLES ?? 2000), seed0 = Number(process.env.FALL_SEED ?? 987654);
+  return page.evaluate(([n, seed0]) => {
     const w = window.__oc, c = w.city, P = w.player, H = window.__wk, R = w.R;
     const hh = P.collider.halfHeight(), rad = P.collider.radius();
     const b = c.bounds;
-    let seed = 987654;
+    let seed = seed0;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     // below: the feet sank under the collider they stand on; mapLow / mapHigh: that collider is more than 5 cm under /
     // over map.heightAt there; hover: the feet rest more than 0.25 m above it (a capsule on a slope rests a little up)
@@ -2353,8 +2354,8 @@ export async function fallthrough(page) {
       else st.ok++;
     }
     const ms = Math.round(performance.now() - t0);
-    return { samples: n, ...st, maxDrift: +maxDrift.toFixed(3), maxRestAbove: +maxRest.toFixed(3), examples, ms, pass: st.below === 0 && st.insideBuilding === 0 && st.notSettled === 0 && st.hover === 0 && st.mapLow + st.mapHigh <= Math.ceil(st.landed * 0.002) };
-  }, n);
+    return { samples: n, seed: seed0, ...st, maxDrift: +maxDrift.toFixed(3), maxRestAbove: +maxRest.toFixed(3), examples, ms, pass: st.below === 0 && st.insideBuilding === 0 && st.notSettled === 0 && st.hover === 0 && st.mapLow + st.mapHigh <= Math.ceil(st.landed * 0.002) };
+  }, [n, seed0]);
 }
 
 /**

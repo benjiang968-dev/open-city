@@ -436,7 +436,9 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
   /** Level by level down the physics column at (x, z); label: what the point was sampled for. */
   const surfaceAt = (x: number, z: number, label: string, tolOverride = 0) => {
     grid.heightsAt(x, z, vh);
-    let yTop = 300, ceiling = Infinity;
+    // ceilTol: how far the drawn surface of the floor above may lie below its collider (the treads under a stair's
+    // ramp): drawn faces that close under the ceiling belong to it, not to the floor below
+    let yTop = 300, ceiling = Infinity, ceilTol = 0.05;
     for (let level = 0; level < 8; level++) {
       const h = castDown(x, yTop, z, yTop + 50, true);
       if (!h) break;
@@ -462,7 +464,7 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
       for (const v of vh) {
         const d = v.y - y;
         if (Math.abs(d) < Math.abs(near)) near = d;
-        if (d > tol && d < def.band && v.y < ceiling - 0.05 && (!unsolid || v.y > unsolid.y)) unsolid = v;
+        if (d > tol && d < def.band && v.y < ceiling - ceilTol && (!unsolid || v.y > unsolid.y)) unsolid = v;
       }
       const where = `@(${f2(x)}, ${f2(y)}, ${f2(z)}) on ${kind}`;
       if (unsolid) {
@@ -475,6 +477,7 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
         if (S.examples.length < MAX_EXAMPLES) S.examples.push(`UNDRAWN nearest drawn face ${Number.isFinite(near) ? f2(near) : 'none'} ${where}`);
       } else S.ok++;
       ceiling = y;
+      ceilTol = Math.max(0.05, tol);
       yTop = y - 0.3; // the next level down (under a deck); solid shapes start a new cast below this one
       if (kind === 'ground') break;
     }

@@ -43,7 +43,9 @@ export const SOLID_KINDS = {
   kerb: k('kerb (road and lot edges)', 'static', 'trimesh', true, 0x8fbf8f, 0.06),
   deck: k('bridge / freeway deck', 'static', 'trimesh', true, 0x5aa0a0),
   parapet: k('bridge parapet', 'static', 'trimesh', true, 0x6fc0c0),
-  stair: k('stair flight (ramp under the treads)', 'static', 'ramp', true, 0xffd24a, 0.12),
+  // tolerance 0.14: the ramp runs half a riser (0.085 m) above the line through the risers' feet at 0.62 rise per run,
+  // so a riser's face is up to 0.085 / 0.62 = 0.137 m in front of or behind the ramp (by design: a smooth ramp)
+  stair: k('stair flight (ramp under the treads)', 'static', 'ramp', true, 0xffd24a, 0.14),
   stairWall: k('stair side wall', 'static', 'trimesh', true, 0xe0b040),
   stoop: k('house stoop (landing + steps)', 'static', 'ramp', true, 0xffa040, 0.12),
   stoopRail: k('stoop railing', 'static', 'hull', true, 0xd08030, 0.1),

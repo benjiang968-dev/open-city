@@ -724,7 +724,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       trunks.setMatrixAt(k, m);
       crowns.setMatrixAt(k, m);
       crowns.setColorAt(k, C(rng.pick(greens)));
-      addCylCollider(t.x, 0, t.z, 0.22 * t.s, 2.4, 'tree');
+      addCylCollider(t.x, 0, t.z, 0.19 * t.s, 2.4, 'tree'); // the five-sided trunk: 0.17 to 0.21 m from its axis at 1 m
     });
     trunks.castShadow = crowns.castShadow = true;
     trunks.name = 'trees'; crowns.name = 'tree-crowns';
