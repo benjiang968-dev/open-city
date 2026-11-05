@@ -1604,7 +1604,9 @@ export async function mapcheck(page, S) {
     const simStart = w.time;
     while (streak < 30 && w.time - simStart < 900) {
       window.__ocRun(0.1, 30);
-      if (car.phase === 'lane' && car.stunT <= 0) maxOff = Math.max(maxOff, M.projectOnLane(E[car.edge], car.px, car.pz, hit).dist);
+      // (not on the tick a recycled car reappears elsewhere: that is a jump, counted below, not a lane-keeping error)
+      const jumped = car.edge !== prev && !N[E[prev].to].out.includes(car.edge);
+      if (car.phase === 'lane' && car.stunT <= 0 && !jumped) maxOff = Math.max(maxOff, M.projectOnLane(E[car.edge], car.px, car.pz, hit).dist);
       if (car.edge === prev) continue;
       const from = E[prev], legal = N[from.to].out.includes(car.edge);
       if (legal) {

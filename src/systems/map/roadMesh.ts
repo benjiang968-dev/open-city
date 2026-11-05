@@ -200,10 +200,9 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
   // raster ended up with (another road owns those cells at a different height) are flagged for the deck index
   let flagged = 0;
   for (const e of net.edges) {
-    if (e.deck) continue;
-    const s0 = e.trimA, s1 = e.L - e.trimB;
-    if (s1 - s0 < 0.05) continue;
-    const X = sections(e, s0, s1);
+    if (e.deck || e.L < 0.05) continue;
+    // the whole edge, plateaus included (a neighbouring junction's plateau may have taken those cells)
+    const X = sections(e, 0, e.L);
     const ov = new Uint8Array(X.length);
     let anyOv = false;
     for (let i = 1; i < X.length; i++) {

@@ -64,6 +64,8 @@ const kindOf = (cat: string) => KIND[cat] ?? (cat.startsWith('office=') ? 'offic
 /** Dealerships (pickDealershipPois takes garages in POI order): real car shops first, then repair shops, then fuel. */
 const POI_ORDER = (cat: string) => (cat === 'shop=car' ? 0 : cat === 'shop=car_repair' ? 1 : 2);
 const RESIDENTIAL = new Set(['terrace', 'house', 'apartments', 'residential']);
+/** Service road kinds that get no lanes in the road graph (they stay drivable surfaces). */
+const NOT_ROUTES = new Set(['driveway', 'parking_aisle', 'drive-through', 'alley']);
 
 /** Road class from the data's highway tag (parking aisles, driveways and anything unusual drive as 'service'). */
 function classOf(highway: string, name: string): RoadClass {
@@ -150,6 +152,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     }
     const info = { fwd: [] as number[], bwd: [] as number[], parkR, parkL, cls };
     polyLanes.push(info);
+    // driveways, parking aisles and alleys (real data) are surfaces you can drive on, not routes: no lanes for traffic,
+    // police or routing (cars kept turning into every driveway and backing out of it)
+    if (road?.service && NOT_ROUTES.has(road.service)) return;
     // trims: none at pass-through nodes; at a dead end (mostly roads leaving the map) room to turn round before it
     const trimAt = (node: number, t: number) => (passThrough(node) ? 0 : nodes[node].deadEnd ? Math.max(t, M.deadEndTurnRoom) : t);
     const tA = trimAt(P.nodeA, P.trimA), tB = trimAt(P.nodeB, P.trimB);

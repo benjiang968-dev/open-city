@@ -233,7 +233,7 @@ export function buildLots(plans: LotPlan[], ras: GeoRaster, chunks: RenderChunks
         const cu = u + SW / 2, cv = r.v0 + SL / 2;
         if (!inside(u, r.v0) || !inside(u + SW, r.v0) || !inside(u, r.v0 + SL) || !inside(u + SW, r.v0 + SL)) continue;
         const x = mx + ux * cu + vx * cv, z = mz + uz * cu + vz * cv;
-        if (nearEntrance(x, z)) continue;
+        if (nearEntrance(x, z) || ras.kindAt(x, z) & K.ROAD) continue; // not on an aisle that crosses the lot
         // nose into the bay: forward = from the aisle into the row = -dir * v
         const fx = -r.dir * vx, fz = -r.dir * vz;
         stalls.push(x, H(x, z), z, Math.atan2(fx, fz));

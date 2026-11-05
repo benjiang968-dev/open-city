@@ -599,11 +599,21 @@ function buildDeckIndex(net: RoadNet, walkDecks: { pts: Pt[]; hw: number; h: num
       S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), e.hw, wl, wr, 0);
       grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, Math.max(wl, wr) + 0.5);
     }
+    // the deck's own plateaus at its ends (flat at the junction's height, under the junction surface): carriageway only
+    for (const [a, b] of [[0, e.trimA], [e.L - e.trimB, e.L]]) {
+      if (b - a < 0.05) continue;
+      const P = sections(e, a, b);
+      for (let i = 1; i < P.length; i++) {
+        const id = S.length / N;
+        S.push(P[i - 1].x, P[i - 1].z, P[i].x, P[i].z, net.profAt(e, P[i - 1].s), net.profAt(e, P[i].s), e.hw, e.hw, e.hw, 0);
+        grid.add(P[i - 1].x, P[i - 1].z, P[i].x, P[i].z, id, e.hw + 0.5);
+      }
+    }
   }
   // at-grade stretches that pass over or under another road (flagged by rasterizeNet): their own surface, carriageway only
   for (const e of net.edges) {
     if (e.deck || !e.overlay) continue;
-    const X = sections(e, e.trimA, e.L - e.trimB);
+    const X = sections(e, 0, e.L);
     for (let i = 1; i < X.length; i++) {
       if (!e.overlay[i]) continue;
       const id = S.length / N;

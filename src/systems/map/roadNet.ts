@@ -118,7 +118,7 @@ export interface REdge {
   fillL: Uint8Array | null;
   fillR: Uint8Array | null;
   /**
-   * Per section segment (sections(e, trimA, L - trimB)): 1 where this at-grade road is not the raster's surface (it
+   * Per section segment (sections(e, 0, L)): 1 where this at-grade road is not the raster's surface (it
    * passes over or under another road there: a grade separation the data does not mark as a bridge). Those stretches
    * are queried through the deck index instead.
    */
