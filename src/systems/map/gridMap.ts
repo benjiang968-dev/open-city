@@ -16,8 +16,8 @@ const M = TUNING.map;
 const TT = TUNING.traffic;
 const V = TUNING.vehicles;
 
-export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number): CityMap {
-  const g = generateCity(scene, R, physics, seed);
+export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, audit = false): CityMap {
+  const g = generateCity(scene, R, physics, seed, audit);
   const { xs, zs, roadHalfX, roadHalfZ, streetNamesX, streetNamesZ } = g;
   const lastJ = zs.length - 1;
   const clsOfZ = (j: number): RoadClass => (j === lastJ ? 'secondary' : 'residential'); // the bay boulevard
@@ -173,6 +173,8 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
     groundMats: g.groundMats,
     water: g.water,
     boats: g.boats,
+    solidTags: g.solidTags,
+    solidRecorder: g.solidRecorder,
     update: (t: number) => updateCity(g, t),
   };
 }

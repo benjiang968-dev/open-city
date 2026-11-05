@@ -163,6 +163,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   }
 
   function buildOne(b: GeoBuilding, key: string) {
+    chunks.tag('untagged');
     const P = b.pts;
     const n = P.length;
     const [cx, cz] = centroid(P);
@@ -304,6 +305,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       if (cornice && (isFront || w.street) && roof === 'flat') {
         const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
         const cc = t === 'terrace' || t === 'house' || t === 'retail' ? lin(0xf2efe6) : shade(col, 0.82);
+        chunks.tag('overhead');
         grd.obox(mx + w.nx * 0.18, yTop + PARAPET - 0.05, mz + w.nz * 0.18, w.len / 2 + 0.08, 0.3, yTop + PARAPET + 0.38, w.ux, w.uz, cc, shade(cc, 0.9), true);
         grd.obox(mx + w.nx * 0.08, yTop - 0.1, mz + w.nz * 0.08, w.len / 2, 0.14, yTop + 0.12, w.ux, w.uz, cc, shade(cc, 0.9), true);
       }
@@ -312,6 +314,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         const bw = w.len / nb;
         const sillTile = tileUp === TILE.ROW_SHUT || tileUp === TILE.ROW_WIN || tileUp === TILE.UNIV || tileUp === TILE.ARCH;
         if (sillTile) {
+          chunks.tag('overhead');
           for (let f = 1; f < levels; f++) {
             const ys = y0 + gH + (f - 1) * STOREY + STOREY * 0.22;
             for (let k = 0; k < nb; k++) {
@@ -337,6 +340,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           const stepH = stoop / steps;
           if (rise >= 0.2 && rise <= 2.4) {
           const sc = lin(0xb8b1a4);
+          chunks.tag('stoop');
           det.obox(px + w.nx * 0.55, y0 - 0.25, pz + w.nz * 0.55, 0.75, 0.55, y0, w.ux, w.uz, sc, shade(sc, 0.9));
           for (let k = 1; k < steps; k++) {
             const out = 1.1 + k * 0.3;
@@ -345,6 +349,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           // iron rails: a post at each end and a rail following the steps down
           const iron = lin(0x222428);
           const outN = 1.1 + (steps - 1) * 0.3;
+          chunks.tag('stoopRail');
           for (const sd of [-1, 1]) {
             const rx = px + w.ux * 0.72 * sd, rz = pz + w.uz * 0.72 * sd;
             det.obox(rx + w.nx * 0.2, y0, rz + w.nz * 0.2, 0.03, 0.03, y0 + 0.95, w.ux, w.uz, iron);
@@ -356,6 +361,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           stoopBottoms.push(px + w.nx * outN, y0 - stoop, pz + w.nz * outN, 0);
           }
           // door canopy
+          chunks.tag('overhead');
           det.obox(px + w.nx * 0.25, y0 + 2.75, pz + w.nz * 0.25, 0.8, 0.25, y0 + 2.9, w.ux, w.uz, lin(0xf2efe6));
         }
       }
@@ -367,6 +373,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       for (let i = 1; i + 1 < n; i++) froof(fac, P[0], P[i], P[i + 1], yr, roofCol, seedByte);
       // rooftop clutter: chimneys on rowhouses, plant on bigger roofs
       const r2 = rand(hashStr(b.id + 'c'));
+      chunks.tag('roof');
       if (t === 'terrace' || t === 'house') {
         const w = walls.find((q) => q.party) ?? walls[1];
         const s = 0.3 + r2() * 0.4;
@@ -379,8 +386,10 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         }
       }
     } else {
+      chunks.tag('roof');
       pitchedRoof(fac, grd, walls, P, yTop, roof, roofCol, col, plainTile, seedByte, key);
     }
+    chunks.tag('roof'); // landmark extras stand on the roofs (arcade and portico tag their own parts)
     // ---- landmark extras
     if (key === 'healy-tower') clockTower(walls, P, cx, cz, yTop, col);
     if (t === 'church' && key !== 'healy') steeple(front, walls, cx, cz, yTop, col, rnd);
@@ -415,6 +424,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       const gH = ground || STOREY;
       const ys = y0 + gH - 0.42;
       const slot = signs.slot(name);
+      chunks.tag('overhead');
       signBuf.quad(sx + w.nx * 0.07, ys, sz + w.nz * 0.07, w.ux, w.uz, w.nx, w.nz, sw, 0.62, slot, signs);
       grd.obox(sx + w.nx * 0.03, ys - 0.36, sz + w.nz * 0.03, sw / 2 + 0.06, 0.04, ys + 0.36, w.ux, w.uz, lin(0x1f2226));
       if (AWNING_CATS.test(p.cat) && ground >= 4) {
@@ -433,8 +443,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       hv = Math.max(hv, Math.abs((p[0] - cx) * w0.nx + (p[1] - cz) * w0.nz));
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
-    if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
-    else if (!phys.prism(P.flat(), yMin, top)) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
+    else if (!phys.prism(P.flat(), yMin, top, 'building')) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
   }
 
   // -------------------------------------------------------------------------------------------- helpers
@@ -541,7 +551,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     }
     grd.obox(tx, towerTop, tz, ts + 0.25, ts + 0.25, towerTop + 0.5, ax, az, shade(col, 0.8));
     grd.pyramid(tx, towerTop + 0.5, tz, ts + 0.1, 9 + rnd() * 7, ax, az, lin(rnd() < 0.5 ? 0x4a5560 : 0x5f8f7c));
-    phys.box(tx, (yBase + towerTop) / 2, tz, ts, (towerTop - yBase) / 2, ts, ax, az);
+    phys.box(tx, (yBase + towerTop) / 2, tz, ts, (towerTop - yBase) / 2, ts, ax, az, 'tower');
   }
   function clockTower(walls: Wall[], P: Pt[], cx: number, cz: number, yTop: number, col: number) {
     const grd = chunks.buf('ground', cx, cz);
@@ -579,11 +589,12 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   function smokestack(b: GeoBuilding, cx: number, cz: number, yMin: number, ySide: number) {
     const grd = chunks.buf('ground', cx, cz);
     const r0 = 2.3, r1 = 1.5, h = Math.max(36, b.h);
+    chunks.tag('tower');
     grd.cyl(cx, yMin, cz, r0 + 0.4, r0 + 0.4, ySide - yMin + 1.5, 14, lin(0x8c7f70));
     grd.cyl(cx, ySide + 1.5, cz, r0, r1, h - 3, 14, lin(0x9b5a45));
     grd.cyl(cx, ySide + h - 3.5, cz, r1 + 0.25, r1 + 0.25, 1.2, 14, lin(0x7d4636));
     grd.cyl(cx, ySide + 6, cz, r0 - 0.05, r0 - 0.12, 0.8, 14, lin(0x7d4636), false);
-    phys.cylinder(cx, yMin, cz, r0 + 0.4, h + ySide - yMin);
+    phys.cylinder(cx, yMin, cz, r0 + 0.4, h + ySide - yMin, 'tower');
   }
   function gableFront(grd: MeshBuf, x: number, z: number, ux: number, uz: number, hw: number, y: number, h: number, c: number) {
     grd.tri(x - ux * hw, y, z - uz * hw, x + ux * hw, y, z + uz * hw, x, y + h, z, c, -uz, 0, ux);
@@ -618,6 +629,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     grd.pyramid(tx, top2 + 2 * STOREY, tz, 4.9, 6.5, w0.ux, w0.uz, lin(0x5f9c86));
     // arcade columns along the river side
     const rv = walls.reduce((m, w) => (w.nz > m.nz ? w : m), walls[0]);
+    chunks.tag('column');
     for (let s = 2; s < rv.len - 1; s += 4) {
       const px = rv.ax + rv.ux * s + rv.nx * 1.6, pz = rv.az + rv.uz * s + rv.nz * 1.6;
       const y = ras.heightAt(px, pz);
@@ -625,10 +637,12 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     }
     const rmx = (rv.ax + rv.bx) / 2, rmz = (rv.az + rv.bz) / 2;
     const ry = ras.heightAt(rmx + rv.nx * 1.6, rmz + rv.nz * 1.6) + 4.2;
+    chunks.tag('overhead');
     grd.obox(rmx + rv.nx * 1.0, ry, rmz + rv.nz * 1.0, rv.len / 2, 1.1, ry + 0.45, rv.ux, rv.uz, lin(0xe9e1d0), shade(lin(0xe9e1d0), 0.9), true);
   }
   function balconyBands(walls: Wall[], y0: number, yTop: number, levels: number) {
     // continuous balcony slabs on every floor, toothed on the long sides: the distinctive banded block
+    chunks.tag('overhead');
     for (const w of walls) {
       const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
       const grd = chunks.buf('ground', mx, mz);
@@ -656,11 +670,14 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
     const grd = chunks.buf('ground', mx, mz);
     const h = Math.min(yTop - y0, 7.5);
+    chunks.tag('column');
     for (const s of [-3.6, -1.2, 1.2, 3.6]) {
       const px = mx + w.ux * s + w.nx * 2.4, pz = mz + w.uz * s + w.nz * 2.4;
       grd.cyl(px, y0, pz, 0.33, 0.28, h, 10, lin(0xf4f1ea));
     }
+    chunks.tag('stoop'); // the portico's platform
     grd.obox(mx + w.nx * 1.4, y0 - 0.3, mz + w.nz * 1.4, 4.6, 1.5, y0, w.ux, w.uz, lin(0xd8d2c6));
+    chunks.tag('overhead');
     grd.obox(mx + w.nx * 1.3, y0 + h, mz + w.nz * 1.3, 4.6, 1.5, y0 + h + 0.7, w.ux, w.uz, lin(0xf4f1ea));
     gableFront(grd, mx + w.nx * 2.75, mz + w.nz * 2.75, w.ux, w.uz, 4.6, y0 + h + 0.7, 1.8, lin(0xf4f1ea));
   }

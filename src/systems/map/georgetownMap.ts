@@ -81,9 +81,9 @@ export async function loadGeorgetownDoc(): Promise<GeoDoc> {
 }
 
 // ======================================================================================================
-export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, doc: GeoDoc, quality: GeoQuality = 'medium'): CityMap {
+export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, doc: GeoDoc, quality: GeoQuality = 'medium', audit = false): CityMap {
   const t0 = performance.now();
-  const geo = buildGeorgetownWorld(scene, R, physics, doc, { seed, quality });
+  const geo = buildGeorgetownWorld(scene, R, physics, doc, { seed, quality, audit });
   const tWorld = performance.now();
   const b = geo.bounds;
   const bounds = { minX: b.x0, maxX: b.x1, minZ: b.z0, maxZ: b.z1 };
@@ -370,6 +370,8 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     boats: [],
     update: (time: number, camera: THREE.Camera) => geo.update(time, camera),
     setQuality: (q) => geo.setQuality(q),
+    solidTags: geo.solidTags,
+    solidRecorder: geo.solidRecorder,
     geo,
     buildStats: stats,
   };

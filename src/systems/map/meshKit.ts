@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { GROUPS } from '../../physicsGroups';
+import { SolidTags, type SolidKind, type SolidRecorder } from '../objects/solidKinds';
 
 // ------------------------------------------------------------------------------------------ colours
 /** sRGB hex (0xRRGGBB) to packed LINEAR bytes, which is what three.js expects in vertex colours. */
@@ -43,6 +44,10 @@ export class MeshBuf {
   exA = 0; exB = 0; exC = 255; exD = 0;
   /** Current uv mode: if set, uvFn computes uv per vertex. */
   uvFn: ((x: number, y: number, z: number, out: Float32Array, o: number) => void) | null = null;
+  /** Audit mode: drawn boxes, cylinders and walls are recorded (null = off). */
+  rec: SolidRecorder | null = null;
+  /** Nesting depth of primitive calls (only the outermost call is recorded: a box's own walls are not). */
+  private recDepth = 0;
   constructor(withUv = false, withEx = false, cap = 4096) {
     this.pos = new Float32Array(cap * 3);
     this.nor = new Int8Array(cap * 3);
@@ -96,21 +101,27 @@ export class MeshBuf {
   }
   /** Vertical wall from (ax,az) to (bx,bz), bottom ya0/yb0, top ya1/yb1, facing (outward) side hint. */
   wall(ax: number, az: number, bx: number, bz: number, ya0: number, ya1: number, yb0: number, yb1: number, c: number, hx: number, hz: number) {
+    if (this.rec && this.recDepth === 0) this.rec.wall(ax, az, bx, bz, ya0, ya1, yb0, yb1, hx, hz);
     this.quad(ax, ya0, az, bx, yb0, bz, bx, yb1, bz, ax, ya1, az, c, hx, 0, hz);
   }
   /** Axis-aligned box (no bottom face). sideC defaults to c. */
   box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, c: number, sideC = c) {
+    if (this.rec && this.recDepth === 0) this.rec.obox((x0 + x1) / 2, (z0 + z1) / 2, y0, y1, (x1 - x0) / 2, (z1 - z0) / 2, 1, 0);
+    this.recDepth++;
     this.quad(x0, y1, z0, x1, y1, z0, x1, y1, z1, x0, y1, z1, c, 0, 1, 0);
     this.wall(x0, z1, x1, z1, y0, y1, y0, y1, sideC, 0, 1);
     this.wall(x1, z0, x0, z0, y0, y1, y0, y1, sideC, 0, -1);
     this.wall(x1, z1, x1, z0, y0, y1, y0, y1, sideC, 1, 0);
     this.wall(x0, z0, x0, z1, y0, y1, y0, y1, sideC, -1, 0);
+    this.recDepth--;
   }
   /**
    * Box centred at (cx, cz), from y0 to y1, half extents hx (along heading) and hz (across), rotated so its local +x
    * points along (ux, uz). Optional bottom.
    */
   obox(cx: number, y0: number, cz: number, hx: number, hz: number, y1: number, ux: number, uz: number, c: number, sideC = c, bottom = false) {
+    if (this.rec && this.recDepth === 0) this.rec.obox(cx, cz, y0, y1, hx, hz, ux, uz);
+    this.recDepth++;
     const vx = -uz, vz = ux; // local +z
     const ax = cx - ux * hx - vx * hz, az = cz - uz * hx - vz * hz;
     const bx = cx + ux * hx - vx * hz, bz = cz + uz * hx - vz * hz;
@@ -122,10 +133,12 @@ export class MeshBuf {
     this.wall(bx, bz, qx, qz, y0, y1, y0, y1, sideC, ux, uz);
     this.wall(qx, qz, dx, dz, y0, y1, y0, y1, sideC, vx, vz);
     this.wall(dx, dz, ax, az, y0, y1, y0, y1, sideC, -ux, -uz);
+    this.recDepth--;
   }
   /** Upright cylinder / cone frustum with flat-shaded sides (and a top cap if r1 > 0). */
   cyl(cx: number, y0: number, cz: number, r0: number, r1: number, h: number, segs: number, c: number, cap = true) {
     const y1 = y0 + h;
+    if (this.rec && this.recDepth === 0) this.rec.cyl(cx, cz, y0, y1, r0, r1);
     for (let i = 0; i < segs; i++) {
       const a0 = (i / segs) * Math.PI * 2, a1 = ((i + 1) / segs) * Math.PI * 2;
       const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
@@ -137,6 +150,7 @@ export class MeshBuf {
   }
   /** Pyramid (spire) on a square base centred at (cx,cz) with half size hs, rotated to axis (ux,uz). */
   pyramid(cx: number, y0: number, cz: number, hs: number, h: number, ux: number, uz: number, c: number) {
+    if (this.rec && this.recDepth === 0) this.rec.obox(cx, cz, y0, y0 + h, hs, hs, ux, uz);
     const vx = -uz, vz = ux;
     const P = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [cx + ux * a * hs + vx * b * hs, cz + uz * a * hs + vz * b * hs]);
     for (let i = 0; i < 4; i++) {
@@ -172,6 +186,8 @@ export class RenderChunks {
   readonly nx: number;
   readonly nz: number;
   bufs = new Map<string, MeshBuf>();
+  /** Audit mode recorder shared by every buffer except decals (null = off). */
+  rec: SolidRecorder | null = null;
   constructor(size: number, bounds: { x0: number; z0: number; x1: number; z1: number }, margin: number) {
     this.size = size;
     this.x0 = bounds.x0 - margin;
@@ -187,8 +203,15 @@ export class RenderChunks {
   buf(layer: Layer, x: number, z: number): MeshBuf {
     const k = `${layer}:${this.key(x, z)}`;
     let b = this.bufs.get(k);
-    if (!b) this.bufs.set(k, (b = new MeshBuf(layer === 'facade', layer === 'facade')));
+    if (!b) {
+      this.bufs.set(k, (b = new MeshBuf(layer === 'facade', layer === 'facade')));
+      if (layer !== 'decal') b.rec = this.rec;
+    }
     return b;
+  }
+  /** Audit mode: the kind stamped on what is drawn from now on (no-op when the recorder is off). */
+  tag(kind: SolidKind): void {
+    if (this.rec) this.rec.tag(kind);
   }
 }
 
@@ -212,7 +235,8 @@ export class PhysBuf {
 
 /**
  * Static colliders grouped into one fixed body per physics chunk (like the grid city: a single body with thousands of
- * colliders made the player's CCD expensive). Ground triangles collect per chunk and become one trimesh each.
+ * colliders made the player's CCD expensive). Triangles collect per chunk and kind and become one trimesh each
+ * (terrain + roads, stair ramps, parapets...). Every collider is tagged with its solid kind (solidKinds.ts).
  */
 export class PhysChunks {
   readonly R: typeof RAPIER;
@@ -220,7 +244,14 @@ export class PhysChunks {
   readonly size: number;
   bodies = new Map<number, RAPIER.RigidBody>();
   tris = new Map<number, PhysBuf>();
+  /** chunk key per trimesh buffer key */
+  private trisChunk = new Map<number, number>();
+  /** kind per trimesh buffer key */
+  private trisKind = new Map<number, SolidKind>();
+  private kindSlots = new Map<SolidKind, number>();
   colliders = 0;
+  /** Collider handle -> solid kind (read by the audit and the F4 view). */
+  readonly tags = new SolidTags();
   constructor(R: typeof RAPIER, world: RAPIER.World, size: number) {
     this.R = R;
     this.world = world;
@@ -235,25 +266,38 @@ export class PhysChunks {
     if (!b) this.bodies.set(k, (b = this.world.createRigidBody(this.R.RigidBodyDesc.fixed())));
     return b;
   }
-  /** Ground triangles near (x,z) (they become part of that chunk's trimesh). */
+  /** Ground triangles near (x,z) (they become part of that chunk's ground trimesh). */
   ground(x: number, z: number): PhysBuf {
-    const k = this.key(x, z);
+    return this.trimesh(x, z, 'ground');
+  }
+  /** Triangles of one kind near (x, z): one trimesh per chunk and kind. */
+  trimesh(x: number, z: number, kind: SolidKind): PhysBuf {
+    const ck = this.key(x, z);
+    let slot = this.kindSlots.get(kind);
+    if (slot === undefined) this.kindSlots.set(kind, (slot = this.kindSlots.size));
+    const k = ck * 64 + slot;
     let b = this.tris.get(k);
-    if (!b) this.tris.set(k, (b = new PhysBuf()));
+    if (!b) {
+      this.tris.set(k, (b = new PhysBuf()));
+      this.trisChunk.set(k, ck);
+      this.trisKind.set(k, kind);
+    }
     return b;
   }
-  private add(desc: RAPIER.ColliderDesc, x: number, z: number, friction = 0.7) {
-    this.world.createCollider(desc.setFriction(friction).setCollisionGroups(GROUPS.static), this.body(x, z));
+  private add(desc: RAPIER.ColliderDesc, x: number, z: number, kind: SolidKind, friction = 0.7): RAPIER.Collider {
+    const c = this.world.createCollider(desc.setFriction(friction).setCollisionGroups(GROUPS.static), this.body(x, z));
+    this.tags.set(c.handle, kind);
     this.colliders++;
+    return c;
   }
   /** Oriented box: centre (cx, cy, cz), half extents (hx along (ux,uz), hy up, hz across). */
-  box(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ux = 1, uz = 0) {
+  box(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ux = 1, uz = 0, kind: SolidKind = 'untagged') {
     const yaw = Math.atan2(-uz, ux);
     const d = this.R.ColliderDesc.cuboid(hx, hy, hz).setTranslation(cx, cy, cz).setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) });
-    this.add(d, cx, cz);
+    this.add(d, cx, cz, kind);
   }
   /** Vertical prism over a convex footprint (x, z pairs), from y0 to y1: a convex hull collider. */
-  prism(pts: ArrayLike<number>, y0: number, y1: number) {
+  prism(pts: ArrayLike<number>, y0: number, y1: number, kind: SolidKind = 'untagged') {
     const n = pts.length / 2;
     const v = new Float32Array(n * 6);
     let cx = 0, cz = 0;
@@ -263,11 +307,20 @@ export class PhysChunks {
       cx += pts[i * 2] / n; cz += pts[i * 2 + 1] / n;
     }
     const d = this.R.ColliderDesc.convexHull(v);
-    if (d) this.add(d, cx, cz);
+    if (d) this.add(d, cx, cz, kind);
     return !!d;
   }
-  cylinder(cx: number, y0: number, cz: number, r: number, h: number) {
-    this.add(this.R.ColliderDesc.cylinder(h / 2, r).setTranslation(cx, y0 + h / 2, cz), cx, cz);
+  /** Convex hull of arbitrary points (x, y, z triples): ramps under steps, rails, canopies. */
+  hull(pts: ArrayLike<number>, kind: SolidKind): boolean {
+    const n = pts.length / 3;
+    let cx = 0, cz = 0;
+    for (let i = 0; i < n; i++) { cx += pts[i * 3] / n; cz += pts[i * 3 + 2] / n; }
+    const d = this.R.ColliderDesc.convexHull(pts instanceof Float32Array ? pts : Float32Array.from(pts));
+    if (d) this.add(d, cx, cz, kind);
+    return !!d;
+  }
+  cylinder(cx: number, y0: number, cz: number, r: number, h: number, kind: SolidKind = 'untagged') {
+    this.add(this.R.ColliderDesc.cylinder(h / 2, r).setTranslation(cx, y0 + h / 2, cz), cx, cz, kind);
   }
   /** Build every accumulated trimesh. Returns the number of triangles. */
   finishTrimeshes(): number {
@@ -278,12 +331,14 @@ export class PhysChunks {
       const idx = new Uint32Array(b.n);
       for (let i = 0; i < b.n; i++) idx[i] = i;
       const d = this.R.ColliderDesc.trimesh(verts, idx, 0 as RAPIER.TriMeshFlags);
-      const x = (Math.floor(k / 4096) - 1000 + 0.5) * this.size, z = ((k % 4096) - 1000 + 0.5) * this.size;
-      this.world.createCollider(d.setFriction(0.9).setCollisionGroups(GROUPS.static), this.body(x, z));
-      this.colliders++;
+      const ck = this.trisChunk.get(k)!;
+      const x = (Math.floor(ck / 4096) - 1000 + 0.5) * this.size, z = ((ck % 4096) - 1000 + 0.5) * this.size;
+      this.add(d, x, z, this.trisKind.get(k)!, 0.9);
       total += b.n / 3;
     }
     this.tris.clear();
+    this.trisChunk.clear();
+    this.trisKind.clear();
     return total;
   }
 }

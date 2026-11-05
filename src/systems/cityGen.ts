@@ -8,6 +8,7 @@ import { Rng } from '../rng';
 import { POI_TEMPLATES, STREET_WORDS } from '../names';
 import { GeoBuilder } from '../art/geo';
 import { GROUPS } from '../physicsGroups';
+import { SolidRecorder, SolidTags, type SolidKind } from './objects/solidKinds';
 
 const T = TUNING.world;
 
@@ -76,6 +77,10 @@ export interface CityData {
   waterBase: Float32Array;
   boats: Boat[];
   nodeAt(i: number, j: number): RoadNode | undefined;
+  /** Collider handle -> solid kind of every static collider. */
+  solidTags: SolidTags;
+  /** Physics audit mode only: drawn boxes and walls with their kinds (null when off). */
+  solidRecorder: SolidRecorder | null;
 }
 
 const C = (hex: number | string) => new THREE.Color(hex);
@@ -101,7 +106,7 @@ const COL = {
 };
 
 // --------------------------------------------------------------------------------------------
-export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number): CityData {
+export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, audit = false): CityData {
   const rng = new Rng(seed ^ 0x51ed);
   const pitch = T.blockSize + T.roadWidth;
   const xs: number[] = [];
@@ -177,6 +182,9 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   };
 
   // ---------- builders ----------
+  const rec = audit ? new SolidRecorder() : null;
+  const tag = (k: SolidKind) => { if (rec) rec.tag(k); };
+  const solidTags = new SolidTags();
   const ground = new GeoBuilder();
   const marks = new GeoBuilder();
   const chunkSize = 200;
@@ -184,13 +192,14 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   const chunk = (x: number, z: number) => {
     const key = `${Math.floor(x / chunkSize)},${Math.floor(z / chunkSize)}`;
     let b = buildChunks.get(key);
-    if (!b) buildChunks.set(key, (b = new GeoBuilder()));
+    if (!b) { buildChunks.set(key, (b = new GeoBuilder())); b.rec = rec; }
     return b;
   };
   const winLit = new GeoBuilder();
   const winDark = new GeoBuilder();
   const props = new GeoBuilder();
   const signs = new GeoBuilder();
+  for (const gb of [ground, marks, winLit, winDark, props, signs]) gb.rec = rec;
   // static colliders are grouped into one fixed body per 120 m area: a single body with ~1500 colliders
   // made continuous collision detection (CCD) on the player's car expensive at impact time
   const staticBodies = new Map<string, RAPIER.RigidBody>();
@@ -200,23 +209,32 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     if (!b) staticBodies.set(key, (b = physics.createRigidBody(R.RigidBodyDesc.fixed())));
     return b;
   };
-  const addBoxCollider = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => {
-    physics.createCollider(
+  const addBoxCollider = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, kind: SolidKind = 'untagged') => {
+    const c = physics.createCollider(
       R.ColliderDesc.cuboid((x1 - x0) / 2, (y1 - y0) / 2, (z1 - z0) / 2).setTranslation((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2).setFriction(0.6).setCollisionGroups(GROUPS.static),
       staticAt((x0 + x1) / 2, (z0 + z1) / 2),
     );
+    solidTags.set(c.handle, kind);
+  };
+  /** Upright cylinder collider standing on y0. */
+  const addCylCollider = (x: number, y0: number, z: number, r: number, h: number, kind: SolidKind) => {
+    const c = physics.createCollider(R.ColliderDesc.cylinder(h / 2, r).setTranslation(x, y0 + h / 2, z).setCollisionGroups(GROUPS.static), staticAt(x, z));
+    solidTags.set(c.handle, kind);
   };
 
   // land base (grass) and the ground collider
   const landX0 = bounds.minX - 40, landX1 = bounds.maxX + 40, landZ0 = bounds.minZ - 40;
+  tag('ground');
   ground.quadY(landX0, landZ0, landX1, coastZ, 0, COL.grass);
-  addBoxCollider(landX0, -2, landZ0, landX1, 0, coastZ);
+  addBoxCollider(landX0, -2, landZ0, landX1, 0, coastZ, 'ground');
   // sea floor and seawall face
   const seaZ1 = bounds.maxZ + 60;
-  addBoxCollider(landX0, -T.seaFloorDepth - 2, coastZ, landX1, -T.seaFloorDepth, seaZ1);
+  addBoxCollider(landX0, -T.seaFloorDepth - 2, coastZ, landX1, -T.seaFloorDepth, seaZ1, 'ground');
   const seaFloor = new GeoBuilder();
   seaFloor.quadY(landX0, coastZ, landX1, seaZ1, -T.seaFloorDepth, C('#5f7d73'));
+  tag('decor'); // the seawall face below the land's edge (the land box edge collides)
   props.wall((landX0 + landX1) / 2, -T.seaFloorDepth / 2, coastZ, landX1 - landX0, T.seaFloorDepth, 0, 1, COL.seawall);
+  tag('ground');
 
   // ---------- roads ----------
   const xMin = xs[0], xMax = xs[xs.length - 1], zMin = zs[0], zMax = zs[zs.length - 1];
@@ -295,16 +313,20 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       ground.quadY(mx - 1.5, iz0, mx + 1.5, iz1, 0.05, COL.pavement);
       ground.quadY(ix0, mz - 1.5, ix1, mz + 1.5, 0.05, COL.pavement);
       // fountain
+      tag('fountain');
       props.box(mx - 3, 0, mz - 3, mx + 3, 0.7, mz + 3, COL.concrete);
+      tag('water');
       props.box(mx - 2.4, 0.7, mz - 2.4, mx + 2.4, 0.72, mz + 2.4, C('#4aa3c8'));
-      addBoxCollider(mx - 3, 0, mz - 3, mx + 3, 0.7, mz + 3);
+      addBoxCollider(mx - 3, 0, mz - 3, mx + 3, 0.7, mz + 3, 'fountain');
       for (let k = 0; k < T.treesPerPark; k++) {
         const x = rng.range(ix0 + 3, ix1 - 3), z = rng.range(iz0 + 3, iz1 - 3);
         if (Math.abs(x - mx) < 4 || Math.abs(z - mz) < 4) continue;
         treeSpots.push({ x, z, s: rng.range(0.9, 1.5) });
       }
       // benches
+      tag('bench');
       for (const [bx, bz] of [[mx + 4, mz - 6], [mx - 4, mz + 6], [mx + 6, mz + 4]]) props.box(bx - 1, 0.4, bz - 0.3, bx + 1, 0.5, bz + 0.3, COL.wood);
+      tag('ground');
       const p = addPoi('park', b, rng.pick(['n', 's', 'e', 'w'] as const));
       p.name = poiName('park', p.street);
       continue;
@@ -382,13 +404,16 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   function addBuilding(x0: number, z0: number, x1: number, z1: number, h: number, col: THREE.Color, industrial: boolean) {
     const b = chunk((x0 + x1) / 2, (z0 + z1) / 2);
     const side = col.clone().multiplyScalar(0.92);
+    tag('building');
     b.box(x0, 0, z0, x1, h, z1, col, side);
     // roof cap and roof clutter
+    tag('roof');
     b.box(x0 - 0.15, h, z0 - 0.15, x1 + 0.15, h + 0.5, z1 + 0.15, COL.roof);
     if (!industrial && rng.chance(0.6)) {
       const rx = rng.range(x0 + 1, x1 - 4), rz = rng.range(z0 + 1, z1 - 4);
       b.box(rx, h + 0.5, rz, rx + rng.range(2, 3.5), h + rng.range(1.5, 3), rz + rng.range(2, 3.5), C('#8d9096'));
     }
+    tag('decor'); // doors and windows flush with the facades
     if (industrial) {
       // big roller doors instead of windows
       const w = x1 - x0;
@@ -422,14 +447,16 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       }
       // ground floor shop awning on some
       if (h < 20 && rng.chance(0.5)) {
+        tag('overhead');
         props.box(x0 + 1, 3.0, z1, x1 - 1, 3.25, z1 + 1.6, C(rng.pick(['#d1495b', '#00798c', '#edae49', '#30638e', '#6a994e'])));
       }
     }
-    addBoxCollider(x0, 0, z0, x1, h, z1);
+    addBoxCollider(x0, 0, z0, x1, h, z1, 'building');
     buildingRects.push({ x0, z0, x1, z1, h });
   }
 
   // ---------- waterfront: beach, marina, dock, pier ----------
+  tag('ground');
   const promZ0 = zMax + roadHalfZ[T.blocksZ];
   const pierX = xs[2] - 10;
   const marinaX0 = xs[4] + 8, marinaX1 = xs[6] - 8;
@@ -446,20 +473,25 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   // public pier: drivable deck out into the bay
   const pierW = 10;
   const pierRect = { x0: pierX - pierW / 2, z0: coastZ - 2, x1: pierX + pierW / 2, z1: coastZ + T.pierLength };
+  tag('pier');
   props.box(pierRect.x0, -0.5, pierRect.z0, pierRect.x1, 0.05, pierRect.z1, COL.wood, COL.darkWood);
-  addBoxCollider(pierRect.x0, -0.5, pierRect.z0, pierRect.x1, 0.0, pierRect.z1);
+  addBoxCollider(pierRect.x0, -0.5, pierRect.z0, pierRect.x1, 0.0, pierRect.z1, 'pier');
+  tag('decor'); // piles under the deck, in the water
   for (let z = coastZ + 6; z < pierRect.z1; z += 8)
     for (const x of [pierRect.x0 + 0.4, pierRect.x1 - 0.4]) props.box(x - 0.3, -T.seaFloorDepth, z - 0.3, x + 0.3, -0.5, z + 0.3, COL.darkWood);
+  tag('railing');
   for (const x of [pierRect.x0, pierRect.x1 - 0.25]) {
     props.box(x, 0, pierRect.z0 + 4, x + 0.25, 1.0, pierRect.z1, COL.darkWood);
-    addBoxCollider(x, 0, pierRect.z0 + 4, x + 0.25, 1.0, pierRect.z1);
+    addBoxCollider(x, 0, pierRect.z0 + 4, x + 0.25, 1.0, pierRect.z1, 'railing');
   }
   props.box(pierRect.x0, 0, pierRect.z1 - 0.25, pierRect.x1, 1.0, pierRect.z1, COL.darkWood);
-  addBoxCollider(pierRect.x0, 0, pierRect.z1 - 0.25, pierRect.x1, 1.0, pierRect.z1);
+  addBoxCollider(pierRect.x0, 0, pierRect.z1 - 0.25, pierRect.x1, 1.0, pierRect.z1, 'railing');
   // kiosk at the end of the pier
+  tag('kiosk');
   props.box(pierX - 2, 0, pierRect.z1 - 9, pierX + 2, 3, pierRect.z1 - 5, C('#f28482'));
+  tag('roof');
   props.box(pierX - 2.5, 3, pierRect.z1 - 9.5, pierX + 2.5, 3.3, pierRect.z1 - 4.5, C('#f6f1d1'));
-  addBoxCollider(pierX - 2, 0, pierRect.z1 - 9, pierX + 2, 3, pierRect.z1 - 5);
+  addBoxCollider(pierX - 2, 0, pierRect.z1 - 9, pierX + 2, 3, pierRect.z1 - 5, 'kiosk');
 
   // marina finger piers with moored boats
   const marinaRects: CityData['marinaRects'] = [];
@@ -470,8 +502,9 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     const px = marinaX0 + (k + 0.5) * mSpan;
     const r = { x0: px - 1.6, z0: coastZ - 1, x1: px + 1.6, z1: coastZ + 55 };
     marinaRects.push(r);
+    tag('pier');
     props.box(r.x0, -0.4, r.z0, r.x1, 0.05, r.z1, COL.wood, COL.darkWood);
-    addBoxCollider(r.x0, -0.4, r.z0, r.x1, 0.0, r.z1);
+    addBoxCollider(r.x0, -0.4, r.z0, r.x1, 0.0, r.z1, 'pier');
     for (let z = coastZ + 8; z < r.z1; z += 11) {
       for (const s of [-1, 1]) {
         if (!rng.chance(0.7)) continue;
@@ -485,7 +518,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   }
   // a cross walkway joining the finger piers
   props.box(marinaX0, -0.4, coastZ + 48, marinaX1, 0.05, coastZ + 52, COL.wood, COL.darkWood);
-  addBoxCollider(marinaX0, -0.4, coastZ + 48, marinaX1, 0.0, coastZ + 52);
+  addBoxCollider(marinaX0, -0.4, coastZ + 48, marinaX1, 0.0, coastZ + 52, 'pier');
 
   // industrial dock: container stacks + cranes on the quay
   const contCols = ['#c0392b', '#2980b9', '#27ae60', '#f39c12', '#8e44ad', '#16a085', '#d35400'];
@@ -493,15 +526,18 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     if (rng.chance(0.25)) continue;
     const stack = rng.int(1, 3);
     const cz0 = promZ0 + 8;
+    tag('container');
     for (let s = 0; s < stack; s++) props.box(x, s * 2.6, cz0, x + 6, s * 2.6 + 2.55, cz0 + 12, C(rng.pick(contCols)));
-    addBoxCollider(x, 0, cz0, x + 6, stack * 2.6, cz0 + 12);
+    addBoxCollider(x, 0, cz0, x + 6, stack * 2.6, cz0 + 12, 'container');
   }
   for (const cx of [dockX0 + 40, dockX0 + 110]) {
     const cz = coastZ - 3;
+    tag('column');
     for (const [lx, lz] of [[-4, -6], [4, -6], [-4, 0], [4, 0]]) {
       props.box(cx + lx - 0.5, 0, cz + lz - 0.5, cx + lx + 0.5, 22, cz + lz + 0.5, C('#e9b44c'));
-      addBoxCollider(cx + lx - 0.5, 0, cz + lz - 0.5, cx + lx + 0.5, 22, cz + lz + 0.5);
+      addBoxCollider(cx + lx - 0.5, 0, cz + lz - 0.5, cx + lx + 0.5, 22, cz + lz + 0.5, 'column');
     }
+    tag('overhead'); // the crane's beams
     props.box(cx - 5, 22, cz - 7, cx + 5, 24, cz + 1, C('#e9b44c'));
     props.box(cx - 1.2, 22.5, cz - 30, cx + 1.2, 24, cz + 40, C('#d89a2b'));
   }
@@ -612,9 +648,11 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       poles.setMatrixAt(k, m);
       arms.setMatrixAt(k, m);
       heads.setMatrixAt(k, m);
-      physics.createCollider(R.ColliderDesc.cylinder(3, 0.14).setTranslation(l.x, 3, l.z).setCollisionGroups(GROUPS.static), staticAt(l.x, l.z));
+      addCylCollider(l.x, 0, l.z, 0.14, 6, 'lamp');
     });
     poles.castShadow = true;
+    poles.name = 'lamp-poles'; arms.name = 'lamp-arms'; heads.name = 'lamp-heads';
+    poles.userData.solidKind = 'lamp'; arms.userData.solidKind = 'overhead'; heads.userData.solidKind = 'overhead';
     // pools of light on the ground under each lamp (additive, faded in at night)
     const tex = document.createElement('canvas');
     tex.width = tex.height = 64;
@@ -633,6 +671,8 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       pools.setMatrixAt(k, m);
     });
     pools.renderOrder = 1;
+    pools.name = 'lamp-pools';
+    pools.userData.solidKind = 'decor';
     pools.computeBoundingSphere();
     scene.add(pools);
     for (const im of [poles, arms, heads]) {
@@ -654,9 +694,11 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       trunks.setMatrixAt(k, m);
       crowns.setMatrixAt(k, m);
       crowns.setColorAt(k, C(rng.pick(greens)));
-      physics.createCollider(R.ColliderDesc.cylinder(1.2, 0.22 * t.s).setTranslation(t.x, 1.2, t.z).setCollisionGroups(GROUPS.static), staticAt(t.x, t.z));
+      addCylCollider(t.x, 0, t.z, 0.22 * t.s, 2.4, 'tree');
     });
     trunks.castShadow = crowns.castShadow = true;
+    trunks.name = 'trees'; crowns.name = 'tree-crowns';
+    trunks.userData.solidKind = 'tree'; crowns.userData.solidKind = 'overhead';
     for (const im of [trunks, crowns]) {
       im.computeBoundingSphere();
       scene.add(im);
@@ -706,9 +748,11 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   // street name signs at a corner of every intersection
   for (const n of nodes) {
     const px = n.x + roadHalfX[n.i] + 1.2, pz = n.z + roadHalfZ[n.j] + 1.2;
+    tag('signPost');
     props.box(px - 0.05, 0, pz - 0.05, px + 0.05, 3.3, pz + 0.05, C('#4a4e54'));
     const kz = streetSignIdx.get(streetNamesZ[n.j])!;
     const kx = streetSignIdx.get(streetNamesX[n.i])!;
+    tag('overhead');
     signs.wall(px, 3.1, pz - 0.06, 2.4, 0.26, 0, -1, white, uvRow(kz));
     signs.wall(px, 3.1, pz + 0.06, 2.4, 0.26, 0, 1, white, uvRow(kz));
     signs.wall(px + 0.06, 2.75, pz, 2.4, 0.26, 1, 0, white, uvRow(kx));
@@ -720,19 +764,23 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     const nx = Math.sign(p.curbX - p.x) * (Math.abs(p.curbX - p.x) > 0.5 ? 1 : 0);
     const nz = Math.sign(p.curbZ - p.z) * (Math.abs(p.curbZ - p.z) > 0.5 ? 1 : 0);
     if (p.kind === 'taxiRank') {
+      tag('signPost');
       props.box(p.x - 0.06, 0, p.z - 0.06, p.x + 0.06, 2.6, p.z + 0.06, C('#4a4e54'));
+      tag('overhead');
       signs.wall(p.x + nx * 0.08, 2.75, p.z + nz * 0.08, 1.4, 0.5, nx, nz, white, uvRow(k));
       signs.wall(p.x - nx * 0.08, 2.75, p.z - nz * 0.08, 1.4, 0.5, -nx, -nz, white, uvRow(k));
     } else {
       // on the building face behind the pavement
       const back = pw / 2 + 0.7;
+      tag('overhead');
       signs.wall(p.x - nx * back, 4.2, p.z - nz * back, 5.5, 0.55, nx, nz, white, uvRow(k));
     }
   }
 
   // ---------- boundary walls (low sea-wall / hedge) ----------
   const bw = (x0: number, z0: number, x1: number, z1: number, visible: boolean) => {
-    addBoxCollider(x0, -10, z0, x1, 4, z1);
+    addBoxCollider(x0, -10, z0, x1, 4, z1, 'boundary');
+    tag('boundary'); // a 1.4 m hedge drawn, a 4 m wall collides: the map edge
     if (visible) props.box(x0, 0, z0, x1, 1.4, z1, C('#4d7c3a'));
   };
   bw(bounds.minX - 2, bounds.minZ - 2, bounds.maxX + 2, bounds.minZ, true);
@@ -747,18 +795,22 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   const groundMat = new THREE.MeshStandardMaterial({ ...vc, roughness: 0.95 });
   const groundMesh = new THREE.Mesh(ground.build(), groundMat);
   groundMesh.receiveShadow = true;
+  groundMesh.name = 'grid-ground';
   scene.add(groundMesh);
   const marksMat = new THREE.MeshStandardMaterial({ ...vc, roughness: 0.8 });
   const marksMesh = new THREE.Mesh(marks.build(), marksMat);
   marksMesh.receiveShadow = true;
+  marksMesh.name = 'grid-marks';
   scene.add(marksMesh);
   const seaMesh = new THREE.Mesh(seaFloor.build(), new THREE.MeshStandardMaterial({ ...vc, roughness: 1 }));
+  seaMesh.name = 'grid-seafloor';
   scene.add(seaMesh);
   const bMat = new THREE.MeshStandardMaterial({ ...vc, roughness: 0.85, flatShading: true });
   for (const b of buildChunks.values()) {
     if (b.empty) continue;
     const m = new THREE.Mesh(b.build(), bMat);
     m.castShadow = m.receiveShadow = true;
+    m.name = 'grid-buildings';
     scene.add(m);
   }
   const litWindowMat = new THREE.MeshBasicMaterial({ ...vc, color: 0x8899aa });
@@ -766,6 +818,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
   scene.add(new THREE.Mesh(winDark.build(), new THREE.MeshStandardMaterial({ ...vc, roughness: 0.2, metalness: 0.4 })));
   const propsMesh = new THREE.Mesh(props.build(), new THREE.MeshStandardMaterial({ ...vc, roughness: 0.8, flatShading: true }));
   propsMesh.castShadow = propsMesh.receiveShadow = true;
+  propsMesh.name = 'grid-props';
   scene.add(propsMesh);
   scene.add(new THREE.Mesh(signs.build(true), new THREE.MeshBasicMaterial({ map: atlasTex, vertexColors: true, side: THREE.DoubleSide })));
 
@@ -778,6 +831,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     new THREE.MeshStandardMaterial({ color: 0x2f86b8, roughness: 0.25, metalness: 0.15, transparent: true, opacity: 0.9, flatShading: true }),
   );
   water.receiveShadow = true;
+  water.name = 'grid-water';
   scene.add(water);
   const waterBase = Float32Array.from((water.geometry.getAttribute('position') as THREE.BufferAttribute).array as Float32Array);
 
@@ -785,6 +839,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     xs, zs, roadHalfX, roadHalfZ, streetNamesX, streetNamesZ, nodes, sideNodes, pois, taxiRanks, parkingSpots,
     coastZ, bounds, buildingRects, parkRects, pierRect, marinaRects, center, litWindowMat, lampMat, lampPoolMat, groundMats: [groundMat, marksMat], water, waterBase, boats,
     nodeAt,
+    solidTags, solidRecorder: rec,
   };
 
   function makeBoat(col: THREE.Color, len: number): THREE.Object3D {

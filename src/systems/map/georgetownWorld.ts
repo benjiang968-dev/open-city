@@ -20,6 +20,7 @@ import { buildBuildings, createFacadeMaterial, rasterizeBuildings } from './faca
 import { buildMonuments } from './monuments';
 import { buildLots, rasterizeLots, type GeoLot } from './lots';
 import { buildProps } from './props';
+import { SolidRecorder, type SolidTags } from '../objects/solidKinds';
 
 const G = TUNING.geo;
 
@@ -38,6 +39,8 @@ export interface GeoWorldOptions {
   /** World seed: varies shop names only, never the map geometry. */
   seed: number;
   quality: GeoQuality;
+  /** Physics audit mode (?physaudit=1): record every drawn box / cylinder / wall with its solid kind. */
+  audit?: boolean;
 }
 
 export interface GeoLane {
@@ -136,6 +139,12 @@ export interface GeoWorld {
   /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
   droppedBuildings: ReadonlySet<string>;
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number };
+  /** Collider handle -> solid kind of every static collider the world made. */
+  solidTags: SolidTags;
+  /** Audit mode only: what was drawn, with kinds (null when off). */
+  solidRecorder: SolidRecorder | null;
+  /** Stair plans (centre line, width, ramp height profile) for tests and the audit. */
+  stairs: { pts: Pt[]; w: number; L: number; name: string | null; h: (s: number) => number; flights: [number, number][] }[];
   root: THREE.Group;
 }
 
@@ -190,25 +199,33 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
 
   // ---------------------------------------------------------------- meshes
   const chunks = new RenderChunks(RENDER_CHUNK, b, 760);
+  if (opts.audit) chunks.rec = new SolidRecorder();
   const phys = new PhysChunks(R, physics, PHYS_CHUNK);
   const cemetery = doc.parks.find((p) => p.kind === 'landuse=cemetery')?.pts ?? null;
+  chunks.tag('ground');
   const terrainTris = buildTerrainMesh(ras, chunks, phys, cemetery, (x, z) => W.levelAt(x, z));
   buildOuterLand(ras, chunks, b, (x) => riverNorthZ(W.river, x));
   phase('terrainMesh');
   const info = buildNetMeshes(net, doc, chunks, phys);
   drawPaths(doc, ras, chunks);
   phase('roadMesh');
+  chunks.tag('ground');
   const water = buildWater(doc, W, ras, chunks, phys, root);
+  chunks.tag('ground');
   const pierDecks = buildPlazaAndPiers(doc, ras, chunks, phys, plazaH, W);
   phase('water');
+  chunks.tag('ground');
   const bridges = buildBridges(net, doc, ras, W, chunks, phys);
   buildStairs(stairs, chunks, phys);
+  chunks.tag('ground');
   const lotStalls = buildLots(lotInfo, ras, chunks, phys);
   phase('bridges');
   const litWindowMat = new THREE.MeshBasicMaterial({ color: 0x8899aa });
   const facadeMat = createFacadeMaterial(litWindowMat, GEO_QUALITY[opts.quality].anisotropy);
   const bld = buildBuildings(doc, ras, net, info.edgeGrid, chunks, phys, opts.seed, root, dropped);
+  chunks.tag('untagged');
   buildMonuments(doc, ras, chunks, phys);
+  chunks.tag('untagged');
   phase('buildings');
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff1c4 });
   const lampPoolMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
@@ -257,11 +274,11 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   // ---------------------------------------------------------------- physics
   // boundary walls (invisible) and a safety floor under everything
   const wallH = 120;
-  phys.box((b.x0 + b.x1) / 2, 0, b.z0 - 1, (b.x1 - b.x0) / 2 + 2, wallH, 1);
-  phys.box((b.x0 + b.x1) / 2, 0, b.z1 + 1, (b.x1 - b.x0) / 2 + 2, wallH, 1);
-  phys.box(b.x0 - 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2);
-  phys.box(b.x1 + 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2);
-  phys.box((b.x0 + b.x1) / 2, -3.2, (b.z0 + b.z1) / 2, (b.x1 - b.x0) / 2, 1, (b.z1 - b.z0) / 2);
+  phys.box((b.x0 + b.x1) / 2, 0, b.z0 - 1, (b.x1 - b.x0) / 2 + 2, wallH, 1, 1, 0, 'boundary');
+  phys.box((b.x0 + b.x1) / 2, 0, b.z1 + 1, (b.x1 - b.x0) / 2 + 2, wallH, 1, 1, 0, 'boundary');
+  phys.box(b.x0 - 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2, 1, 0, 'boundary');
+  phys.box(b.x1 + 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2, 1, 0, 'boundary');
+  phys.box((b.x0 + b.x1) / 2, -3.2, (b.z0 + b.z1) / 2, (b.x1 - b.x0) / 2, 1, (b.z1 - b.z0) / 2, 1, 0, 'boundary');
   const trimeshTris = phys.finishTrimeshes();
   phase('physics');
 
@@ -344,6 +361,9 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops },
     droppedBuildings: dropped,
     stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris },
+    solidTags: phys.tags,
+    solidRecorder: chunks.rec,
+    stairs: stairs.map((st) => ({ pts: st.pts, w: st.w, L: st.L, name: st.name, h: st.h, flights: st.flights })),
     root,
   };
   setQuality(quality);

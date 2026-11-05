@@ -1819,3 +1819,27 @@ export async function geoplay(page, S) {
   });
   return out;
 }
+
+/**
+ * Physics audit (run with QUERY=physaudit=1): drawn geometry vs Rapier colliders per solid kind (side probes),
+ * drawn floors vs physics floors (surface samples) and every stair. Prints the mismatches with coordinates.
+ * AUDIT_OUT=<file> writes the whole report as JSON. Passes when no solid kind has a probe or surface mismatch.
+ */
+export async function physaudit(page) {
+  await page.waitForFunction(() => !!window.__ocPhysAudit, null, { timeout: 60000 }).catch(() => { throw new Error('physaudit needs QUERY=physaudit=1'); });
+  const rep = await page.evaluate(() => window.__ocPhysAudit({ randomSamples: Number(new URLSearchParams(location.search).get('samples') ?? 3000) }));
+  if (process.env.AUDIT_OUT) (await import('node:fs')).writeFileSync(process.env.AUDIT_OUT, JSON.stringify(rep, null, 1));
+  const lines = [];
+  for (const [k, s] of Object.entries(rep.probes)) {
+    const bad = s.missing + s.short + s.long;
+    lines.push(`probe ${k.padEnd(11)} ${String(s.probes).padStart(6)} probes  ok ${s.ok}  missing ${s.missing}  short ${s.short}  long ${s.long}  occluded ${s.occluded}  unreachable ${s.unreachable}${bad ? `  worst long ${s.worstLong.toFixed(2)} short ${s.worstShort.toFixed(2)}` : ''}`);
+    for (const e of s.examples.slice(0, bad ? 4 : 0)) lines.push(`    ${e}`);
+  }
+  for (const [k, s] of Object.entries(rep.surfaces)) {
+    lines.push(`floor ${k.padEnd(16)} ${String(s.samples).padStart(6)} samples  ok ${s.ok}  unsolid ${s.unsolid}  undrawn ${s.undrawn}${s.unsolid + s.undrawn ? `  worst ${s.worst.toFixed(2)}` : ''}`);
+    for (const e of s.examples.slice(0, s.unsolid + s.undrawn ? 4 : 0)) lines.push(`    ${e}`);
+  }
+  for (const st of rep.stairs) lines.push(`stair ${st.name.padEnd(16)} L ${st.length} rise ${st.rise}  phys-visual ${st.physMinusVisual.join('..')}  max step ${st.maxPhysStep}`);
+  console.log(lines.join('\n'));
+  return { map: rep.map, colliders: rep.colliders, records: rep.records, totals: rep.totals, ms: rep.ms, pass: rep.totals.probeMismatches === 0 && rep.totals.surfaceMismatches === 0 };
+}

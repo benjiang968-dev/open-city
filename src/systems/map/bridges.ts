@@ -64,9 +64,10 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const ix1 = q.x + q.rx * (outer - PARAPET_T) * side, iz1 = q.z + q.rz * (outer - PARAPET_T) * side;
         const mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2;
         const buf = chunks.buf('ground', mx, mz);
-        const pb = phys.ground(mx, mz);
+        const pb = phys.trimesh(mx, mz, 'parapet');
         const nx = ((p.rx + q.rx) / 2) * side, nz = ((p.rz + q.rz) / 2) * side;
         const H = G.parapetHeight;
+        chunks.tag('parapet');
         buf.wall(ix0, iz0, ix1, iz1, hp, hp + H, hq, hq + H, shade(pCol, 0.94), -nx, -nz);
         buf.wall(ox0, oz0, ox1, oz1, hp - 0.2, hp + H, hq - 0.2, hq + H, pCol, nx, nz);
         buf.quad(ix0, hp + H, iz0, ox0, hp + H, oz0, ox1, hq + H, oz1, ix1, hq + H, iz1, COL.coping, 0, 1, 0);
@@ -76,6 +77,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         if (style === 'steel') {
           // girder fascia below the deck
           const th = G.deckThickness + 0.3;
+          chunks.tag('overhead'); // girder fascia under the freeway deck
           buf.wall(ox0 + nx * 0.05, oz0 + nz * 0.05, ox1 + nx * 0.05, oz1 + nz * 0.05, hp - base - th - 0.5, hp - base - 0.25, hq - base - th - 0.5, hq - base - 0.25, COL.steel, nx, nz);
         }
       }
@@ -101,6 +103,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
       const g = Math.min(ras.heightAt(ax, az), ras.heightAt(bx, bz), ras.heightAt(q.x, q.z)) - 1.5;
       if (y - g < 0.3) continue;
       const buf = chunks.buf('ground', q.x, q.z);
+      chunks.tag('bridgePier');
       buf.wall(ax, az, bx, bz, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), -q.ux * dir, -q.uz * dir);
       buf.wall(ax, az, bx, bz, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), q.ux * dir, q.uz * dir);
     }
@@ -151,10 +154,11 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const y = net.profAt(e, s) - th;
         const g = Math.min(groundAt(q.x, q.z), groundAt(q.x - q.uz * W2, q.z + q.ux * W2), groundAt(q.x + q.uz * W2, q.z - q.ux * W2)) - 0.6;
         const buf = chunks.buf('ground', q.x, q.z);
+        chunks.tag('bridgePier');
         buf.obox(q.x, g, q.z, 2.2, W2 + 0.6, y, q.ux, q.uz, shade(pCol, 0.9), shade(pCol, 0.85));
         // cutwater noses
         buf.obox(q.x, g, q.z, 2.6, W2 + 1.4, Math.min(y, g + 4), q.ux, q.uz, shade(pCol, 0.8));
-        phys.box(q.x, (g + y) / 2, q.z, 2.2, (y - g) / 2, W2 + 0.6, q.ux, q.uz);
+        phys.box(q.x, (g + y) / 2, q.z, 2.2, (y - g) / 2, W2 + 0.6, q.ux, q.uz, 'bridgePier');
       }
       for (let i = 1; i < sup.length; i++) {
         const sa = sup[i - 1] + (i > 1 ? 2.2 : 0), sb = sup[i] - (i < sup.length - 1 ? 2.2 : 0);
@@ -176,6 +180,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
           const cur = [q.x - q.uz * W2, q.z + q.ux * W2, q.x + q.uz * W2, q.z - q.ux * W2, ya2, deckB, q.x, q.z];
           if (prev) {
             const buf = chunks.buf('ground', (prev[6] + cur[6]) / 2, (prev[7] + cur[7]) / 2);
+            chunks.tag('bridgePier');
             // intrados (underside of the arch)
             buf.quad(prev[0], prev[4], prev[1], prev[2], prev[4], prev[3], cur[2], cur[4], cur[3], cur[0], cur[4], cur[1], shade(pCol, 0.78), 0, -1, 0);
             // spandrel walls both sides
@@ -197,13 +202,15 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const off = colOff;
         const cap = style === 'steel' ? COL.steel : COL.concreteDark;
         const buf = chunks.buf('ground', q.x, q.z);
+        chunks.tag('column');
         for (const sd of [-1, 1]) {
           const cx = q.x + rx * off * sd, cz = q.z + rz * off * sd;
           const g = groundAt(cx, cz) - 0.4;
           if (style === 'steel') buf.obox(cx, g, cz, 0.45, 0.45, y - 0.9, q.ux, q.uz, COL.steel, COL.steelDark);
           else buf.cyl(cx, g, cz, 0.75, 0.7, y - 0.9 - g, 10, COL.concrete);
-          phys.cylinder(cx, g, cz, style === 'steel' ? 0.62 : 0.75, y - 0.9 - g);
+          phys.cylinder(cx, g, cz, style === 'steel' ? 0.62 : 0.75, y - 0.9 - g, 'column');
         }
+        chunks.tag('overhead'); // cap beam under the deck
         buf.obox(q.x, y - 1.0, q.z, 0.8, off + 0.9, y, q.ux, q.uz, cap, shade(cap, 0.9));
       }
     }
@@ -281,7 +288,8 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
       const rx = -uz * (w / 2), rz = ux * (w / 2);
       const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
       const buf = chunks.buf('ground', mx, mz);
-      const pb = phys.ground(mx, mz);
+      const pb = phys.trimesh(mx, mz, 'stair');
+      const pw = phys.trimesh(mx, mz, 'stairWall');
       // sample the ramp every 0.5 m: physics = smooth ramp; visuals = steps on flights, flat on landings
       const n = Math.max(1, Math.ceil(segL / 0.5));
       for (let k = 0; k < n; k++) {
@@ -293,13 +301,14 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         // side walls (render + physics) keep people on the stair, once it has risen above its foot: on the flat
         // run-in at the bottom they stood across the towpath under every street bridge and blocked it
         if (Math.max(h0, h1) < hLow + G.stairWallFrom) continue;
+        chunks.tag('stairWall');
         for (const sd of [-1, 1]) {
           const wx0 = p0x + rx * sd * 1.08, wz0 = p0z + rz * sd * 1.08, wx1 = p1x + rx * sd * 1.08, wz1 = p1z + rz * sd * 1.08;
           const top = big ? 1.1 : 0.9;
           buf.wall(wx0, wz0, wx1, wz1, h0 - 1.6, h0 + top, h1 - 1.6, h1 + top, COL.stone, -rx * sd, -rz * sd);
           buf.wall(wx0 + rx * sd * 0.3, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, wz1 + rz * sd * 0.3, h0 - 1.6, h0 + top, h1 - 1.6, h1 + top, COL.stoneDark, rx * sd, rz * sd);
           buf.quad(wx0, h0 + top, wz0, wx0 + rx * sd * 0.3, h0 + top, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, h1 + top, wz1 + rz * sd * 0.3, wx1, h1 + top, wz1, COL.coping, 0, 1, 0);
-          pb.quad(wx0, h0 - 0.5, wz0, wx1, h1 - 0.5, wz1, wx1, h1 + top, wz1, wx0, h0 + top, wz0);
+          pw.quad(wx0, h0 - 0.5, wz0, wx1, h1 - 0.5, wz1, wx1, h1 + top, wz1, wx0, h0 + top, wz0);
         }
       }
       // steps: risers of ~0.17 m on the flights
@@ -308,6 +317,7 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         if (b0 - a0 < 0.1) continue;
         const hA = st.h(a0), hB = st.h(b0);
         const nSteps = Math.max(1, Math.round(Math.abs(hB - hA) / 0.17));
+        chunks.tag('stair');
         for (let k = 0; k < nSteps; k++) {
           const t0 = k / nSteps, t1 = (k + 1) / nSteps;
           const s0 = lerp(a0, b0, t0), s1 = lerp(a0, b0, t1);
@@ -323,6 +333,7 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         }
         // a hand rail down the middle of the big stair
         if (big) {
+          chunks.tag('railing');
           const x0 = a[0] + ux * (a0 - cum[i - 1]), z0 = a[1] + uz * (a0 - cum[i - 1]);
           const x1 = a[0] + ux * (b0 - cum[i - 1]), z1 = a[1] + uz * (b0 - cum[i - 1]);
           buf.quad(x0 - uz * 0.03, hA + 0.95, z0 + ux * 0.03, x0 + uz * 0.03, hA + 0.95, z0 - ux * 0.03, x1 + uz * 0.03, hB + 0.95, z1 - ux * 0.03, x1 - uz * 0.03, hB + 0.95, z1 + ux * 0.03, COL.rail, 0, 1, 0);

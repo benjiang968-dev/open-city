@@ -5,7 +5,7 @@ import { TUNING } from './tuning';
 import { Rng, seedFromUrl } from './rng';
 import type { World } from './world';
 import { createInput, endInputFrame, act } from './systems/input';
-import { loadMap } from './systems/map/loadMap';
+import { loadMap, physAuditFromUrl } from './systems/map/loadMap';
 import { validateCityMap, laneSample, projectOnLane, roadRouter, walkRouter } from './systems/map/cityMap';
 import { createDayNight, updateDayNight } from './systems/dayNight';
 import { createCamera, updateCamera } from './systems/camera';
@@ -131,6 +131,11 @@ async function boot() {
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
+  // physics audit (tests only, ?physaudit=1): drawn geometry vs colliders, see systems/physicsAudit.ts
+  if (physAuditFromUrl()) {
+    const { runPhysicsAudit } = await import('./systems/physicsAudit');
+    (window as unknown as { __ocPhysAudit: unknown }).__ocPhysAudit = (opts?: Parameters<typeof runPhysicsAudit>[1]) => runPhysicsAudit(w, opts);
+  }
 
   /** Collision events (thrown items hitting people and cars are handled in M2.7). */
   function drainPhysicsEvents(w: World) {
