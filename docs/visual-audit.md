@@ -53,11 +53,14 @@ Reproduce:
 
 ## 2. The views
 
-Coordinates: x east, z south, y up, metres; camera heights are above the ground under the camera.
+Coordinates: x east, z south, y up, metres; camera heights are given above the ground under the camera, and the
+script pins them as absolute heights measured on the base build (camera / look-at y: rep 22.743 / 24.016, street2
+27.023 / 33.889, street3 24.315 / 31.756, door 29.185 / 29.585, people 22.775 / 22.130, car 23.018 / 22.118, tree
+22.720 / 24.720, road-far 22.243 / 22.243), so every build is shot from the same point. Game time 11:00, clear, seed 1.
 
 | view | camera -> look-at | what it is for |
 |---|---|---|
-| **rep** | (-277.3, +1.7, 141.0) -> (-200, +2.8, 151.5) | **The representative street**: M St NW, 3200 block (between Wisconsin Ave and Potomac St), north pavement at the kerb, eye height, looking east. It is on the spawn street (the spawn is at (-648, 170) on M St by Key Bridge, 370 m west) and it is the block with the most of what the owner judges at once: in the 120 m around the view: 17 street trees on both kerbs 12 m apart, 28 parked cars, 27 shops and offices in two- to four-storey Federal rowhouse fronts with signs and awnings, lamps, a four-lane carriageway with lane markings and a double yellow line, and the busiest pavements in the game (M St at lunch is the crowd's busiest place). Chosen from a scan of every 60 m of M St, Wisconsin Ave, N St, O St, P St, Prospect St, Dumbarton St, 29th-31st St for trees, parked cars, shops and buildings within 35 m. |
+| **rep** | (-277.3, +1.7, 141.0) -> (-200, +2.8, 151.5) | **The representative street**: M St NW, 3200 block (between Wisconsin Ave and Potomac St), north pavement at the kerb, eye height, looking east. It is on the spawn street (the spawn is at (-648, 170) on M St by Key Bridge, 370 m west) and it is the block with the most of what the owner judges at once. Chosen from a scan of every 60 m of 13 streets (M St, Wisconsin Ave, N St, O St, P St, Prospect St, Dumbarton St, 29th-31st St, 33rd St, Potomac St) counting street trees, parked cars, shops and buildings within 35 m: the stretch at (-266, 150) has the most street trees (10, both kerbs, about 12 m apart) and the most parked cars (16) of all of M St, with 15 shops and offices in 14 two- to four-storey Federal rowhouse fronts with signs and awnings, lamps, a four-lane carriageway with lane markings and a double yellow line, and the busiest pavements in the game (M St at lunch is the crowd's busiest place). |
 | street2 | (-446, +1.7, -27.2) -> (-560, +5, -35) | N St NW, 3300 block: residential rowhouses with stoops, uphill. (No data trees on this block.) |
 | street3 | (-147, +1.7, 104.5) -> (-158, +6, 20) | Wisconsin Ave NW between M St and Prospect St: the main shopping street, uphill, trees both sides. |
 | door | (-512.12, +1.6, -25.2) -> door at (-512.12, -21.2) | a rowhouse front door with a five-step stoop and iron rails, N St, from the pavement 4 m away. |

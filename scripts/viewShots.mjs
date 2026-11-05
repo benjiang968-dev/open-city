@@ -44,10 +44,12 @@
 // Views (x east, z south, y up, metres; heights are above the ground under the point unless abs):
 //  rep      M St NW, 3200 block (between Wisconsin Ave and Potomac St): north pavement at the kerb, x=-277.3, z=141.0,
 //           eye 1.7 m, half way between two street trees, a lamp 10 m behind, a parked car just behind on the right,
-//           looking east along the street (towards Wisconsin Ave). THE representative street: on the spawn street (M St NW, ~350 m east of the
-//           spawn at -648, 170), and the block with the most of what the owner judges at once: 16 parked cars,
-//           17 street trees (both kerbs, 12 m apart), 15+ shops in two- to four-storey Federal rowhouse fronts, lamps,
-//           a 4-lane carriageway with markings, and the busiest pavements (M St at lunch is the crowd's busiest place).
+//           looking east along the street (towards Wisconsin Ave). THE representative street: on the spawn street
+//           (M St NW, ~370 m east of the spawn at -648, 170), and the block with the most of what the owner judges at
+//           once: in a scan of every 60 m of 13 streets (trees, parked cars, shops, buildings within 35 m), the stretch
+//           at (-266, 150) has the most street trees (10) and parked cars (16) of all of M St, 15 shops and offices in
+//           14 two- to four-storey Federal rowhouse fronts, lamps, a 4-lane carriageway with markings, and the busiest
+//           pavements (M St at lunch is the crowd's busiest place).
 //  street2  N St NW, 3300 block (residential rowhouses with stoops), south pavement at x=-446, z=-27.2, looking west
 //           uphill along the street (no data trees on this block).
 //  street3  Wisconsin Ave NW between M St and Prospect St (main shopping street), east pavement at x=-147, z=104.5,
@@ -147,7 +149,8 @@ await page.addInitScript(() => {
 const params = [`seed=${seed}`, `quality=${quality}`, map ? `map=${encodeURIComponent(map)}` : ''].filter(Boolean).join('&');
 const t0 = Date.now();
 await page.goto(`http://localhost:${port}/?${params}`);
-await page.waitForFunction(() => window.__oc && typeof window.__ocFrames === 'function' && typeof window.__ocRun === 'function', null, { timeout: 900000 });
+// polled on a timer: the default polling runs on requestAnimationFrame, which the gate holds once __oc exists
+await page.waitForFunction(() => window.__oc && typeof window.__ocFrames === 'function' && typeof window.__ocRun === 'function', null, { timeout: 900000, polling: 250 });
 const info = await page.evaluate(() => {
   window.__vsHold = true;
   const w = window.__oc;
