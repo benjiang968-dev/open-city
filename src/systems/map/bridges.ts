@@ -86,7 +86,8 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         for (let s = s0 + 8 + off; s < s1 - 6; s += spacing) {
           if (e.freeway && side < 0) continue;
           const q = pointAtS(e, s);
-          const o = outer - PARAPET_T - 0.35;
+          // on a sidewalk, or on top of the freeway's parapet (inside it they stood in the kerbside lane)
+          const o = e.freeway ? outer - PARAPET_T / 2 : outer - PARAPET_T - 0.35;
           lamps.push({ x: q.x - q.uz * o * side, y: net.profAt(e, s) + base, z: q.z + q.ux * o * side, ax: q.uz * side, az: -q.ux * side });
         }
       }
@@ -107,6 +108,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
     if (style === 'short') continue;
     const th = G.deckThickness + (e.freeway ? 0.3 : 0);
     const W2 = e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0);
+    const colOff = W2 - (style === 'steel' ? 1.2 : 1.6); // column pairs stand this far either side of the centre line
     const canPier = (s: number) => {
       const q = pointAtS(e, s);
       const y = net.profAt(e, s);
@@ -116,6 +118,13 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         if (bd === B.ROAD || bd === B.HOLE) return false;
         if (style !== 'arch' && (kd & K.WATER)) return false;
         if (y - ras.heightAt(x, z) < 3) return false;
+      }
+      // a column (and a car's width round it) must not stand in a carriageway below (Water St under the freeway)
+      if (style !== 'arch') {
+        for (const sd of [-1, 1]) for (const a of [-G.columnRoadClear, 0, G.columnRoadClear]) for (const l of [-G.columnRoadClear, 0, G.columnRoadClear]) {
+          const o = colOff * sd + l;
+          if (ras.bandAt(q.x - q.uz * o + q.ux * a, q.z + q.ux * o + q.uz * a) === B.ROAD) return false;
+        }
       }
       return true;
     };
@@ -185,7 +194,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const q = pointAtS(e, s);
         const y = net.profAt(e, s) - th;
         const rx = -q.uz, rz = q.ux;
-        const off = W2 - (style === 'steel' ? 1.2 : 1.6);
+        const off = colOff;
         const cap = style === 'steel' ? COL.steel : COL.concreteDark;
         const buf = chunks.buf('ground', q.x, q.z);
         for (const sd of [-1, 1]) {
@@ -263,6 +272,7 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
   for (const st of plans) {
     const { pts, cum, w } = st;
     const big = !!st.name;
+    const hLow = Math.min(st.h(0), st.h(st.L)); // the stair's foot (the towpath for the canal steps)
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1], b = pts[i];
       const segL = cum[i] - cum[i - 1];
@@ -280,7 +290,9 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         const p1x = a[0] + ux * (s1 - cum[i - 1]), p1z = a[1] + uz * (s1 - cum[i - 1]);
         const h0 = st.h(s0), h1 = st.h(s1);
         pb.quad(p0x - rx, h0, p0z - rz, p0x + rx, h0, p0z + rz, p1x + rx, h1, p1z + rz, p1x - rx, h1, p1z - rz);
-        // side walls (render + physics) keep people on the stair
+        // side walls (render + physics) keep people on the stair, once it has risen above its foot: on the flat
+        // run-in at the bottom they stood across the towpath under every street bridge and blocked it
+        if (Math.max(h0, h1) < hLow + G.stairWallFrom) continue;
         for (const sd of [-1, 1]) {
           const wx0 = p0x + rx * sd * 1.08, wz0 = p0z + rz * sd * 1.08, wx1 = p1x + rx * sd * 1.08, wz1 = p1z + rz * sd * 1.08;
           const top = big ? 1.1 : 0.9;

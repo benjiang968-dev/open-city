@@ -252,6 +252,20 @@ export class PhysChunks {
     const d = this.R.ColliderDesc.cuboid(hx, hy, hz).setTranslation(cx, cy, cz).setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) });
     this.add(d, cx, cz);
   }
+  /** Vertical prism over a convex footprint (x, z pairs), from y0 to y1: a convex hull collider. */
+  prism(pts: ArrayLike<number>, y0: number, y1: number) {
+    const n = pts.length / 2;
+    const v = new Float32Array(n * 6);
+    let cx = 0, cz = 0;
+    for (let i = 0; i < n; i++) {
+      v[i * 6] = pts[i * 2]; v[i * 6 + 1] = y0; v[i * 6 + 2] = pts[i * 2 + 1];
+      v[i * 6 + 3] = pts[i * 2]; v[i * 6 + 4] = y1; v[i * 6 + 5] = pts[i * 2 + 1];
+      cx += pts[i * 2] / n; cz += pts[i * 2 + 1] / n;
+    }
+    const d = this.R.ColliderDesc.convexHull(v);
+    if (d) this.add(d, cx, cz);
+    return !!d;
+  }
   cylinder(cx: number, y0: number, cz: number, r: number, h: number) {
     this.add(this.R.ColliderDesc.cylinder(h / 2, r).setTranslation(cx, y0 + h / 2, cz), cx, cz);
   }

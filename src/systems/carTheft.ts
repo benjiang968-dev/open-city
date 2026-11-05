@@ -184,7 +184,7 @@ function carTaken(w: World, v: Vehicle, forced: boolean): void {
   if (owner && canReact(owner)) {
     const d = Math.hypot(owner.pos.x - v.px, owner.pos.z - v.pz);
     // close enough, and either sees it happen or hears their own alarm
-    if (d < TH.ownerNoticeRange && (alarm || canSee(w, owner, v.px, v.pz))) {
+    if (d < TH.ownerNoticeRange && (alarm || canSee(w, owner, v.px, v.pz, w.city.heightAt(v.px, v.pz, v.py)))) {
       ownerSaw = true;
       owner.state = 'chase';
       owner.timer = TH.ownerChaseTime;

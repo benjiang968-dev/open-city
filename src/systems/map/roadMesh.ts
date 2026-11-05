@@ -78,7 +78,7 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
     const s0 = e.trimA, s1 = e.L - e.trimB;
     if (s1 - s0 < 0.05) continue;
     const X = sections(e, s0, s1);
-    // frontage strip: pave to the building line unless a lot, park, water or a building is there
+    // frontage strip: pave to the building line unless a lot, park or water is there
     for (const side of [-1, 1]) {
       const f = new Uint8Array(X.length);
       for (let i = 1; i < X.length; i++) {
@@ -86,7 +86,9 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
         const o = (e.hw + G.sidewalkWidth + FRONTAGE / 2) * side;
         const x = (p.x + q.x) / 2 + ((p.rx + q.rx) / 2) * o, z = (p.z + q.z) / 2 + ((p.rz + q.rz) / 2) * o;
         const kk = ras.kindAt(x, z);
-        f[i] = e.deck || kk & (K.BUILDING | K.WATER | K.PARK) || lots.some((l) => pointInPoly(x, z, l.pts)) ? 0 : 1;
+        // (a building there is fine: it stands on the paving, and without it a sliver of no ground opens between the
+        // back of the sidewalk and a facade that is less than FRONTAGE back)
+        f[i] = e.deck || kk & (K.WATER | K.PARK) || lots.some((l) => pointInPoly(x, z, l.pts)) ? 0 : 1;
       }
       if (side < 0) e.fillL = f; else e.fillR = f;
     }
@@ -100,19 +102,28 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
         ras.fillQuad(p.x - p.rx * W, p.z - p.rz * W, p.x + p.rx * W, p.z + p.rz * W, q.x + q.rx * W, q.z + q.rz * W, q.x - q.rx * W, q.z - q.rz * W, (o) => { k[o] |= K.DECK | K.ROAD; });
         continue;
       }
+      // kerb lines (a real step: sidewalk on that side, kerb not dropped) for the step-distance raster
+      const sm = (p.s + q.s) / 2;
+      const kerbed = (side: number) => (side < 0 ? e.swL : e.swR) && !inRanges(e.noSw, side, sm) && !inRanges(e.cuts, side, sm);
+      const kL = kerbed(-1), kR = kerbed(1);
+      const kerbDist = (x: number, z: number, side: number) => segDistN(x, z, p.x + p.rx * hw * side, p.z + p.rz * hw * side, q.x + q.rx * hw * side, q.z + q.rz * hw * side);
       ras.fillQuad(p.x - p.rx * hw, p.z - p.rz * hw, p.x + p.rx * hw, p.z + p.rz * hw, q.x + q.rx * hw, q.z + q.rz * hw, q.x - q.rx * hw, q.z - q.rz * hw, (o, x, z) => {
         const t = clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0, 1);
         h[o] = hp + (hq - hp) * t;
         band[o] = B.ROAD;
         k[o] = (k[o] & ~(K.WATER | K.PARK)) | K.ROAD;
+        if (kL) ras.markStep(o, -kerbDist(x, z, -1));
+        if (kR) ras.markStep(o, -kerbDist(x, z, 1));
       });
       for (const side of [-1, 1]) {
         if (!(side < 0 ? e.swL : e.swR)) continue;
         if (inRanges(e.noSw, side, (p.s + q.s) / 2)) continue;
         const fill = (side < 0 ? e.fillL : e.fillR)![i] ? FRONTAGE : 0;
         const o0 = hw * side, o1 = (hw + G.sidewalkWidth + fill) * side;
+        const kd = side < 0 ? kL : kR;
         ras.fillQuad(p.x + p.rx * o0, p.z + p.rz * o0, p.x + p.rx * o1, p.z + p.rz * o1, q.x + q.rx * o1, q.z + q.rz * o1, q.x + q.rx * o0, q.z + q.rz * o0, (o, x, z) => {
           if (band[o] === B.ROAD) return;
+          if (kd) ras.markStep(o, kerbDist(x, z, side));
           const t = clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0, 1);
           h[o] = hp + (hq - hp) * t + kerb;
           band[o] = B.FLAT;
@@ -123,21 +134,38 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
   }
   for (const n of net.nodes) {
     if (n.outline.length < 6) continue;
-    ras.fillPoly(n.outline, (o) => {
+    // distance to the nearest sidewalk corner kerb (the steps around this junction)
+    const pathDist = (x: number, z: number, P: number[]) => {
+      let d = Infinity;
+      for (let i = 2; i < P.length; i += 2) d = Math.min(d, segDistN(x, z, P[i - 2], P[i - 1], P[i], P[i + 1]));
+      return d;
+    };
+    ras.fillPoly(n.outline, (o, x, z) => {
       h[o] = n.h;
       band[o] = B.ROAD;
       k[o] = (k[o] & ~(K.WATER | K.PARK | K.WALK)) | K.ROAD;
+      for (const c of n.corners) ras.markStep(o, -pathDist(x, z, c.pts));
     });
     for (const c of n.corners) {
       const poly = cornerPoly(c.pts, c.outward, G.sidewalkWidth + FRONTAGE);
-      ras.fillPoly(poly, (o) => {
+      ras.fillPoly(poly, (o, x, z) => {
         if (band[o] === B.ROAD) return;
+        ras.markStep(o, pathDist(x, z, c.pts));
         h[o] = n.h + kerb;
         band[o] = B.FLAT;
         k[o] = (k[o] & ~(K.WATER | K.PARK)) | K.WALK;
       });
     }
   }
+}
+
+/** Distance from a point to a segment (no allocation: the step raster calls this for every road cell). */
+function segDistN(px: number, pz: number, ax: number, az: number, bx: number, bz: number): number {
+  const dx = bx - ax, dz = bz - az, L2 = dx * dx + dz * dz;
+  let t = L2 > 0 ? ((px - ax) * dx + (pz - az) * dz) / L2 : 0;
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  const qx = ax + dx * t - px, qz = az + dz * t - pz;
+  return Math.sqrt(qx * qx + qz * qz);
 }
 
 function cornerPoly(pts: number[], nrm: number[], w: number): number[] {

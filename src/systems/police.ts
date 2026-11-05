@@ -69,14 +69,17 @@ export function dispatchTo(w: World, x: number, z: number, amount: number): void
   pol.searchUntil = w.time + TUNING.witness.searchTime;
 }
 
-/** Can any active police car see this spot right now? */
-export function policeCanSee(w: World, x: number, z: number): boolean {
+/**
+ * Can any active police car see this spot right now? `y`: the ground (or deck) height at the spot, if known
+ * (a crime on Key Bridge vs the towpath under it); default: the terrain there.
+ */
+export function policeCanSee(w: World, x: number, z: number, y = NaN): boolean {
   const R = w.R;
   for (const c of w.police.cars) {
     const dx = x - c.px, dz = z - c.pz, d = Math.hypot(dx, dz);
     if (d > P.sightRange) continue;
     if (d < 2) return true;
-    const y0 = w.city.heightAt(c.px, c.pz) + 1.4, y1 = w.city.heightAt(x, z) + 1.0;
+    const y0 = c.py + 0.8, y1 = (y === y ? y : w.city.heightAt(x, z)) + 1.0; // car body centre ~0.6 m up: eyes at ~1.4 m
     const ray = new R.Ray({ x: c.px, y: y0, z: c.pz }, { x: dx / d, y: (y1 - y0) / d, z: dz / d });
     if (!w.physics.castRay(ray, d - 1, true, R.QueryFilterFlags.ONLY_FIXED)) return true;
   }

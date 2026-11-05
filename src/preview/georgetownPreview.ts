@@ -25,6 +25,35 @@ const VIEWS: Record<string, View> = {
   exorcist: { pos: [-806, 2, 135], look: [-815, 9, 85], hour: 14, fov: 62 },
   healy: { pos: [-900, 30, -60], look: [-997, 25, -122], hour: 15, fov: 60 },
 };
+/** Review viewpoints (scripts/previewShots.mjs --review writes screenshots/26-geo-r-<name>.jpg). */
+export const REVIEW_VIEWS: Record<string, View> = {
+  'kb-mst-approach': { pos: [-690, 1.8, 141], look: [-780, 5, 136], hour: 14, fov: 62 },
+  'kb-canalrd-approach': { pos: [-965, 1.8, 104], look: [-800, 6, 134], hour: 14, fov: 62 },
+  'kb-deck-north': { pos: [-792, 2, 262], look: [-768, 2.5, 133], hour: 15, fov: 62, deck: true },
+  'kb-abutment': { pos: [-690, 12, 300], look: [-790, 6, 175], hour: 15, fov: 60, abs: true },
+  'fw-west-ramp': { pos: [-705, 9, 185], look: [-620, 8, 200], hour: 14, fov: 62 },
+  'fw-east-ramp': { pos: [300, 16, 485], look: [440, 3, 444], hour: 14, fov: 62 },
+  'canal-lock': { pos: [245, 3.5, 252], look: [190, 0, 236], hour: 11, fov: 62 },
+  'canal-footbridge': { pos: [-300, 3.2, 252], look: [-330, 1.5, 233], hour: 11, fov: 62 },
+  towpath: { pos: [-555, 1.8, 238], look: [-650, 1.4, 229], hour: 10, fov: 62 },
+  'waterfront-park': { pos: [-75, 2.2, 508], look: [60, 1.5, 548], hour: 17, fov: 62 },
+  'waterfront-piers': { pos: [60, 8, 630], look: [100, 0, 580], hour: 16, fov: 60 },
+  'circle-spoke': { pos: [905, 1.8, 318], look: [909, 3, 446], hour: 13, fov: 62 },
+  'wisconsin-up': { pos: [-150, 2, 175], look: [-182, 16, -30], hour: 12, fov: 62 },
+  'rowhouses-29th': { pos: [262.5, 1.8, -20], look: [254, 9, -160], hour: 9.5, fov: 62 },
+  'rock-creek': { pos: [440, 10, 300], look: [430, 0, 160], hour: 13, fov: 62 },
+  'mst-bridge': { pos: [575, 2, 124], look: [470, 5, 120], hour: 13, fov: 62 },
+  'edge-north': { pos: [-120, 25, -760], look: [-120, 0, -840], hour: 13, fov: 62 },
+  'edge-west': { pos: [-1050, 18, 30], look: [-1135, 0, 40], hour: 13, fov: 62 },
+  'edge-east': { pos: [1060, 18, 300], look: [1135, 0, 300], hour: 13, fov: 62 },
+  'lot-waterfront': { pos: [-600, 14, 365], look: [-640, 0, 312], hour: 13, fov: 62 },
+  'lot-westend': { pos: [430, 14, 560], look: [460, 0, 515], hour: 13, fov: 62 },
+  'canal-31st': { pos: [-28, 3, 275], look: [-28, 1, 232], hour: 12, fov: 62 },
+  'kst-circle': { pos: [800, 3, 455], look: [860, 2, 443], hour: 13, fov: 62 },
+  'night-keybridge': { pos: [-792, 2, 262], look: [-768, 2.5, 133], hour: 22, fov: 62, deck: true },
+  'night-waterfront': { pos: [-75, 2.2, 508], look: [60, 1.5, 548], hour: 21.5, fov: 62 },
+  'night-rowhouses': { pos: [262.5, 1.8, -20], look: [254, 9, -160], hour: 22.5, fov: 62 },
+};
 
 async function boot() {
   const params = new URLSearchParams(location.search);
@@ -81,7 +110,7 @@ async function boot() {
     state.pitch = Math.asin(d.y);
   };
   const setView = (name: string) => {
-    const v = VIEWS[name] ?? VIEWS.aerial;
+    const v = VIEWS[name] ?? REVIEW_VIEWS[name] ?? VIEWS.aerial;
     state.view = name;
     const [px, py, pz] = v.pos, [lx, ly, lz] = v.look;
     const gy = v.abs ? 0 : v.deck ? geo.roadSurfaceAt(px, pz) : geo.heightAt(px, pz);
@@ -171,11 +200,29 @@ async function boot() {
     const hit = physics.castRay(ray, 60, true);
     return hit ? y - hit.timeOfImpact : NaN;
   };
+  /** Ground colliders only (trimeshes: terrain, roads, sidewalks, decks, lots), ignoring posts, trunks and boxes. */
+  const groundOnly = (c: RAPIER.Collider) => c.shapeType() === RAPIER.ShapeType.TriMesh;
+  const castGround = (x: number, y: number, z: number) => {
+    ray.origin = { x, y, z };
+    const hit = physics.castRay(ray, 60, true, undefined, undefined, undefined, undefined, groundOnly);
+    return hit ? y - hit.timeOfImpact : NaN;
+  };
+  /** Like castDown, and the Rapier shape type that was hit (6 = trimesh ground, 1 = box, 10 = cylinder), or -1. */
+  const castDownShape = (x: number, y: number, z: number, out: number[]) => {
+    ray.origin = { x, y, z };
+    const hit = physics.castRay(ray, 60, true);
+    out[0] = hit ? y - hit.timeOfImpact : NaN;
+    out[1] = hit ? hit.collider.shapeType() : -1;
+    return out;
+  };
   (window as unknown as { __geo: unknown }).__geo = {
     ready: true,
     stats: geo.stats,
     geo,
+    doc,
     castDown,
+    castDownShape,
+    castGround,
     setView: (n: string) => setView(n),
     /** Switch quality; returns the milliseconds GeoWorld.setQuality took (the renderer's own settings excluded). */
     setQuality: (q: GeoQuality) => { const t = performance.now(); geo.setQuality(q); const ms = performance.now() - t; applyQ(q); return ms; },
@@ -192,6 +239,19 @@ async function boot() {
       setCam(px, py, pz, lx, ly, lz);
     },
     perf: () => ({ ...perf, view: state.view, quality: geo.quality }),
+    reviewViews: Object.keys(REVIEW_VIEWS),
+    /** Mean milliseconds of GeoWorld.update(time, camera) over n calls (perf script). */
+    timeUpdate: (n: number) => { const t0 = performance.now(); for (let i = 0; i < n; i++) geo.update(i * 0.016, camera); return (performance.now() - t0) / n; },
+    /** JS heap growth (bytes) over n GeoWorld.update calls; needs --enable-precise-memory-info and --expose-gc. */
+    heapUpdate: (n: number) => {
+      const g = (window as unknown as { gc?: () => void }).gc;
+      const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+      if (!mem) return NaN;
+      g?.();
+      const m0 = mem.usedJSHeapSize;
+      for (let i = 0; i < n; i++) geo.update(i * 0.016, camera);
+      return mem.usedJSHeapSize - m0;
+    },
     /** Compare the colliders with roadSurfaceAt along every lane and deck; look for lips on decks and ramps. */
     rayCheck: () => {
       let n = 0, bad = 0, maxErr = 0, lips = 0;
