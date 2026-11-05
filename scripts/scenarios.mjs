@@ -2054,8 +2054,8 @@ export async function stairs(page) {
         }
       }
     }
-    // ------------------------------------------------------------------ kerb: road to sidewalk and back
-    {
+    // ------------------------------------------------------------------ kerb: road to sidewalk and back (real maps: the grid has none)
+    if (geo) {
       const k = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
       c.kerbPoint(c.spawn.x, c.spawn.z, k);
       const rx = -Math.cos(k.heading), rz = Math.sin(k.heading); // the pavement side
@@ -2097,6 +2097,34 @@ export async function stairs(page) {
         if (onTier1 - y < 0.4) fail(`plinth: jump onto tier 1 failed (${(onTier1 - y).toFixed(2)})`);
         if (Math.abs(onTier2 - y - 1.0) > 0.1) fail(`plinth: not standing on tier 2 after two jumps (${(onTier2 - y).toFixed(2)})`);
         if (!(j3.moved < 0.6)) fail('plinth: the marble block did not stop the player');
+      }
+    }
+    // ------------------------------------------------------------------ jump onto a bench seat from the front
+    {
+      let seat = null;
+      w.physics.colliders.forEach((col) => {
+        if (H.kindName(c.solidTags.get(col.handle)) !== 'bench' || col.shapeType() !== 1) return;
+        const h = col.halfExtents();
+        if (Math.abs(h.y - 0.025) > 0.005 || Math.abs(h.x - 0.95) > 0.01) return; // the seat slats box
+        const t = col.translation(), q = col.rotation();
+        // the bench's local +z (its back) in world: rotate (0, 0, 1) by q
+        const bx = 2 * (q.x * q.z + q.w * q.y), bz = 1 - 2 * (q.x * q.x + q.y * q.y);
+        const fx = t.x - bx * 1.4, fz = t.z - bz * 1.4;
+        const d = Math.hypot(t.x - c.spawn.x, t.z - c.spawn.z);
+        if (c.isBlocked(fx, fz) || (seat && seat.d < d)) return;
+        const fl = H.floor(fx, t.y + 2, fz);
+        if (!fl || Math.abs(fl.y - (t.y - 0.445)) > 0.15) return; // level ground in front
+        seat = { x: t.x, z: t.z, top: t.y + 0.025, bx, bz, fx, fz, d };
+      });
+      if (seat) {
+        H.put(seat.fx, seat.fz, face(seat.bx, seat.bz), seat.top + 1);
+        const y0 = H.feet();
+        H.hold(['KeyW'], 0.1);
+        H.press('Space');
+        const run = H.hold(['KeyW'], 1.2);
+        const y1 = H.feet();
+        res.special.push({ test: 'jump onto a bench', ground: +y0.toFixed(2), seatTop: +seat.top.toFixed(2), feetAfter: +y1.toFixed(2), pen: run.pen });
+        if (Math.abs(y1 - seat.top) > 0.12) fail(`bench: not standing on the seat after the jump (feet ${y1.toFixed(2)}, seat ${seat.top.toFixed(2)})`);
       }
     }
     // ------------------------------------------------------------------ decks: Key Bridge sidewalk, the freeway carriageway

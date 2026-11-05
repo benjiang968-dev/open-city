@@ -25,6 +25,7 @@ the seed never changes which map loads. Every system reads the map through one i
 | R | flip the car upright |
 | H | horn |
 | F3 or ` (backtick) | debug overlay |
+| F4 | collision view: the physics shapes near you, coloured by kind |
 | M | mute |
 
 ## Build and deploy
@@ -46,6 +47,8 @@ node scripts/shot.mjs 06-taxi taxi       # runs a scenario, saves screenshots/06
 
 Scenarios live in `scripts/scenarios.mjs` (handling, life, taxi, chat, police, bust, night, perf …).
 `MAP=<id> node scripts/shot.mjs x mapcheck` checks a map's integrity (graph, 30 lane choices by a traffic car, 20 walks).
+Physics: `QUERY=physaudit=1 MAP=<id> node scripts/shot.mjs x physaudit` compares what is drawn with the colliders,
+`stairs` walks every stair and into every prop kind, `fallthrough` drops the player at thousands of points.
 
 ## Map data
 

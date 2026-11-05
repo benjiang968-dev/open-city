@@ -785,12 +785,15 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     const nx = Math.sign(p.curbX - p.x) * (Math.abs(p.curbX - p.x) > 0.5 ? 1 : 0);
     const nz = Math.sign(p.curbZ - p.z) * (Math.abs(p.curbZ - p.z) > 0.5 ? 1 : 0);
     if (p.kind === 'taxiRank') {
+      // the post stands a metre back from the rank's spot (the player starts and fares wait on that spot; now that
+      // the post is solid nobody may stand inside it)
+      const px = p.x - nx * 1.0, pz = p.z - nz * 1.0;
       tag('signPost');
-      props.box(p.x - 0.06, 0, p.z - 0.06, p.x + 0.06, 2.6, p.z + 0.06, C('#4a4e54'));
-      placeProp('gridTaxiPost', p.x, 0, p.z);
+      props.box(px - 0.06, 0, pz - 0.06, px + 0.06, 2.6, pz + 0.06, C('#4a4e54'));
+      placeProp('gridTaxiPost', px, 0, pz);
       tag('overhead');
-      signs.wall(p.x + nx * 0.08, 2.75, p.z + nz * 0.08, 1.4, 0.5, nx, nz, white, uvRow(k));
-      signs.wall(p.x - nx * 0.08, 2.75, p.z - nz * 0.08, 1.4, 0.5, -nx, -nz, white, uvRow(k));
+      signs.wall(px + nx * 0.08, 2.75, pz + nz * 0.08, 1.4, 0.5, nx, nz, white, uvRow(k));
+      signs.wall(px - nx * 0.08, 2.75, pz - nz * 0.08, 1.4, 0.5, -nx, -nz, white, uvRow(k));
     } else {
       // on the building face behind the pavement
       const back = pw / 2 + 0.7;
