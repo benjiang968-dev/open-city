@@ -32,7 +32,8 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
 
   // ------------------------------------------------------------------------------------- lamps
   const lamps: { x: number; y: number; z: number }[] = [];
-  for (const p of doc.props) if (p[2] === 'lamp') lamps.push({ x: p[0], y: ras.heightAt(p[0], p[1]), z: p[1] });
+  // (not where the road now runs: Washington Circle is snapped to a true circle, which put a few data lamps in its lanes)
+  for (const p of doc.props) if (p[2] === 'lamp' && roadDist(p[0], p[1]) > 0.3) lamps.push({ x: p[0], y: ras.heightAt(p[0], p[1]), z: p[1] });
   for (const l of extraLamps) lamps.push({ x: l.x, y: l.y, z: l.z });
   const lampPositions = new Float32Array(lamps.length * 3);
   lamps.forEach((l, i) => { lampPositions[i * 3] = l.x; lampPositions[i * 3 + 1] = l.y; lampPositions[i * 3 + 2] = l.z; });
@@ -72,6 +73,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       phys.cylinder(l.x, l.y, l.z, 0.16, 4.3);
     });
     pools.renderOrder = 1;
+    poles.name = 'lamp-poles'; globe.name = 'lamp-globes'; pools.name = 'lamp-pools';
     for (const im of [poles, globe, pools]) { im.computeBoundingSphere(); root.add(im); }
     tris += lamps.length * (pole.tris + 20 + 2);
   }
@@ -133,6 +135,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
   for (let sp = 0; sp < 3; sp++) {
     const list = trees.filter((t) => t.sp === sp).sort((a, b) => a.rank - b.rank);
     const im = inst(species[sp], treeMat, list.length);
+    im.name = `trees-${sp}`;
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     const col = new THREE.Color();
     const base = new THREE.Color(sp === 1 ? CONIFER[0] : GREENS[0]);
@@ -163,6 +166,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     for (let k = 0; k < 3; k++) g.box(-0.95, 0.42, -0.24 + k * 0.17, 0.95, 0.47, -0.12 + k * 0.17, wood);
     for (let k = 0; k < 2; k++) g.box(-0.95, 0.6 + k * 0.18, 0.24, 0.95, 0.72 + k * 0.18, 0.29, wood);
     const im = inst(g.toGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 }), benches.length);
+    im.name = 'benches';
     const m = new THREE.Matrix4();
     benches.forEach((p, i) => {
       // face the nearest path (back toward the lawn), else a road
@@ -251,6 +255,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         heads.setMatrixAt(h++, m);
       }
     });
+    poles.name = 'signal-poles'; arms.name = 'signal-arms'; heads.name = 'signal-heads';
     for (const im of [poles, arms, heads]) { im.castShadow = true; im.computeBoundingSphere(); root.add(im); }
     tris += sigSpots.length * (poleG.tris + armG.tris) + nHeads * headG.tris;
 
@@ -276,6 +281,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       posts.setMatrixAt(i, m);
       faces.setMatrixAt(i, m);
     });
+    posts.name = 'stop-posts'; faces.name = 'stop-faces';
     for (const im of [posts, faces]) { im.computeBoundingSphere(); root.add(im); }
     tris += stopSpots.length * (postG.tris + faceG.tris);
   }
@@ -315,6 +321,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       phys.box(ex + bx * 0.58, ras.heightAt(ex, ez) + 1.2, ez + bz * 0.58, 2, 1.2, 0.06, q.ux, q.uz);
     }
     const im = inst(g.toGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 }), shelters.length);
+    im.name = 'bus-shelters';
     const m = new THREE.Matrix4();
     shelters.forEach((s, i) => { m.makeRotationY(s.yaw).setPosition(s.x, s.y, s.z); im.setMatrixAt(i, m); });
     im.castShadow = true;
@@ -344,6 +351,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         spots.push(jx, ras.heightAt(jx, jz), jz, (r() - 0.5) * 0.2);
       }
     const im = inst(g.toGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), spots.length / 4);
+    im.name = 'gravestones';
     const m = new THREE.Matrix4();
     for (let i = 0; i < spots.length / 4; i++) {
       m.makeRotationY(spots[i * 4 + 3]).setPosition(spots[i * 4], spots[i * 4 + 1] - 0.05, spots[i * 4 + 2]);

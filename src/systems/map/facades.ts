@@ -27,7 +27,7 @@ const MODERN = [0xd8cdb6, 0xc8c2b5, 0xb8b4ab, 0xe0d8c4, 0x9ea4a6];
 const ROOF_FLAT = [0x8d8a84, 0x9a958c, 0x7e7b76, 0xa39c90, 0x8f5a4a, 0x6f7f72, 0xa6aaae];
 const ROOF_PITCH = [0x4a4f57, 0x55504b, 0x3f4a52, 0x6b4a3c];
 const AWNINGS = [0x1f5c45, 0x7a2430, 0x23395b, 0x1c1c1f, 0xd8cfb8, 0xb5552e, 0xc79a2e, 0x4f6d3a];
-const SIGN_CATS = /^(amenity=(cafe|restaurant|fast_food|bar|pub|ice_cream|bank|pharmacy|cinema|nightclub)|shop=|tourism=hotel)/;
+export const SIGN_CATS = /^(amenity=(cafe|restaurant|fast_food|bar|pub|ice_cream|bank|pharmacy|cinema|nightclub)|shop=|tourism=hotel)/;
 const AWNING_CATS = /^(amenity=(cafe|restaurant|bar|pub|ice_cream)|shop=(bakery|deli|florist|wine|clothes|shoes|antiques|art|gift|books))/;
 
 /** Landmarks from data/georgetown-spec.json "landmarks" (lat/lon), matched to the nearest footprint of the type. */
@@ -155,6 +155,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   const signBuf = new SignBuf();
 
   let extraTris = 0;
+  const stoopBottoms: number[] = [];
   for (const b of doc.buildings) {
     if (skip.has(b.id)) continue;
     const key = special.get(b.id) ?? '';
@@ -323,8 +324,18 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         if (isFront && doorBay !== 255 && stoop > 0.2 && (t === 'terrace' || t === 'house')) {
           const s = (doorBay + 0.5) * bw;
           const px = w.ax + w.ux * s, pz = w.az + w.uz * s;
-          const steps = Math.max(2, Math.round(stoop / 0.19));
+          // the flight runs from the door sill down to the pavement in front of THIS door (on a sloping street that
+          // differs from the wall's middle, which set the floor height): rise and step count from the ground there
+          let gy = ras.heightAt(px + w.nx * 1.8, pz + w.nz * 1.8);
+          let rise = y0 - gy;
+          let steps = Math.max(2, Math.round(rise / 0.19));
+          const outEst = 1.1 + (steps - 1) * 0.3;
+          gy = ras.heightAt(px + w.nx * outEst, pz + w.nz * outEst);
+          rise = y0 - gy;
+          steps = Math.max(2, Math.round(rise / 0.19));
+          const stoop = rise; // shadows the building's nominal stoop height below
           const stepH = stoop / steps;
+          if (rise >= 0.2 && rise <= 2.4) {
           const sc = lin(0xb8b1a4);
           det.obox(px + w.nx * 0.55, y0 - 0.25, pz + w.nz * 0.55, 0.75, 0.55, y0, w.ux, w.uz, sc, shade(sc, 0.9));
           for (let k = 1; k < steps; k++) {
@@ -341,6 +352,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
             const ax = rx + w.nx * 0.2, az = rz + w.nz * 0.2, bx = rx + w.nx * outN, bz = rz + w.nz * outN;
             det.quad(ax - w.ux * 0.03, y0 + 0.95, az - w.uz * 0.03, ax + w.ux * 0.03, y0 + 0.95, az + w.uz * 0.03, bx + w.ux * 0.03, y0 - stoop + 0.95, bz + w.uz * 0.03, bx - w.ux * 0.03, y0 - stoop + 0.95, bz - w.uz * 0.03, iron, 0, 1, 0);
             det.quad(ax, y0 + 0.95, az, bx, y0 - stoop + 0.95, bz, bx, y0 - stoop + 0.89, bz, ax, y0 + 0.89, az, iron, w.ux * sd, 0, w.uz * sd);
+          }
+          stoopBottoms.push(px + w.nx * outN, y0 - stoop, pz + w.nz * outN, 0);
           }
           // door canopy
           det.obox(px + w.nx * 0.25, y0 + 2.75, pz + w.nz * 0.25, 0.8, 0.25, y0 + 2.9, w.ux, w.uz, lin(0xf2efe6));
@@ -410,7 +423,9 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         awning(grd, sx, sz, w, sw + 0.4, y0 + gH - 0.9, ac, striped);
       }
     }
-    // ---- physics: one oriented box over the footprint
+    // ---- physics: an oriented box when the footprint is (nearly) a rectangle, else a prism of the footprint itself
+    // (a box around a skewed quad reaches over the sidewalk: an invisible wall). Nearly = the box adds at most 1.5 %
+    // + 2 m2, a sliver of a few cm along the walls; hull colliders cost boot time, so only where it matters.
     const w0 = walls[0];
     let hu = 0, hv = 0;
     for (const p of P) {
@@ -418,7 +433,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       hv = Math.max(hv, Math.abs((p[0] - cx) * w0.nx + (p[1] - cz) * w0.nz));
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
-    phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    else if (!phys.prism(P.flat(), yMin, top)) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
   }
 
   // -------------------------------------------------------------------------------------------- helpers
@@ -672,6 +688,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   if (signMesh) { root.add(signMesh); extraTris += signBuf.count * 2; }
   return {
     extraTris,
+    stoops: Float32Array.from(stoopBottoms),
     update(_cam: THREE.Vector3, _detail: number) { /* chunk LOD is handled by the world */ },
   };
 }

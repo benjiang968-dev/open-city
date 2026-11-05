@@ -36,6 +36,7 @@ export function applyQuality(w: World, q: Quality, boot = false): void {
   const p = TUNING.quality[q];
   w.settings.quality = q;
   w.settings.pedBudget = p.pedBudget;
+  w.city?.setQuality?.(q); // the map's own draw distance, detail and trees (not yet loaded at the first call)
   const r = w.renderer;
   r.setPixelRatio(Math.min(window.devicePixelRatio || 1, p.maxDevicePixelRatio) * p.resolutionScale);
   r.setSize(window.innerWidth, window.innerHeight);
