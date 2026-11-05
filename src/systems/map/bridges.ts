@@ -109,9 +109,18 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
       if (y - g < 0.3) continue;
       const buf = chunks.buf('ground', q.x, q.z);
       chunks.tag('bridgePier');
-      buf.wall(ax, az, bx, bz, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), -q.ux * dir, -q.uz * dir);
-      buf.wall(ax, az, bx, bz, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), q.ux * dir, q.uz * dir);
-      phys.trimesh(q.x, q.z, 'bridgePier').quad(ax, g, az, bx, g, bz, bx, y + 0.05, bz, ax, y + 0.05, az);
+      // in pieces, left out where a road passes under the deck's end (real data ends decks over the streets below:
+      // the wall stood across K St under the Whitehurst Freeway, solid since Stage 1)
+      const N = 8;
+      for (let k = 0; k < N; k++) {
+        const t0 = k / N, t1 = (k + 1) / N, tm = (t0 + t1) / 2;
+        const mx = lerp(ax, bx, tm), mz = lerp(az, bz, tm);
+        if (ras.bandAt(mx, mz) === B.ROAD || (ras.kindAt(mx, mz) & K.ROAD)) continue;
+        const x0 = lerp(ax, bx, t0), z0 = lerp(az, bz, t0), x1 = lerp(ax, bx, t1), z1 = lerp(az, bz, t1);
+        buf.wall(x0, z0, x1, z1, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), -q.ux * dir, -q.uz * dir);
+        buf.wall(x0, z0, x1, z1, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), q.ux * dir, q.uz * dir);
+        phys.trimesh(q.x, q.z, 'bridgePier').quad(x0, g, z0, x1, g, z1, x1, y + 0.05, z1, x0, y + 0.05, z0);
+      }
     }
     // ---- supports
     if (style === 'short') continue;
