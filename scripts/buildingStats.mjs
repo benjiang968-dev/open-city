@@ -5,7 +5,7 @@
 // Rules copied from the world generator where they decide something (src/systems/map/facades.ts): a wall is a party
 // wall when 2 of 3 points 0.8 m outside it fall inside another footprint; the front is the non-party wall nearest a
 // street (probe 4 m out); "street-facing" = that probe within 9 m of a carriageway edge; rowhouse stoops are drawn for
-// type house / terrace east of x = 380 (Georgetown proper; the West End gets level entrances). Footprints are the
+// type house / terrace at x <= 380 (Georgetown proper; the West End, x > 380, gets level entrances). Footprints are the
 // data's: the world later trims 1-2 % of them back from streets and drops a few under decks (the runtime numbers come
 // from scripts/auditBuildings.mjs). Terrain is the data's height grid (5 m USGS 3DEP samples, bilinear), i.e. the
 // natural ground before roads and sidewalks are graded into it.
@@ -301,7 +301,7 @@ L.push('');
 // doors, stoops, party walls
 const noDoorWall = rows.filter((r) => r.nonParty === 0);
 L.push(`Doors: ${rows.filter((r) => r.nonParty > 0).length} buildings have at least one non-party wall (facades.ts paints a door on the one nearest a street); ${noDoorWall.length} are walled in on every side (no painted door at all: ${noDoorWall.slice(0, 8).map((r) => r.id).join(', ')}${noDoorWall.length > 8 ? ', ...' : ''}). Street-facing front (probe within 9 m of a carriageway): ${rows.filter((r) => r.street).length} (${pct(rows.filter((r) => r.street).length)}); front wall more than 30 m from any street (back lots, courtyards, campus): ${rows.filter((r) => r.frontD > 30).length}.`);
-L.push(`Stoops: ${rows.filter((r) => r.stoopType).length} footprints get the rowhouse stoop treatment (type house east of x = ${WEST_END_X}); nominal landing height 0.45-1.05 m above the pavement (the drawn rise follows the ground at the door, 0.2-2.4 m, else no steps). West End (x > ${WEST_END_X}, level entrances): ${rows.filter((r) => r.westEnd).length}.`);
+L.push(`Stoops: ${rows.filter((r) => r.stoopType).length} footprints get the rowhouse stoop treatment (type house at x <= ${WEST_END_X}, Georgetown proper); nominal landing height 0.45-1.05 m above the pavement (the drawn rise follows the ground at the door, 0.2-2.4 m, else no steps). West End (x > ${WEST_END_X}, level entrances): ${rows.filter((r) => r.westEnd).length}.`);
 const rs = rows.map((r) => r.rowSize);
 L.push(`Party walls: ${rows.filter((r) => r.partyShare > 0).length} buildings (${pct(rows.filter((r) => r.partyShare > 0).length)}) share at least one wall; ${rows.filter((r) => r.partyShare >= 0.4).length} have 40 %+ of their perimeter shared. Terraces (buildings joined by walls): ${new Set(rows.map((r) => r.rowSize > 1 ? r.rowSize + ':' : null)).size - 1 >= 0 ? '' : ''}${rows.filter((r) => r.rowSize === 1).length} detached, ${rows.filter((r) => r.rowSize >= 2 && r.rowSize <= 5).length} in rows of 2-5, ${rows.filter((r) => r.rowSize > 5 && r.rowSize <= 20).length} in rows of 6-20, ${rows.filter((r) => r.rowSize > 20).length} in blocks of more than 20 joined footprints (largest ${Math.max(...rs)}).`);
 L.push('');

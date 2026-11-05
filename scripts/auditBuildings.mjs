@@ -116,6 +116,23 @@ await page.evaluate(() => {
     for (let i = 0; i < c.buildings.length; i++) { const b = c.buildings[i]; if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue; if (H.ringHas(b.pts, x, z)) return i; }
     return -1;
   };
+  /**
+   * The facade point a place's door belongs to: Poi.door itself when it lies on a footprint (Georgetown), else the
+   * first footprint met walking on from the pavement spot through the door point (the grid city's doors are points on
+   * the pavement). Returns { x, z, ux, uz, L (pavement spot -> facade), building } or null.
+   */
+  H.facadeOf = (p) => {
+    const dx = p.door.x - p.x, dz = p.door.z - p.z, L = Math.hypot(dx, dz);
+    if (L < 0.05) return null;
+    const ux = dx / L, uz = dz / L;
+    let bi = H.buildingAt(p.door.x + ux * 0.6, p.door.z + uz * 0.6);
+    if (bi >= 0) return { x: p.door.x, z: p.door.z, ux, uz, L, building: bi };
+    for (let s = 0.1; s <= 10; s += 0.1) {
+      bi = H.buildingAt(p.x + ux * s, p.z + uz * s);
+      if (bi >= 0) return { x: p.x + ux * (s - 0.05), z: p.z + uz * (s - 0.05), ux, uz, L: s - 0.05, building: bi };
+    }
+    return null;
+  };
   window.__ab = H;
 });
 
@@ -176,10 +193,9 @@ Object.assign(R, await page.evaluate(() => {
   // 3. POI doors: ray from the pavement through the door
   const doorRays = { tested: 0, blockedAtFacade: 0, open: 0, byKind: {}, gaps: [], samples: [] };
   for (const p of c.pois) {
-    const dx = p.door.x - p.x, dz = p.door.z - p.z, L = Math.hypot(dx, dz);
-    if (L < 0.3 || L > 8) continue;
-    const ux = dx / L, uz = dz / L;
-    if (H.buildingAt(p.door.x + ux * 0.6, p.door.z + uz * 0.6) < 0) continue; // not a building door
+    const f = H.facadeOf(p);
+    if (!f || f.L < 0.3 || f.L > 8) continue; // not a building door
+    const L = f.L, ux = f.ux, uz = f.uz;
     doorRays.tested++;
     const y = c.heightAt(p.x, p.z);
     const hs = [0.3, 1.0, 1.8].map((h) => H.cast(p.x, y + h, p.z, ux, uz, L + 3));
@@ -284,9 +300,8 @@ R.walks = await page.evaluate((isGeo) => {
     let b = null, bd = Infinity;
     for (const p of c.pois) {
       if (!kinds.includes(p.kind) || (signed && !p.signed)) continue;
-      const dx = p.door.x - p.x, dz = p.door.z - p.z, L = Math.hypot(dx, dz);
-      if (L < 0.8 || L > 4) continue;
-      if (H.buildingAt(p.door.x + (dx / L) * 0.6, p.door.z + (dz / L) * 0.6) < 0) continue;
+      const f = H.facadeOf(p);
+      if (!f || f.L < 0.8 || f.L > 4) continue;
       const d = Math.hypot(p.x - c.spawn.x, p.z - c.spawn.z);
       if (d < bd) { bd = d; b = p; }
     }
@@ -295,9 +310,9 @@ R.walks = await page.evaluate((isGeo) => {
   for (const [label, kinds, signed] of [['shop door', ['shop', 'cafe', 'diner', 'bar'], true], ['office / apartment door', ['office', 'apartment', 'hotel'], false]]) {
     const p = pick(kinds, signed);
     if (!p) continue;
-    const dx = p.door.x - p.x, dz = p.door.z - p.z, L = Math.hypot(dx, dz);
-    tryDoor(label, p.door.x, p.door.z, -dx / L, -dz / L, L + 1.5, { poi: p.name, poiKind: p.kind, cat: p.cat ?? null, street: p.street, building: H.buildingAt(p.door.x + (dx / L) * 0.6, p.door.z + (dz / L) * 0.6) });
-    if (label === 'shop door') window.__abShop = { dx: p.door.x, dz: p.door.z, nx: -dx / L, nz: -dz / L };
+    const f = H.facadeOf(p);
+    tryDoor(label, f.x, f.z, -f.ux, -f.uz, f.L + 1.5, { poi: p.name, poiKind: p.kind, cat: p.cat ?? null, street: p.street, building: f.building, doorIsPavementPoint: f.x !== p.door.x });
+    if (label === 'shop door') window.__abShop = { dx: f.x, dz: f.z, nx: -f.ux, nz: -f.uz };
   }
   return res;
 }, MAP === 'georgetown');
