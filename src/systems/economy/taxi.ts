@@ -5,7 +5,7 @@ import { TUNING } from '../../tuning';
 import type { World } from '../../world';
 import { emit } from '../../world';
 import type { JobMarker, JobSystem } from './jobManager';
-import type { Ped } from '../pedestrians';
+import { bringOnStage, type Ped } from '../pedestrians';
 import { roadRouter, type KerbHit, type LaneEdge, type LaneHit, type Poi } from '../map/cityMap';
 import { toast } from '../hud';
 import { adjustRelationship, remember } from '../../npc/npc';
@@ -19,6 +19,29 @@ const boardTo = new THREE.Vector3();
 
 type Phase = 'none' | 'waiting' | 'boarding' | 'riding' | 'cooldown';
 
+/**
+ * The cross street nearest a place along its own street: the other named street at the closest junction where its
+ * street meets another (within TX.crossStreetRange), or null. Once per fare.
+ */
+function crossStreet(w: World, poi: Poi): string | null {
+  const { nodes, edges } = w.city.roads;
+  let best: string | null = null, bd: number = TX.crossStreetRange;
+  for (const n of nodes) {
+    if (!n.junction) continue;
+    const d = Math.hypot(n.x - poi.curbX, n.z - poi.curbZ);
+    if (d >= bd) continue;
+    let onStreet = false, other: string | null = null;
+    for (const list of [n.in, n.out]) for (const id of list) {
+      const name = edges[id].name;
+      if (!name) continue;
+      if (name === poi.street) onStreet = true;
+      else other ??= name;
+    }
+    if (onStreet && other) { bd = d; best = other; }
+  }
+  return best;
+}
+
 export class TaxiJob implements JobSystem {
   id = 'taxi';
   label = 'Taxi';
@@ -27,6 +50,8 @@ export class TaxiJob implements JobSystem {
   pickup = new THREE.Vector2(); // where the car must stop
   pickupName = '';
   dest: Poi | null = null;
+  /** The nearest cross street of the destination's street (shown in the HUD: "M St NW at 31st St NW"). */
+  destCross: string | null = null;
   tripDist = 0;
   tripTime = 0;
   allowance = 0;
@@ -67,10 +92,12 @@ export class TaxiJob implements JobSystem {
     }
     const cam = w.camera.position;
     const candidates = w.peds.filter((p) => p.active && !p.hidden && p.followId < 0 && !p.dog && p.archetype !== 'parent' && p.phoneMode === null && !p.reserved && p.state !== 'down' && p.state !== 'talk' && p.pos.distanceTo(cam) > 60);
-    const ped = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : w.peds.find((p) => !p.reserved && p.state !== 'talk');
+    // (at a quiet hour nobody may be out: then someone off-stage who travels alone)
+    const ped = candidates.length ? candidates[Math.floor(Math.random() * candidates.length)] : w.peds.find((p) => !p.reserved && p.state !== 'talk' && p.followId < 0 && !p.dog && p.archetype !== 'parent' && !p.hidden);
     if (!ped) return;
     const px = rank.x + (Math.random() - 0.5) * 2, pz = rank.z + (Math.random() - 0.5) * 2;
     ped.pos.set(px, w.city.heightAt(px, pz) + FOOT, pz);
+    bringOnStage(w, ped);
     this.waitWith(ped, rank.curbX, rank.curbZ, rank.name);
   }
 
@@ -80,7 +107,8 @@ export class TaxiJob implements JobSystem {
     if (this.ped && this.ped !== ped) this.release();
     // the kerb stopping point nearest to where they stand
     const k = w.city.kerbPoint(ped.pos.x, ped.pos.z, KERB, ped.pos.y);
-    this.waitWith(ped, k ? KERB.x : ped.pos.x, k ? KERB.z : ped.pos.z, `${ped.npc.name.split(' ')[0]} (here)`);
+    const street = k ? w.city.roads.edges[KERB.edge]?.name : null;
+    this.waitWith(ped, k ? KERB.x : ped.pos.x, k ? KERB.z : ped.pos.z, street ? `${ped.npc.name.split(' ')[0]}, ${street}` : `${ped.npc.name.split(' ')[0]} (here)`);
     return true;
   }
 
@@ -175,7 +203,7 @@ export class TaxiJob implements JobSystem {
         if (this.timer <= 0) {
           ped.hidden = true;
           ped.body.setEnabled(false);
-          this.chooseDestination(w, p.x, p.z);
+          this.chooseDestination(w, p.x, p.z, p.y);
           this.phase = 'riding';
           this.tripTime = 0;
           this.startHealth = v.health;
@@ -210,17 +238,22 @@ export class TaxiJob implements JobSystem {
     }
   }
 
-  private chooseDestination(w: World, x: number, z: number) {
-    const options = w.city.pois.filter((p) => {
-      if (p.kind === 'taxiRank') return false;
+  private chooseDestination(w: World, x: number, z: number, y: number) {
+    // a shop, restaurant, hotel, museum, park... (a home now and then): the HUD names the place and its street
+    const home = Math.random() < TX.homeDestShare;
+    const inRange = (p: Poi) => {
+      if (p.kind === 'taxiRank' || (p.kind === 'apartment') !== home) return false;
       const d = Math.hypot(p.curbX - x, p.curbZ - z);
       return d >= TX.minTripDistance && d <= TX.maxTripDistance;
-    });
-    const list = options.length ? options : w.city.pois.filter((p) => p.kind !== 'taxiRank');
+    };
+    let list = w.city.pois.filter(inRange);
+    if (!list.length) list = w.city.pois.filter((p) => p.kind !== 'taxiRank' && p.kind !== 'apartment');
+    if (!list.length) list = w.city.pois.filter((p) => p.kind !== 'taxiRank');
     this.dest = list[Math.floor(Math.random() * list.length)];
+    this.destCross = crossStreet(w, this.dest);
     this.tripDist = Math.hypot(this.dest.curbX - x, this.dest.curbZ - z);
     // time allowance from the driving distance along the roads (one-way streets and all)
-    this.allowance = routeDistance(w, x, z, this.dest.curbX, this.dest.curbZ) / TX.expectedSpeed + 10;
+    this.allowance = routeDistance(w, x, z, this.dest.curbX, this.dest.curbZ, y) / TX.expectedSpeed + 10;
   }
 
   private complete(w: World, x: number, z: number, health: number) {
@@ -282,11 +315,17 @@ export class TaxiJob implements JobSystem {
         const d = Math.round(Math.hypot(this.dest!.curbX - pp.x, this.dest!.curbZ - pp.z));
         const left = this.allowance - this.tripTime;
         const clock = left >= 0 ? `<span style="color:#9be564">${fmt(left)}</span>` : `<span style="color:#ef476f">late ${fmt(-left)}</span>`;
-        return `🚕 Drop ${this.ped?.npc.name.split(' ')[0]} at <b>${this.dest!.name}</b> (${this.dest!.street}) · ${d} m · ${clock}`;
+        return `🚕 Drop ${this.ped?.npc.name.split(' ')[0]} at <b>${this.dest!.name}</b> (${this.destAddress()}) · ${d} m · ${clock}`;
       }
       default:
         return '';
     }
+  }
+
+  /** "M St NW at 31st St NW" (or just the street). */
+  destAddress(): string {
+    if (!this.dest) return '';
+    return this.destCross ? `${this.dest.street} at ${this.destCross}` : this.dest.street;
   }
 
   markers(w: World): JobMarker[] {
@@ -305,13 +344,14 @@ export class TaxiJob implements JobSystem {
 /**
  * Driving distance from (ax, az) to (bx, bz) along the lanes: from the nearest lane at the start, through the
  * road graph, to the nearest lane at the end, taking either direction of the road at each end (the driver can turn
- * round; the stop can be on either kerb). Falls back to TX.offRoadDetour x the straight line if either end is
- * off-road or there is no route.
+ * round; the stop can be on either kerb). `ay`: the car's height at the start (on a bridge deck the deck's lanes win
+ * over the road below); the drop-off is a kerb at ground level. Falls back to TX.offRoadDetour x the straight line
+ * if either end is off-road or there is no route.
  */
-export function routeDistance(w: World, ax: number, az: number, bx: number, bz: number): number {
+export function routeDistance(w: World, ax: number, az: number, bx: number, bz: number, ay = NaN): number {
   const c = w.city;
   const straight = Math.hypot(bx - ax, bz - az);
-  if (!c.nearestLane(ax, az, TX.routeLaneSearch, HA) || !c.nearestLane(bx, bz, TX.routeLaneSearch, HB)) return straight * TX.offRoadDetour;
+  if (!c.nearestLane(ax, az, TX.routeLaneSearch, HA, ay) || !c.nearestLane(bx, bz, TX.routeLaneSearch, HB, c.heightAt(bx, bz))) return straight * TX.offRoadDetour;
   const E = c.roads.edges, ea = E[HA.edge], eb = E[HB.edge];
   let best = Infinity;
   for (let i = 0; i < 2; i++) {

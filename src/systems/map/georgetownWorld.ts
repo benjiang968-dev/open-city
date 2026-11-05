@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
-import { clamp, SegGrid } from './geoDoc';
+import { clamp, polyArea, SegGrid } from './geoDoc';
 import { lin as linHex, PhysChunks, RenderChunks, type Layer } from './meshKit';
 import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
 import { buildRoadNet, OMITTED_ROADS, solveProfiles, type REdge, type RoadNet } from './roadNet';
@@ -120,6 +120,12 @@ export interface GeoWorld {
   lotStalls: GeoLot[];
   /** Street lamp bases: x, y, z per lamp (the lamp head is 4.6 m above). */
   lampPositions: Float32Array;
+  /**
+   * Traffic signal heads (one per inbound lane of each signalised arm): 7 floats each: x, y, z of the head's top,
+   * yaw (the head's local -z faces the approaching traffic), the junction id, and the arm direction ux, uz (away from
+   * the junction). The lenses are drawn unlit; signalHeads.ts lights them from the traffic signal state.
+   */
+  signalHeads: Float32Array;
   litWindowMat: THREE.MeshBasicMaterial;
   lampMat: THREE.MeshBasicMaterial;
   lampPoolMat: THREE.MeshBasicMaterial;
@@ -131,6 +137,10 @@ export interface GeoWorld {
   quality: GeoQuality;
   /** Ways left out of the render (to be removed from the graph): data ids with a reason. */
   omitted: { roadId: string; name: string; reason: string }[];
+  /** Review data (optional): footprints cut back from streets / dropped, stoop bottoms (x, y, z, 0 per stoop). */
+  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array };
+  /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
+  droppedBuildings: ReadonlySet<string>;
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number };
   root: THREE.Group;
 }
@@ -171,7 +181,10 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   phase('roads');
 
   // ---------------------------------------------------------------- bands into the raster, then blend
+  const clipped = clipBuildingsToStreets(doc, net);
+  phase('clip');
   const dropped = buildingsUnderDecks(doc, net, ras);
+  for (const id of clipped.drop) dropped.add(id);
   rasterizeBuildings(doc, ras, dropped);
   rasterizeNet(net, ras, doc.parking);
   const lotInfo = rasterizeLots(doc, ras, net);
@@ -330,10 +343,13 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     bandAt: (x, z) => ras.bandAt(x, z),
     roadPolys, junctions, decks, lotStalls,
     lampPositions: props.lampPositions,
+    signalHeads: props.signalHeads,
     litWindowMat, lampMat, lampPoolMat, groundMats: [groundMat, decalMat],
     water: { meshes: water.meshes, update: water.update },
     update, setQuality, quality,
     omitted,
+    audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops },
+    droppedBuildings: dropped,
     stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris },
     root,
   };
@@ -354,6 +370,113 @@ function riverNorthZ(river: Pt[], x: number): number {
     if (z < best) best = z;
   }
   return best === Infinity ? 1e9 : best;
+}
+
+/**
+ * Footprints that reach into a carriageway or the sidewalk beside it (the knowledge-based data is 20-80 m off in
+ * places, so some corners sit on junctions and sidewalks) are cut back to the back of the sidewalk, parallel to the
+ * street; a footprint left with too little area is dropped. Edits doc.buildings in place (everything downstream sees
+ * the clipped footprint). Returns the ids clipped and dropped.
+ */
+function clipBuildingsToStreets(doc: GeoDoc, net: RoadNet): { clipped: string[]; drop: string[] } {
+  const SEGS = 1024;
+  const grid = new SegGrid(32);
+  for (const e of net.edges) {
+    if (e.deck) continue;
+    for (let k = 1; k < e.pts.length; k++) grid.add(e.pts[k - 1][0], e.pts[k - 1][1], e.pts[k][0], e.pts[k][1], e.id * SEGS + k, e.hw + G.sidewalkWidth + 2);
+  }
+  const MARGIN = 0.3; // m left between the back of the sidewalk and the cut facade
+  const out = { clipped: [] as string[], drop: [] as string[] };
+  // junction outlines with their bounding boxes (x0, z0, x1, z1)
+  const jn = net.nodes.filter((n) => n.outline.length >= 6).map((n) => {
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < n.outline.length; i += 2) { x0 = Math.min(x0, n.outline[i]); x1 = Math.max(x1, n.outline[i]); z0 = Math.min(z0, n.outline[i + 1]); z1 = Math.max(z1, n.outline[i + 1]); }
+    return { n, x0, z0, x1, z1 };
+  });
+  for (const b of doc.buildings) {
+    const area0 = Math.abs(polyArea(b.pts));
+    let P: Pt[] = b.pts;
+    for (let pass = 0; pass < 3; pass++) {
+      let depth = 0.15, cx = 0, cz = 0, nx = 0, nz = 0;
+      // sample the outline (corners and wall midpoints)
+      const probe: Pt[] = [];
+      for (let i = 0; i < P.length; i++) {
+        const a = P[i], c = P[(i + 1) % P.length];
+        probe.push(a, [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2]);
+      }
+      for (const p of probe) {
+        grid.query(p[0], p[1], (seg, payload, d, t) => {
+          const e = net.edges[Math.floor(payload / SEGS)], k = payload % SEGS;
+          if ((k === 1 && t <= 0) || (k === e.pts.length - 1 && t >= 1)) return; // beyond the street's ends
+          const S = grid.segs, o = seg * 5;
+          const ax = S[o], az = S[o + 1], dx = S[o + 2] - ax, dz = S[o + 3] - az, L = Math.hypot(dx, dz) || 1;
+          const side = (p[0] - ax) * -dz + (p[1] - az) * dx > 0 ? 1 : -1; // + right of travel
+          const lim = e.hw + ((side > 0 ? e.swR : e.swL) ? G.sidewalkWidth : 0) + MARGIN;
+          if (lim - d <= depth) return;
+          depth = lim - d;
+          nx = (-dz / L) * side; nz = (dx / L) * side;
+          const qx = ax + dx * t, qz = az + dz * t;
+          cx = qx + nx * lim; cz = qz + nz * lim;
+        });
+      }
+      if (depth <= 0.15) {
+        // a corner on a junction surface (beyond the arms' bands): cut along the nearest outline segment, a sidewalk
+        // width out
+        let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
+        for (const p of P) { bx0 = Math.min(bx0, p[0]); bx1 = Math.max(bx1, p[0]); bz0 = Math.min(bz0, p[1]); bz1 = Math.max(bz1, p[1]); }
+        let found = false;
+        for (const J of jn) {
+          if (found || J.x1 < bx0 || J.x0 > bx1 || J.z1 < bz0 || J.z0 > bz1) continue;
+          const n = J.n, O = n.outline;
+          const inside = probe.find((p) => pointInFlat(p[0], p[1], O));
+          if (!inside) continue;
+          let bd = Infinity;
+          for (let i = 0; i < O.length / 2; i++) {
+            const j = (i + 1) % (O.length / 2);
+            const ax = O[i * 2], az = O[i * 2 + 1], dx = O[j * 2] - ax, dz = O[j * 2 + 1] - az, L2 = dx * dx + dz * dz || 1;
+            const t = clamp(((inside[0] - ax) * dx + (inside[1] - az) * dz) / L2, 0, 1);
+            const qx = ax + dx * t, qz = az + dz * t, d = Math.hypot(qx - inside[0], qz - inside[1]);
+            if (d >= bd) continue;
+            bd = d;
+            const L = Math.sqrt(L2);
+            nx = -dz / L; nz = dx / L;
+            if ((qx - n.x) * nx + (qz - n.z) * nz < 0) { nx = -nx; nz = -nz; }
+            cx = qx + nx * (G.sidewalkWidth + MARGIN); cz = qz + nz * (G.sidewalkWidth + MARGIN);
+          }
+          found = true;
+        }
+        if (!found) break;
+      }
+      P = clipHalfPlane(P, cx, cz, nx, nz);
+      if (P.length < 3) break;
+    }
+    if (P === b.pts) continue;
+    if (P.length < 3 || Math.abs(polyArea(P)) < Math.max(12, area0 * 0.3)) out.drop.push(b.id);
+    else { b.pts = P; out.clipped.push(b.id); }
+  }
+  return out;
+}
+
+function pointInFlat(x: number, z: number, O: ArrayLike<number>): boolean {
+  let ins = false;
+  for (let i = 0, j = O.length / 2 - 1; i < O.length / 2; j = i++) {
+    const xi = O[i * 2], zi = O[i * 2 + 1], xj = O[j * 2], zj = O[j * 2 + 1];
+    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) ins = !ins;
+  }
+  return ins;
+}
+
+/** Part of a convex polygon on the side (p - c) . n >= 0 of a line. */
+function clipHalfPlane(P: Pt[], cx: number, cz: number, nx: number, nz: number): Pt[] {
+  const out: Pt[] = [];
+  const f = (p: Pt) => (p[0] - cx) * nx + (p[1] - cz) * nz;
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i], b = P[(i + 1) % P.length], fa = f(a), fb = f(b);
+    if (fa >= 0) out.push(a);
+    if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
+  }
+  // drop near-duplicate vertices (a cut through a corner)
+  return out.filter((p, i) => { const q = out[(i + 1) % out.length]; return Math.hypot(p[0] - q[0], p[1] - q[1]) > 0.05; });
 }
 
 /**
@@ -455,40 +578,54 @@ function exportEdge(net: RoadNet, e: REdge): GeoRoadPoly {
   };
 }
 
-/** Spatial index over deck surfaces (road decks and walkable structures) for roadSurfaceAt / walkSurfaceAt. */
+/**
+ * Spatial index over deck surfaces (road decks and walkable structures) for roadSurfaceAt / walkSurfaceAt. Road decks
+ * cover the carriageway plus a sidewalk only on the sides that have one (raised by the kerb), so a query beside a
+ * deck that has no sidewalk on that side falls through to the ground below.
+ */
 function buildDeckIndex(net: RoadNet, walkDecks: { pts: Pt[]; hw: number; h: number[] }[]) {
-  // flat arrays: ax, az, bx, bz, ha, hb, hw, walkOnly
+  // flat arrays per segment: ax, az, bx, bz, ha, hb, carriageway half width, left extent, right extent, walkOnly
+  const N = 10;
   const S: number[] = [];
   const grid = new SegGrid(16);
+  const kerb = G.kerbHeight;
   for (const e of net.edges) {
     if (!e.deck) continue;
-    const X = sections(e, 0, e.L);
-    const hw = e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 0.3;
+    const X = sections(e, e.trimA, e.L - e.trimB);
     for (let i = 1; i < X.length; i++) {
-      const id = S.length / 8;
-      S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), hw, 0);
-      grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, hw);
+      const sm = (X[i - 1].s + X[i].s) / 2;
+      const sw = (side: number) => (side < 0 ? e.swL : e.swR) && !e.noSw.some((r) => r[0] === side && sm >= r[1] && sm <= r[2]);
+      const wl = e.hw + (sw(-1) ? G.sidewalkWidth : 0), wr = e.hw + (sw(1) ? G.sidewalkWidth : 0);
+      const id = S.length / N;
+      S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), e.hw, wl, wr, 0);
+      grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, Math.max(wl, wr) + 0.5);
     }
   }
   for (const w of walkDecks) {
     for (let i = 1; i < w.pts.length; i++) {
-      const id = S.length / 8;
-      S.push(w.pts[i - 1][0], w.pts[i - 1][1], w.pts[i][0], w.pts[i][1], w.h[i - 1], w.h[i], w.hw, 1);
+      const id = S.length / N;
+      S.push(w.pts[i - 1][0], w.pts[i - 1][1], w.pts[i][0], w.pts[i][1], w.h[i - 1], w.h[i], w.hw, w.hw, w.hw, 1);
       grid.add(w.pts[i - 1][0], w.pts[i - 1][1], w.pts[i][0], w.pts[i][1], id, w.hw);
     }
   }
   let cbRef: ((h: number) => void) | null = null;
-  let walkRef = false;
+  let walkRef = false, qx = 0, qz = 0;
   const visit = (_seg: number, id: number, d: number, t: number) => {
-    const o = id * 8;
-    if (d > S[o + 6]) return;
-    if (S[o + 7] === 1 && !walkRef) return;
-    cbRef!(S[o + 4] + (S[o + 5] - S[o + 4]) * t);
+    const o = id * N;
+    if (S[o + 9] === 1 && !walkRef) return;
+    // side of the query point: + right of travel (as roadMesh sections)
+    const right = (qx - S[o]) * -(S[o + 3] - S[o + 1]) + (qz - S[o + 1]) * (S[o + 2] - S[o]) > 0;
+    const lim = right ? S[o + 8] : S[o + 7];
+    if (d > lim + 0.05) return;
+    const h = S[o + 4] + (S[o + 5] - S[o + 4]) * t;
+    cbRef!(S[o + 9] === 0 && d > S[o + 6] ? h + kerb : h);
   };
   return {
     query(x: number, z: number, walk: boolean, cb: (h: number) => void) {
       cbRef = cb;
       walkRef = walk;
+      qx = x;
+      qz = z;
       grid.query(x, z, visit);
       cbRef = null;
     },

@@ -1,8 +1,9 @@
 // Pedestrians: walk routines between points of interest on the pavement graph, by archetype (adults,
 // joggers, delivery workers, tourists, elderly people, parents with kids, dog walkers). They dodge and flee
 // reckless drivers, get knocked down, react to being hit or shoved, and stop to talk. Dogs can be hurt too: they
-// tumble, then limp back to their owner and stay at their legs until they recover. A quality-dependent
-// budget of them is kept active near the player; far ones are quietly moved closer, out of view.
+// tumble, then limp back to their owner and stay at their legs until they recover. How many are out near the
+// player follows the map's crowd density (pedDensity.ts: shops nearby, road class, time of day, scaled to the
+// quality's pedestrian budget); people appear and leave out of view, and far ones are moved back to busy spots.
 // Each has a kinematic capsule so the player bumps into (and shoves) them and thrown items bounce off.
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
@@ -19,6 +20,7 @@ import { LINES, pick } from '../npc/reactionLines';
 import { GROUPS } from '../physicsGroups';
 import { Rng } from '../rng';
 import { walkRouter } from './map/cityMap';
+import { updatePedDensity, pickSpawn, pickViewTarget, inCameraView } from './pedDensity';
 
 const PT = TUNING.peds;
 const AR = PT.archetypes;
@@ -178,31 +180,136 @@ export function spawnPeds(w: World): void {
       w.peds.push(p);
     }
   }
-  applyPedBudget(w);
+  // everyone starts off-stage; the crowd around the spawn is then filled to the map's density target
+  for (const p of w.peds) setActive(p, false);
+  updatePedDensity(w, 0, true);
+  for (let guard = 0; countActive(w) < w.pedDensity.target && guard < w.peds.length; guard++) if (!activateOne(w)) break;
+  w.pedDensity.added = 0;
 }
 
-/** Activate the first `budget` people (families stay together); the rest wait off-stage. */
+/** Turn a person (and the kid walking with them) on or off. Off: no capsule, not drawn, not simulated. */
+function setActive(p: Ped, on: boolean): void {
+  p.active = on;
+  p.solid = on && !p.hidden;
+  p.body.setEnabled(p.solid);
+}
+
+/** Bring someone on-stage right where they are now (a taxi fare taken from off-stage at a quiet hour). */
+export function bringOnStage(w: World, p: Ped): void {
+  if (p.active) return;
+  setActive(p, true);
+  for (const kid of w.peds) if (kid.followId === p.id) setActive(kid, true);
+  w.pedDensity.added++;
+}
+
+function countActive(w: World): number {
+  let n = 0;
+  for (const p of w.peds) if (p.active) n++;
+  return n;
+}
+
+/** A person who may be taken off-stage now (not busy with you, a fare, a call or a chase; kids go with their parent). */
+function canLeave(p: Ped): boolean {
+  return p.active && !p.reserved && !p.hidden && p.followId < 0 && (p.state === 'walk' || p.state === 'idle') && p.phoneMode === null;
+}
+
+/**
+ * Quality changed (pause menu): never more people than the new budget (the farthest leave first); a bigger budget
+ * fills up gradually as the density target allows.
+ */
 export function applyPedBudget(w: World): void {
-  const budget = w.settings.pedBudget;
-  for (const p of w.peds) {
-    const want = p.id < budget || (p.archetype === 'kid' && p.followId < budget);
-    if (want === p.active) continue;
-    if (!want && (p.state === 'talk' || p.reserved)) continue; // never vanish mid-conversation or as a fare
-    p.active = want;
-    p.solid = want && !p.hidden;
-    p.body.setEnabled(p.solid);
-    if (want) relocateNearPlayer(w, p);
+  updatePedDensity(w, 0, true);
+  const pp = w.player.mesh.position;
+  for (let guard = 0; countActive(w) > w.settings.pedBudget && guard < w.peds.length; guard++) {
+    let best: Ped | null = null, bd = -1;
+    for (const p of w.peds) {
+      if (!canLeave(p)) continue;
+      const d = Math.hypot(p.pos.x - pp.x, p.pos.z - pp.z);
+      if (d > bd) { bd = d; best = p; }
+    }
+    if (!best) break;
+    deactivate(w, best);
   }
 }
 
-/** Shortest walk over the walk graph from the node nearest the person to the target POI's node. */
-export function planRoute(w: World, ped: Ped, poiId: number): void {
+function deactivate(w: World, p: Ped): void {
+  setActive(p, false);
+  for (const kid of w.peds) if (kid.followId === p.id && kid.active) setActive(kid, false);
+  w.pedDensity.removed++;
+}
+
+let activateCursor = 0;
+const SPAWN = { x: 0, y: 0, z: 0, dx: 1, dz: 0 };
+/** Bring one person (a parent brings their kid) on-stage at a busy spot near you, out of view. */
+function activateOne(w: World): boolean {
+  const n = w.peds.length;
+  for (let k = 0; k < n; k++) {
+    activateCursor = (activateCursor + 1) % n;
+    const p = w.peds[activateCursor];
+    if (p.active || p.followId >= 0 || p.reserved) continue;
+    if (!pickSpawn(w, p.archetype === 'jogger' || p.archetype === 'dogwalker', SPAWN)) return false;
+    setActive(p, true);
+    placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z, SPAWN.dx, SPAWN.dz);
+    for (const kid of w.peds) if (kid.followId === p.id) setActive(kid, true);
+    headIntoView(w, p);
+    w.pedDensity.added++;
+    return true;
+  }
+  return false;
+}
+
+/** Leave one person: the farthest who may leave, at least despawnMinDist away and out of view. */
+function deactivateOne(w: World): boolean {
+  const pp = w.player.mesh.position;
+  let best: Ped | null = null, bd = PT.density.despawnMinDist;
+  for (const p of w.peds) {
+    if (!canLeave(p)) continue;
+    const d = Math.hypot(p.pos.x - pp.x, p.pos.z - pp.z);
+    if (d <= bd || inCameraView(w, p.pos.x, p.pos.z)) continue;
+    bd = d;
+    best = p;
+  }
+  if (!best) return false;
+  deactivate(w, best);
+  return true;
+}
+
+let changeAcc = 0;
+/** Follow the density target around the player: add or remove a few people a second, always out of view. */
+function followDensity(w: World, dt: number): void {
+  const S = w.pedDensity;
+  w.camera.updateMatrixWorld(); // view tests read it (fast-forwarded test frames don't render)
+  updatePedDensity(w, dt);
+  let active = 0, near = 0;
+  const pp = w.player.mesh.position, R = PT.density.radius;
+  for (const p of w.peds) {
+    if (!p.active) continue;
+    active++;
+    if (Math.abs(p.pos.x - pp.x) < R && Math.abs(p.pos.z - pp.z) < R && Math.hypot(p.pos.x - pp.x, p.pos.z - pp.z) < R) near++;
+  }
+  S.active = active;
+  S.near = near;
+  changeAcc = Math.min(1, changeAcc + dt * PT.density.changesPerSecond);
+  if (changeAcc < 1) return;
+  const slack = PT.density.slack;
+  if (active < S.target - slack) { if (activateOne(w)) changeAcc = 0; }
+  else if (active > S.target + slack) { if (deactivateOne(w)) changeAcc = 0; }
+}
+
+/**
+ * Shortest walk over the walk graph from the node nearest the person to the target POI's node (or, with
+ * `poiId` < 0, to walk node `node`). Dog walkers and joggers prefer the towpath, the waterfront and park paths.
+ */
+export function planRoute(w: World, ped: Ped, poiId: number, node = -1): void {
   const city = w.city;
-  const poi = city.pois[poiId];
+  const poi = poiId >= 0 ? city.pois[poiId] : null;
   const nodes = city.walk.nodes;
+  const goal = poi ? poi.walkNode : node;
+  if (goal < 0) { ped.state = 'idle'; ped.timer = 2; return; }
   const start = city.nearestWalk(ped.pos.x, ped.pos.z, ped.pos.y);
   const router = walkRouter(city);
-  const n = router.path(start, poi.walkNode);
+  const outdoorish = ped.archetype === 'jogger' || ped.archetype === 'dogwalker';
+  const n = outdoorish ? router.path(start, goal, w.pedDensity.routeCost, PT.density.outdoorRouteCost) : router.path(start, goal);
   // reuse this person's waypoint vectors (routes are planned often)
   const route = ped.route;
   const count = Math.max(0, n) + 1;
@@ -213,37 +320,67 @@ export function planRoute(w: World, ped: Ped, poiId: number): void {
     const s = nodes[router.nodes[i]];
     route[i].set(s.x + ped.offset * 0.5, s.z + ped.offset * 0.5);
   }
-  route[count - 1].set(poi.x + ped.offset, poi.z + ped.offset * 0.3);
+  route[count - 1].set((poi ? poi.x : nodes[goal].x) + ped.offset, (poi ? poi.z : nodes[goal].z) + ped.offset * 0.3);
   ped.routeIdx = 0;
   ped.targetPoi = poiId;
   ped.state = 'walk';
   ped.tilt = 0;
 }
 
-const KIND_SETS: Partial<Record<Archetype, string[]>> = {
+const KIND_SETS: Partial<Record<Archetype, readonly string[]>> = {
   jogger: ['park', 'beach', 'pier', 'marina'],
   delivery: ['shop', 'market', 'diner', 'cafe', 'garage', 'office', 'hotel'],
-  tourist: ['pier', 'marina', 'beach', 'park', 'hotel', 'market', 'cafe'],
+  tourist: ['pier', 'marina', 'beach', 'park', 'hotel', 'market', 'cafe', 'museum', 'monument'],
   dogwalker: ['park', 'beach', 'pier'],
 };
+const ELDERLY_SET: readonly string[] = ['park', 'cafe', 'shop', 'clinic', 'diner', 'church'];
 
-function chooseDestination(w: World, ped: Ped): number {
-  const pois = w.city.pois;
+/** A random place of one of `kinds` within `range` of (x, z) (not `skip`), or -1. One pass, no allocation. */
+function randomPoi(w: World, kinds: readonly string[], x: number, z: number, range: number, skip: number): number {
+  let pick = -1, seen = 0;
+  for (const p of w.city.pois) {
+    if (p.id === skip || Math.abs(p.x - x) > range || Math.abs(p.z - z) > range || !kinds.includes(p.kind)) continue;
+    if (Math.hypot(p.x - x, p.z - z) > range) continue;
+    if (Math.random() * ++seen < 1) pick = p.id; // reservoir sampling
+  }
+  return pick;
+}
+
+/**
+ * Pick where to go next and plan the walk there. Dog walkers and joggers mostly head for a towpath or waterfront
+ * spot (else a park or pier); people on a busy street often pop into a shop or cafe nearby (the crowd stays where
+ * the shops are); otherwise the routine (home, work, errands by the hour).
+ */
+function wander(w: World, ped: Ped): void {
+  const D = PT.density;
+  const x = ped.pos.x, z = ped.pos.z;
+  if ((ped.archetype === 'jogger' || ped.archetype === 'dogwalker') && Math.random() < D.outdoorTripChance) {
+    const nodes = w.pedDensity.outdoorNodes, W = w.city.walk.nodes;
+    for (let tries = 0; tries < 12 && nodes.length; tries++) {
+      const n = W[nodes[Math.floor(Math.random() * nodes.length)]];
+      const d = Math.hypot(n.x - x, n.z - z);
+      if (d > D.outdoorTripMin && d < D.outdoorTripRange) { planRoute(w, ped, -1, n.id); return; }
+    }
+  }
   const set = KIND_SETS[ped.archetype];
   if (set) {
-    const options = pois.filter((p) => set.includes(p.kind) && Math.hypot(p.x - ped.pos.x, p.z - ped.pos.z) < 420 && p.id !== ped.targetPoi);
-    if (options.length) return options[Math.floor(Math.random() * options.length)].id;
+    const id = randomPoi(w, set, x, z, 420, ped.targetPoi);
+    if (id >= 0) { planRoute(w, ped, id); return; }
   }
-  if (ped.archetype === 'elderly') {
-    const home = pois[ped.npc.homePoi];
-    const options = pois.filter((p) => ['park', 'cafe', 'shop', 'clinic', 'diner'].includes(p.kind) && Math.hypot(p.x - home.x, p.z - home.z) < 260);
-    if (options.length && Math.random() < 0.7) return options[Math.floor(Math.random() * options.length)].id;
+  if (ped.archetype === 'elderly' && Math.random() < 0.7) {
+    const home = w.city.pois[ped.npc.homePoi];
+    const id = randomPoi(w, ELDERLY_SET, home.x, home.z, 260, ped.targetPoi);
+    if (id >= 0) { planRoute(w, ped, id); return; }
+  }
+  if (Math.random() < D.errandChance) {
+    const id = randomPoi(w, D.shopKinds, x, z, D.errandRange, ped.targetPoi);
+    if (id >= 0) { planRoute(w, ped, id); return; }
   }
   const want = routineTarget(ped.npc, w.dayNight.hour);
-  if (want !== ped.targetPoi) return want;
+  if (want !== ped.targetPoi) { planRoute(w, ped, want); return; }
   // already at the routine stop: wander to something nearby to keep the streets alive
-  const near = pois.filter((p) => p.kind !== 'taxiRank' && Math.hypot(p.x - ped.pos.x, p.z - ped.pos.z) < 260);
-  return near.length ? near[Math.floor(Math.random() * near.length)].id : want;
+  const id = randomPoi(w, D.shopKinds, x, z, 260, ped.targetPoi);
+  planRoute(w, ped, id >= 0 ? id : want);
 }
 
 function idleTime(ped: Ped): number {
@@ -380,7 +517,7 @@ export function updatePeds(w: World, dt: number): void {
           ped.shoutT = 2.6;
           say(w, ped, pick(LINES.confront), 2.2, `ped${ped.id}`);
         }
-        if (ped.timer <= 0 || d > 30) planRoute(w, ped, chooseDestination(w, ped));
+        if (ped.timer <= 0 || d > 30) wander(w, ped);
         break;
       }
       case 'look': {
@@ -423,7 +560,7 @@ export function updatePeds(w: World, dt: number): void {
         ped.timer -= dt;
         ped.heading = Math.atan2(pp.x - ped.pos.x, pp.z - ped.pos.z);
         // a dog owner screams first, then calls 999 (the witness system has set their report)
-        if (ped.timer <= 0 && !victimMaybeCalls(w, ped)) planRoute(w, ped, chooseDestination(w, ped));
+        if (ped.timer <= 0 && !victimMaybeCalls(w, ped)) wander(w, ped);
         break;
       }
       case 'phone': {
@@ -449,14 +586,14 @@ export function updatePeds(w: World, dt: number): void {
         ped.heading = Math.atan2(ped.fleeDir.x, ped.fleeDir.y);
         if (ped.timer <= 0) {
           if (ped.followId >= 0) ped.state = 'follow';
-          else planRoute(w, ped, chooseDestination(w, ped));
+          else wander(w, ped);
         }
         break;
       }
       case 'idle': {
         ped.timer -= dt;
         if (ped.archetype === 'tourist' && ped.timer > 1.5 && ped.timer < 5) ped.armPose = 'film'; // taking photos
-        if (ped.timer <= 0 && !ped.reserved) planRoute(w, ped, chooseDestination(w, ped));
+        if (ped.timer <= 0 && !ped.reserved) wander(w, ped);
         break;
       }
       case 'talk': {
@@ -532,6 +669,7 @@ export function updatePeds(w: World, dt: number): void {
       ped.body.setNextKinematicTranslation(KIN);
     }
   }
+  followDensity(w, dt);
   recycleFarPeds(w);
 }
 
@@ -625,44 +763,52 @@ function updateDog(w: World, ped: Ped, dt: number, walkerSpeed: number) {
   }
 }
 
-/** Keep the crowd around the player: move one far-away walker per frame to a pavement spot out of view. */
+/**
+ * Keep the crowd around the player: a far-away walker (out of view) is moved back to a busy spot near you (or,
+ * with more people out than the density target, leaves). Two checked per frame.
+ */
 function recycleFarPeds(w: World) {
   if (!w.peds.length) return;
   for (let k = 0; k < 2; k++) {
     recycleCursor = (recycleCursor + 1) % w.peds.length;
     const p = w.peds[recycleCursor];
-    if (!p.active || p.reserved || p.hidden || p.followId >= 0) continue;
-    if (p.state !== 'walk' && p.state !== 'idle') continue;
+    if (!canLeave(p)) continue;
     const pp = w.player.mesh.position;
     if (Math.hypot(p.pos.x - pp.x, p.pos.z - pp.z) < PT.recycleDistance) continue;
-    if (inView(w, p.pos.x, p.pos.z)) continue;
-    relocateNearPlayer(w, p);
+    if (inCameraView(w, p.pos.x, p.pos.z)) continue;
+    const S = w.pedDensity;
+    if (S.active > S.target + PT.density.slack) { deactivate(w, p); S.active--; continue; }
+    if (pickSpawn(w, p.archetype === 'jogger' || p.archetype === 'dogwalker', SPAWN)) {
+      placeAt(w, p, SPAWN.x, SPAWN.y, SPAWN.z, SPAWN.dx, SPAWN.dz);
+      headIntoView(w, p);
+      S.relocated++;
+    }
   }
 }
 
-function inView(w: World, x: number, z: number): boolean {
-  const cam = w.camera;
-  cam.getWorldDirection(tmp);
-  const dx = x - cam.position.x, dz = z - cam.position.z, d = Math.hypot(dx, dz) || 1;
-  return (dx * tmp.x + dz * tmp.z) / d > 0.35 && d < 260;
+/**
+ * Someone who has just appeared out of view usually sets off towards a busy spot you can see (density.intoViewChance),
+ * so the crowd you look at fills up from behind and the sides; everyone appearing out of view and staying there left
+ * the street ahead of you nearly empty while the people near you stood behind the camera.
+ */
+function headIntoView(w: World, p: Ped): void {
+  if (!w.started || Math.random() >= PT.density.intoViewChance) return;
+  const node = pickViewTarget(w, p.archetype === 'jogger' || p.archetype === 'dogwalker');
+  if (node >= 0) planRoute(w, p, -1, node);
 }
 
-function relocateNearPlayer(w: World, p: Ped) {
-  const pp = w.player.mesh.position;
-  const nodes = w.city.walk.nodes;
+/**
+ * Put a person (with their kid and dog) at (x, z) on the surface near height y, standing, about to set off. (dx, dz):
+ * the pavement's direction there: the kid stands just behind and the dog just ahead along it (never off the edge).
+ */
+function placeAt(w: World, p: Ped, x: number, y: number, z: number, dx: number, dz: number) {
   const c = w.city;
-  for (let tries = 0; tries < 30; tries++) {
-    const n = nodes[Math.floor(Math.random() * nodes.length)];
-    const d = Math.hypot(n.x - pp.x, n.z - pp.z);
-    if (d < PT.respawnMin || d > PT.respawnMax || (w.started && inView(w, n.x, n.z))) continue;
-    p.pos.set(n.x, c.heightAt(n.x, n.z, n.y) + FOOT, n.z);
-    p.state = 'idle';
-    p.timer = Math.random() * 2;
-    p.tilt = 0;
-    for (const kid of w.peds) if (kid.followId === p.id) { kid.pos.set(n.x + 0.8, c.heightAt(n.x + 0.8, n.z, n.y) + FOOT, n.z); kid.state = 'follow'; }
-    if (p.dog) { p.dog.pos.set(n.x + 1.2, c.heightAt(n.x + 1.2, n.z, n.y) + FOOT, n.z); p.dog.tumbleT = 0; p.dog.vel.set(0, 0, 0); }
-    return;
-  }
+  p.pos.set(x, c.heightAt(x, z, y) + FOOT, z);
+  p.state = 'idle';
+  p.timer = Math.random() * 2;
+  p.tilt = 0;
+  for (const kid of w.peds) if (kid.followId === p.id) { const kx = x - dx * 0.8, kz = z - dz * 0.8; kid.pos.set(kx, c.heightAt(kx, kz, y) + FOOT, kz); kid.state = 'follow'; kid.tilt = 0; }
+  if (p.dog) { const gx = x + dx * 1.2, gz = z + dz * 1.2; p.dog.pos.set(gx, c.heightAt(gx, gz, y) + FOOT, gz); p.dog.tumbleT = 0; p.dog.vel.set(0, 0, 0); }
 }
 
 function crossingBlocked(w: World, ped: Ped, dx: number, dz: number): boolean {

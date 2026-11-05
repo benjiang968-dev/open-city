@@ -15,7 +15,12 @@ const evalArg = process.argv.indexOf('--eval');
 const evalSrc = evalArg >= 0 ? process.argv[evalArg + 1] : null;
 const camArg = process.argv.indexOf('--cam');
 const custom = camArg >= 0 ? process.argv.slice(camArg + 1) : null;
-const only = custom || evalSrc ? ['__none__'] : process.argv.slice(2);
+// --review: also every review viewpoint (REVIEW_VIEWS in src/preview/georgetownPreview.ts) into screenshots/26-geo-r-<name>.jpg
+//   --review=name,name: only those review viewpoints
+const reviewArg = process.argv.find((a) => a.startsWith('--review'));
+const review = !!reviewArg;
+const reviewOnly = reviewArg?.includes('=') ? reviewArg.split('=')[1].split(',') : null;
+const only = custom || evalSrc ? ['__none__'] : process.argv.slice(2).filter((a) => !a.startsWith('--review'));
 const SHOTS = [
   ['26-geo-aerial', 'aerial', 'medium'],
   ['26-geo-mst', 'mst', 'medium'],
@@ -82,6 +87,16 @@ for (const [name, view, q] of SHOTS) {
   results[name] = p;
   console.log(`${name.padEnd(22)} ${q.padEnd(6)} calls ${String(p.calls).padStart(4)}  tris ${(p.tris / 1e6).toFixed(2)} M  cpu ${p.cpuMs.toFixed(1)} ms`);
   await page.screenshot({ path: `screenshots/${name}.png`, timeout: 120000 });
+}
+if (review) {
+  const names = (await page.evaluate(() => window.__geo.reviewViews)).filter((n) => !reviewOnly || reviewOnly.includes(n));
+  for (const v of names) {
+    await page.evaluate((n) => { window.__geo.setQuality('medium'); window.__geo.setView(n); }, v);
+    await settle(4);
+    const p = await page.evaluate(() => window.__geo.perf());
+    console.log(`26-geo-r-${v.padEnd(20)} calls ${String(p.calls).padStart(4)}  tris ${(p.tris / 1e6).toFixed(2)} M`);
+    await page.screenshot({ path: `screenshots/26-geo-r-${v}.jpg`, type: 'jpeg', quality: 82, timeout: 120000 });
+  }
 }
 if (!only.length) {
   console.log('\nperf by view and quality (renderer.info after a full frame incl. shadow pass)');
