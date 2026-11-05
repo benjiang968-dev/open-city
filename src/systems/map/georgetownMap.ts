@@ -39,6 +39,8 @@ const RANKS: { name: string; street: string; cross: string; along: number; lane:
   { name: 'Taxi Rank, Upper Wisconsin', street: 'Wisconsin Ave NW', cross: 'P St NW', along: 45, lane: 1, heading: Math.PI },
 ];
 /** Waterfront places (kind 'pier'): name and a point on the promenade / boardwalk they snap to. */
+/** Park names the game uses as places (a public open space by its name's last word); other names stay unused. */
+const PARK_NAME = /\b(Park|Garden|Gardens|Lawn|Memorial|Square|Circle|Green|Common|Playground|Field|Fields|Triangle)$/;
 const WATERFRONT = [
   { name: 'Waterfront Promenade', x: -420, z: 430 },
   { name: 'Harbour Boardwalk', x: 120, z: 585 },
@@ -349,6 +351,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   // parks: one entrance each, on the walk network at the park's edge
   for (const pk of doc.parks) {
     if (!pk.name || pk.kind === 'landuse=cemetery') continue;
+    // only a name that reads as a public open space; real data also names a boathouse business ("... Boat Center")
+    // and an institution's garden by its initials as parks, and real business names never reach the player
+    if (!PARK_NAME.test(pk.name) || /\b[A-Z]{2,}\b|\b(Center|Centre|Club|Inc|LLC|Co)\b/.test(pk.name)) continue;
     const c = centroid(pk.pts);
     const n = walk[nearestWalk(c[0], c[1])];
     if (Math.hypot(n.x - c[0], n.z - c[1]) > 400) continue;
