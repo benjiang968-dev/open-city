@@ -15,7 +15,7 @@ import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
 import { buildRoadNet, omittedRoads, solveProfiles, type REdge, type RNode, type RoadNet } from './roadNet';
 import { buildNetMeshes, drapeRibbon, isDeckNode, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
-import { buildBridges, buildStairs, fitStairEnds, rasterizeStairs, stairHoles } from './bridges';
+import { buildBridges, buildStairs, fitStairEnds, joinStairEnds, rasterizeStairs, stairHoles } from './bridges';
 import { buildBuildings, rasterizeBuildings } from './facades';
 import { buildMonuments } from './monuments';
 import { buildLots, conformToLots, planLots, rasterizeLots, type GeoLot } from './lots';
@@ -264,6 +264,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     for (const st of stairs) ends.push(st.pts[0][0], st.pts[0][1], st.pts[st.pts.length - 1][0], st.pts[st.pts.length - 1][1]);
     const near = new SurfaceIndex([trianglesNear(phys.soupsOf('ground'), ends, 4)]);
     for (const st of stairs) fitStairEnds(st, (x, z, ceil) => near.at(x, z, ceil), ras);
+    joinStairEnds(stairs);
   }
   buildStairs(stairs, chunks, phys, ras);
   phase('bridges');

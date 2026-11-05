@@ -833,6 +833,8 @@ const RAW = {
     stairEndProbe: 0.15, // m: a stair's end height is fitted to the built ground this far beyond the end (bridges.ts fitStairEnds)
     stairEndFit: 3, // m: the most an end may move to meet that ground (more: the ground there is something else, e.g. a wall top)
     stairDoorGap: 0.4, // m: a data stair running on into a building stops this far in front of the facade (steps up to a door)
+    stairJoinDist: 1.0, // m: a stair end this far beyond another stair's side (or on it) lands on it and takes its height there
+    stairEndClear: 0.6, // m: another stair's side wall within this distance beyond a stair's end is left out (they join there)
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)
     riverLevel: 0, // m: the Potomac surface (map heights are metres above the river)

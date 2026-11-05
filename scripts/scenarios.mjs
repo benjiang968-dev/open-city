@@ -7,6 +7,14 @@ const state = (page) => page.evaluate(() => {
 export { hold, state };
 
 /**
+ * Scenarios written for the grid city (their spots, screenshots and expectations): shot.mjs loads ?map=grid for them
+ * when MAP is not set. Everything else runs on the game's default map (TUNING.map.defaultMap); the map-agnostic ones
+ * (world walk drive handling crashspikes gate2 theft taxi dealership life crowd witness police chat, the physics and
+ * map checks) are run on both maps, and the geo* / road* ones are Georgetown's.
+ */
+export const GRID_SCENARIOS = new Set(['title', 'drivecam', 'traffic2', 'bust', 'debug', 'night', 'nightdrive', 'perf', 'backtick', 'tank', 'chatbuttons', 'weathershot', 'crashbench', 'dentclean', 'dent', 'gate1', 'injured', 'deathscreen', 'pause', 'items', 'combat', 'lineup', 'hurtfx']);
+
+/**
  * Map-agnostic spots for the scenarios (installed in the page as window.__mh by shot.mjs). Spots are given as
  * offsets from the map centre; on the grid city the offsets used below land exactly where the old scenarios
  * put things (between avenues, in a lane, on a pavement), and on any other map they snap to the nearest road.

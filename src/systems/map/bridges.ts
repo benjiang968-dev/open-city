@@ -305,12 +305,55 @@ export function fitStairEnds(st: StairPlan, groundAt: (x: number, z: number, cei
   st.hb = hb;
 }
 
+/**
+ * A stair end that lands on another stair (real data splits one stair into several ways, forks stairs at a landing
+ * and joins them in T's) takes that stair's height there, so one runs on from the other with no ledge (the end was
+ * fitted to the ground, fitStairEnds, but the ground is cut away under the other stair); the stair is re-planned.
+ * Stairs are taken in order, so of two that share an end the second keeps the height the first took.
+ */
+export function joinStairEnds(plans: StairPlan[]) {
+  /** The height of stair `o` under (x, z) (within its half width plus a margin), or NaN. */
+  const onStair = (o: StairPlan, x: number, z: number) => {
+    let best = NaN, bd = Infinity;
+    for (let i = 1; i < o.pts.length; i++) {
+      const a = o.pts[i - 1], b = o.pts[i];
+      const dx = b[0] - a[0], dz = b[1] - a[1], L2 = dx * dx + dz * dz;
+      if (L2 < 1e-4) continue;
+      const t = clamp(((x - a[0]) * dx + (z - a[1]) * dz) / L2, 0, 1);
+      const d = Math.hypot(a[0] + dx * t - x, a[1] + dz * t - z);
+      if (d < bd && d <= o.w / 2 + G.stairJoinDist) { bd = d; best = o.h(o.cum[i - 1] + t * Math.sqrt(L2)); }
+    }
+    return best;
+  };
+  for (const st of plans) {
+    const n = st.pts.length;
+    let changed = false;
+    for (const top of [false, true]) {
+      const p = top ? st.pts[n - 1] : st.pts[0];
+      const y = top ? st.hb : st.ha;
+      let h = NaN, hd = Infinity;
+      for (const o of plans) {
+        if (o === st) continue;
+        const v = onStair(o, p[0], p[1]);
+        if (v === v && Math.abs(v - y) < hd) { hd = Math.abs(v - y); h = v; }
+      }
+      if (h !== h || hd < 0.02 || hd > G.stairEndFit) continue;
+      if (top) st.hb = h; else st.ha = h;
+      changed = true;
+    }
+    if (!changed) continue;
+    const prof = stairProfile(st.L, st.ha, st.hb, !!st.name);
+    st.h = prof.h;
+    st.flights = prof.flights;
+  }
+}
+
 /** Stairs: steep flights with landings (the Exorcist Steps) or a single flight (canal steps); ramp into the raster. */
 export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number, z: number) => number): StairPlan[] {
   const plans: StairPlan[] = [];
   for (const f of doc.footways) {
     if (f.kind !== 'steps' || f.pts.length < 2) continue;
-    const trim = trimOutOfRoads(f.pts.map((p) => [p[0], p[1]] as Pt), ras);
+    const trim = trimOutOfRoads(f.pts.map((p) => [p[0], p[1]] as Pt), ras, doc.meta.bounds);
     if (!trim) continue;
     let pts = trim.pts;
     const cum = [0];
@@ -402,22 +445,29 @@ function jointExt(pts: Pt[], j: number, hw: number): number {
 }
 
 export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks, ras: GeoRaster) {
-  // each stair's stairwell rectangles (as stairHoles): a side wall that would stand in another stair's stairwell is
-  // left out (real data splits one stair into several ways and forks stairs at a landing: each piece's walls stood
-  // across the next piece's treads)
+  // every stair segment's stairwell rectangle (as stairHoles): a side wall that would stand in another stairwell is
+  // left out. Real data splits one stair into several ways, forks stairs at a landing and bends them by 70-100 degrees
+  // (switchbacks): each piece's walls (and the inner wall at a sharp bend) stood across the next piece's treads.
   const wells = plans.map((st) => {
-    const H = new Holes();
     const hw = (st.w / 2) * STAIR_INNER;
+    const segs: Holes[] = [];
     for (let i = 1; i < st.pts.length; i++) {
+      const H = new Holes();
+      segs.push(H);
       const a = st.pts[i - 1], b = st.pts[i];
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
       if (L < 0.05) continue;
       const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L, rx = -uz * hw, rz = ux * hw;
-      H.add([a[0] - rx, a[1] - rz, b[0] - rx, b[1] - rz, b[0] + rx, b[1] + rz, a[0] + rx, a[1] + rz]);
+      // (past the stair's own two ends too: another stair's side wall where this one's end meets it is left out)
+      const e0 = i === 1 ? G.stairEndClear : jointExt(st.pts, i - 1, hw), e1 = i === st.pts.length - 1 ? G.stairEndClear : jointExt(st.pts, i, hw);
+      const ax = a[0] - ux * e0, az = a[1] - uz * e0, bx = b[0] + ux * e1, bz = b[1] + uz * e1;
+      H.add([ax - rx, az - rz, bx - rx, bz - rz, bx + rx, bz + rz, ax + rx, az + rz]);
     }
-    return H;
+    return segs;
   });
-  const inOtherWell = (self: number, x: number, z: number) => wells.some((H, j) => j !== self && H.inside(x, z));
+  /** Is (x, z) inside a stairwell other than segment `seg` of stair `self`? */
+  const inOtherWell = (self: number, seg: number, x: number, z: number) =>
+    wells.some((segs, j) => segs.some((H, k) => (j !== self || k !== seg) && H.inside(x, z)));
   plans.forEach((st, si) => {
     const { pts, cum, w } = st;
     const big = !!st.name;
@@ -469,7 +519,7 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
           const out = (x: number, z: number) => ras.heightAt(x + rx * sd * 0.3 + (rx / Math.hypot(rx, rz)) * sd * 0.45, z + rz * sd * 0.3 + (rz / Math.hypot(rx, rz)) * sd * 0.45);
           if (Math.max(h0, h1) < hLow + G.stairWallFrom && Math.max(out(wx0, wz0) - h0, out(wx1, wz1) - h1) < 0.25) continue;
           const on = 0.25 / Math.hypot(rx, rz); // just outside this wall's line
-          if (inOtherWell(si, (wx0 + wx1) / 2 + rx * sd * on, (wz0 + wz1) / 2 + rz * sd * on)) continue;
+          if (inOtherWell(si, i - 1, (wx0 + wx1) / 2 + rx * sd * on, (wz0 + wz1) / 2 + rz * sd * on)) continue;
           // the walls stand a balustrade's height above the ground outside
           const base = big ? 1.1 : 0.9;
           const t0 = Math.max(h0 + base, out(wx0, wz0) + 0.9) - h0, t1 = Math.max(h1 + base, out(wx1, wz1) + 0.9) - h1;
@@ -529,9 +579,9 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
  * street it climbs to, and the road surface then covered the top steps (a 1 m ledge over the ramp). The stair ends at
  * the road's edge (sidewalks over it are cut away: stairHoles). Real data also runs steps up to a door and on into the
  * building's footprint: such an end stops in front of the facade (not flagged as cut: its height is its own, not the
- * street's). Null if nothing is left.
+ * street's). The same at the map's edge. Null if nothing is left.
  */
-function trimOutOfRoads(pts: Pt[], ras: GeoRaster): { pts: Pt[]; cutA: boolean; cutB: boolean } | null {
+function trimOutOfRoads(pts: Pt[], ras: GeoRaster, bounds: { x0: number; x1: number; z0: number; z1: number }): { pts: Pt[]; cutA: boolean; cutB: boolean } | null {
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
   const L = cum[cum.length - 1];
@@ -546,7 +596,9 @@ function trimOutOfRoads(pts: Pt[], ras: GeoRaster): { pts: Pt[]; cutA: boolean; 
   while (s0 < L && road(s0)) s0 += 0.25;
   while (s1 > s0 && road(s1)) s1 -= 0.25;
   const cutA = s0 > 0, cutB = s1 < L;
-  const inBuilding = (s: number) => { const p = at(s); return (ras.kindAt(p[0], p[1]) & K.BUILDING) !== 0; };
+  // (and a stair running off the map stops inside its edge walls)
+  const m = G.stairDoorGap + 1;
+  const inBuilding = (s: number) => { const p = at(s); return (ras.kindAt(p[0], p[1]) & K.BUILDING) !== 0 || p[0] < bounds.x0 + m || p[0] > bounds.x1 - m || p[1] < bounds.z0 + m || p[1] > bounds.z1 - m; };
   if (inBuilding(s0)) { while (s0 < s1 && inBuilding(s0)) s0 += 0.25; s0 += G.stairDoorGap; }
   if (inBuilding(s1)) { while (s1 > s0 && inBuilding(s1)) s1 -= 0.25; s1 -= G.stairDoorGap; }
   if (s1 - s0 < 2) return null;

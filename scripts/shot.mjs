@@ -1,6 +1,7 @@
 // Headless check: serves dist/, opens the game in Chromium, runs a scenario, saves a screenshot,
 // and fails if the console reports errors.  Usage: node scripts/shot.mjs <name> [scenario] [seed]
-// Env: MAP=<id> loads ?map=<id> (default: the game's default map); THROTTLE=<n> slows the CPU n times;
+// Env: MAP=<id> loads ?map=<id> (default: the game's default map, or the grid for GRID_SCENARIOS in scenarios.mjs);
+// THROTTLE=<n> slows the CPU n times;
 // QUERY=<a=b&c=d> adds URL parameters (e.g. QUERY=physaudit=1 for the physaudit scenario).
 import { createRequire } from 'node:module';
 const { chromium } = createRequire(import.meta.url)('playwright');
@@ -36,10 +37,12 @@ if (process.env.THROTTLE) {
   const cdp = await page.context().newCDPSession(page);
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.THROTTLE) });
 }
-const params = [seed ? `seed=${seed}` : '', process.env.MAP ? `map=${encodeURIComponent(process.env.MAP)}` : '', process.env.QUERY ?? ''].filter(Boolean).join('&');
+const mod = await import(`./scenarios.mjs`);
+// MAP unset: the game's default map, or the grid for the scenarios written for it (GRID_SCENARIOS)
+const map = process.env.MAP ?? (mod.GRID_SCENARIOS?.has(scenario) ? 'grid' : '');
+const params = [seed ? `seed=${seed}` : '', map ? `map=${encodeURIComponent(map)}` : '', process.env.QUERY ?? ''].filter(Boolean).join('&');
 await page.goto(`http://localhost:${port}/${params ? `?${params}` : ''}`);
 await page.waitForFunction(() => window.__oc && window.__oc.time > 1, null, { timeout: 180000 }); // software GL: a real map's first frames are slow
-const mod = await import(`./scenarios.mjs`);
 await page.evaluate(mod.installMapHelpers);
 
 const S = {
