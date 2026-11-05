@@ -198,7 +198,7 @@ for browser keys is "public but restricted" [D7]:
    checks can be bypassed by non-browser clients, so they are not enough on their own [D7].
 2. **API restriction.** Map Tiles API only, so a leaked key cannot call expensive Places or Routes SKUs [D7].
 3. **Hard quota caps.** In the console's Quotas page, set the root-tileset requests per day and per minute to
-   something the owner can afford (for example 300 a day is about $54 a month worst case). Budgets and alerts
+   something the owner can afford (for example 300 a day is at most about 9,000 a month, so about $48 after the 1,000 free). Budgets and alerts
    only notify; **only quota caps stop spending.**
 4. **A separate key and a separate Cloud project** for the viewer, so a leaked key cannot touch anything else.
 5. **Do not commit the key.** Inject it at build time from a GitHub Actions secret or a local `.env` that is
