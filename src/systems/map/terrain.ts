@@ -309,11 +309,13 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
       const o = at(i, j), v = j * nx + i;
       const b = ras.band[o];
       vb[v] = b;
-      vy[v] = hq[o] * 0.01 - (b === B.ROAD || b === B.FLAT || b === B.BUILDING ? BAND_DIP : 0);
+      vy[v] = hq[o] * 0.01 - (b === B.ROAD || b === B.FLAT ? BAND_DIP : 0);
     }
   // A natural vertex next to a road / sidewalk vertex may not stand above that band's surface: in a cutting (the
   // Parkway under the Rock Creek banks) the 5 m triangle between them otherwise pokes up to 0.8 m through the
-  // carriageway (a ridge cars hit). The bank then starts rising one mesh step further out.
+  // carriageway (a ridge cars hit). The bank then starts rising one mesh step further out. A vertex under a building
+  // is capped the same way (it is no longer dipped: the terrain under buildings is kept as the floor of the gaps
+  // between houses, and a dip made a 0.3 m trough along every wall the raster's building band overhangs).
   {
     const cap = new Float32Array(n).fill(Infinity);
     for (let j = 0; j < nz; j++)
@@ -326,7 +328,7 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
             const ii = i + di, jj = j + dj;
             if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
             const u = jj * nx + ii;
-            if (vb[u] === B.NONE && top < cap[u]) cap[u] = top;
+            if ((vb[u] === B.NONE || vb[u] === B.BUILDING) && top < cap[u]) cap[u] = top;
           }
       }
     for (let v = 0; v < n; v++) if (vy[v] > cap[v]) vy[v] = cap[v];

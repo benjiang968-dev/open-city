@@ -2335,14 +2335,21 @@ export async function fallthrough(page) {
           if (body && !body.isFixed()) onBody = body.isDynamic() ? 'dynamic body' : 'kinematic body';
         }
         if (onBody) { st.onProp++; examples.onProp[onBody] = (examples.onProp[onBody] ?? 0) + 1; continue; }
-        // resting on a ledge's edge (a capsule holds there with its centre over the lower floor): some floor under the
-        // capsule's rim is at the feet. Reported, not a failure; a hover with nothing under the rim is.
-        let rim = -Infinity;
-        for (let k = 0; k < 12; k++) {
-          const f = H.floor(p.x + Math.cos(k * Math.PI / 6) * rad * 0.95, feet + 0.3, p.z + Math.sin(k * Math.PI / 6) * rad * 0.95, 5);
-          if (f) rim = Math.max(rim, f.y);
+        // resting on a ledge's or a step's edge (a capsule holds there with its centre over the lower floor): some floor
+        // under the capsule's round bottom touches it. The controller keeps its skin gap (ccOffset) from surfaces, so
+        // the bottom is a sphere of radius rad + gap whose lowest point is the gap below the feet: a floor point d from
+        // the axis touches it at feet - gap + R - sqrt(R^2 - d^2). Reported, not a failure; a hover with nothing
+        // touching the capsule is.
+        const gap = w.player.cc.offset(), Rr = rad + gap;
+        let rim = -Infinity, touch = false;
+        for (let fr = 0.2; fr <= 1.001; fr += 0.1) for (let k = 0; k < 16; k++) {
+          const d = Rr * fr;
+          const f = H.floor(p.x + Math.cos(k * Math.PI / 8) * d, feet + rad, p.z + Math.sin(k * Math.PI / 8) * d, 5);
+          if (!f) continue;
+          rim = Math.max(rim, f.y);
+          if (f.y >= feet - gap + Rr - Math.sqrt(Math.max(0, Rr * Rr - d * d)) - 0.03) touch = true;
         }
-        if (Math.abs(rim - feet) < 0.08) { st.ledge++; ex(examples.ledge, [+under.y.toFixed(3), +rim.toFixed(3), kind]); continue; }
+        if (touch) { st.ledge++; ex(examples.ledge, [+under.y.toFixed(3), +rim.toFixed(3), kind]); continue; }
         st.hover++; ex(examples.hover, [+under.y.toFixed(3), +rim.toFixed(3), kind]); continue;
       }
       if (kind !== 'ground' && kind !== 'kerb' && kind !== 'stair' && kind !== 'deck') { st.onProp++; examples.onProp[kind] = (examples.onProp[kind] ?? 0) + 1; continue; }
