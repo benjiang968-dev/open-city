@@ -5,6 +5,7 @@
 // so the generator's chunk batching (one draw call per chunk and layer) is unchanged.
 import * as THREE from 'three';
 import type { Look } from './look';
+import { TUNING } from '../../tuning';
 
 /** Vertex additions: world position and normal, surface id. */
 export const OC_VERT_PARS = /* glsl */ `
@@ -28,6 +29,7 @@ export const OC_VERT_MAIN = /* glsl */ `
 
 /** Fragment declarations and the surface sampler shared by the world and facade materials. */
 export const OC_FRAG_PARS = /* glsl */ `
+#define OC_SKY_SAT ${TUNING.look.skyDiffuseSaturation.toFixed(3)}
 uniform highp sampler2DArray uAlbTex;
 uniform highp sampler2DArray uNrmTex;
 uniform sampler2D uMacro;
@@ -35,6 +37,7 @@ uniform highp sampler2D uSurfTab;
 uniform float uWet;
 uniform float uSnow;
 uniform float uDetail;
+uniform float uSkyDiffuse;
 flat varying float vSurf;
 varying vec3 vOcP;
 varying vec3 vOcN;
@@ -194,7 +197,8 @@ ${o.foliage ? FOLIAGE_ALPHA : ''}`)
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = ocS.metal;')
       .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(ocS.nW, 0.0)).xyz);')
       .replace('#include <aomap_fragment>', /* glsl */ `
-reflectedLight.indirectDiffuse *= ocS.ao;
+reflectedLight.indirectDiffuse *= ocS.ao * uSkyDiffuse;
+reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722))), reflectedLight.indirectDiffuse, OC_SKY_SAT);
 reflectedLight.indirectSpecular *= ocS.ao;
 reflectedLight.directDiffuse *= mix(1.0, ocS.ao, 0.5);`);
   };

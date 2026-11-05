@@ -22,6 +22,11 @@ export function makeFacadeMaterial(look: Look, litWindowMat: THREE.MeshBasicMate
 #define S_BRICK_FLEMISH ${SURF.BRICK_FLEMISH}
 #define S_BRICK_COMMON ${SURF.BRICK_COMMON}
 #define S_STONE ${SURF.STONE}
+#define S_BRICK_PAINTED ${SURF.BRICK_PAINTED}
+#define S_STUCCO ${SURF.STUCCO}
+#define S_CLAPBOARD ${SURF.CLAPBOARD}
+#define S_SLATE ${SURF.SLATE}
+#define S_METAL_SEAM ${SURF.METAL_SEAM}
 #define T_PLINTH ${TILE.PLINTH}.0`;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, look.uniforms);
@@ -89,9 +94,9 @@ vec3 fRoom(vec2 f, vec3 V, vec3 T, vec3 B, vec3 N, vec2 cell, float seed, float 
   blind = 0.0;
   if (b < 0.3 && f.y > 1.0 - (0.15 + 0.5 * fHash(cell, seed + 61.0))) blind = 1.0;
   else if (b > 0.8 && (f.x < 0.2 || f.x > 0.8)) blind = 1.0;
-  vec3 col = day * uDaylight * 0.32 + night * lit * 1.6;
+  vec3 col = day * uDaylight * 0.32 + night * lit * 0.75;
   vec3 fabric = fPick(fHash(cell, seed + 71.0), vec3(0.82, 0.8, 0.74), vec3(0.75, 0.7, 0.6), vec3(0.6, 0.62, 0.66), vec3(0.7, 0.55, 0.45));
-  vec3 blindCol = fabric * (uDaylight * 0.45 + lit * 1.3 * vec3(1.0, 0.8, 0.55));
+  vec3 blindCol = fabric * (uDaylight * 0.45 + lit * 0.6 * vec3(1.0, 0.8, 0.55));
   return mix(col, blindCol, blind);
 }`)
       .replace('#include <map_fragment>', /* glsl */ `
@@ -106,6 +111,9 @@ float fGlass = fAux.r * (1.0 - fWall);
 int ocSid = int(vSurf + 0.5);
 // one brick bond per building (from its seed): running bond mostly, some common bond, some Flemish
 if (ocSid == S_BRICK_RUNNING) { float r = fract(vFac.w * 0.6180339 + 0.13); ocSid = r < 0.55 ? S_BRICK_RUNNING : r < 0.8 ? S_BRICK_COMMON : S_BRICK_FLEMISH; }
+// painted fronts: mostly painted brick, some stucco, a few clapboard; pitched roofs: slate, some standing seam
+if (ocSid == S_BRICK_PAINTED) { float r = fract(vFac.w * 0.7548777 + 0.31); ocSid = r < 0.7 ? S_BRICK_PAINTED : r < 0.87 ? S_STUCCO : S_CLAPBOARD; }
+if (ocSid == S_SLATE) { float r = fract(vFac.w * 0.5698403 + 0.07); if (r > 0.72) ocSid = S_METAL_SEAM; }
 if (abs(fLayer - T_PLINTH) < 0.5) { ocSid = S_STONE; ocVc = vec3(0.39, 0.36, 0.31); }
 OcOut ocS = ocSurface(ocSid, ocNg, ocVc, 0.8, 0.0);
 // tile frame: exact dP/du and dP/dv from screen derivatives (the bay width and storey height in metres)
@@ -133,7 +141,7 @@ float fNight = clamp((uWin.r - 0.22) / 0.78, 0.0, 1.0);
 float fBlind;
 vec3 fRoomC = fRoom(fract(vFUv), normalize(vOcP - cameraPosition), fT, fB, ocNg, fCell, vFac.w, fLit * fNight, fBlind);
 // far away the rooms average out to a dim, slightly warm glass
-fRoomC = mix(fRoomC, vec3(0.06, 0.06, 0.07) * uDaylight + vec3(0.9, 0.72, 0.5) * fLit * fNight * 0.7, fFar * 0.7);
+fRoomC = mix(fRoomC, vec3(0.06, 0.06, 0.07) * uDaylight + vec3(0.9, 0.72, 0.5) * fLit * fNight * 0.35, fFar * 0.7);
 vec2 fPane = vec2(fHash(fCell, vFac.w + 91.0), fHash(fCell, vFac.w + 97.0)) - 0.5;
 vec3 fGlassN = normalize(ocNg + (fTn * fPane.x + fBn * fPane.y) * 0.025);
 fAlb = mix(fAlb, vec3(0.015), fGlass * (1.0 - fBlind));
@@ -148,7 +156,8 @@ diffuseColor.rgb *= fAlb;`)
       .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(fN, 0.0)).xyz);')
       .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += fEmit;')
       .replace('#include <aomap_fragment>', /* glsl */ `
-reflectedLight.indirectDiffuse *= fAO;
+reflectedLight.indirectDiffuse *= fAO * uSkyDiffuse;
+reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722))), reflectedLight.indirectDiffuse, OC_SKY_SAT);
 reflectedLight.indirectSpecular *= mix(fAO, 1.0, 0.5);
 reflectedLight.directDiffuse *= mix(1.0, fAO, 0.6);`);
   };

@@ -7,7 +7,7 @@ import type { World } from './world';
 import { createInput, endInputFrame, act } from './systems/input';
 import { loadMap } from './systems/map/loadMap';
 import { validateCityMap, laneSample, projectOnLane, roadRouter, walkRouter } from './systems/map/cityMap';
-import { createDayNight, updateDayNight, updateSky } from './systems/dayNight';
+import { createDayNight, updateDayNight, updateSky, attachLampLights } from './systems/dayNight';
 import { createCamera, updateCamera } from './systems/camera';
 import { createPlayer, updatePlayer } from './systems/player';
 import { spawnInitialVehicles, updateVehicles, detectCrashes, wreckMaterial } from './systems/vehicles';
@@ -87,6 +87,7 @@ async function boot() {
   const tMap = performance.now();
   w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality, w.look); // ?map= picks the map; the seed never does
   w.city.setQuality?.(w.settings.quality);
+  attachLampLights(w, TUNING.quality[w.settings.quality].lampLights);
   const mapMs = performance.now() - tMap;
   w.weather = createWeather(w);
   const spawn = w.city.spawn;

@@ -17,7 +17,7 @@ export function createPauseMenu(w: World): void {
   root.id = 'pause';
   const q = TUNING.quality;
   const desc = (k: Quality) =>
-    `${Math.round(q[k].resolutionScale * 100)}% resolution · ${q[k].shadows ? `${q[k].shadowMapSize}px shadows` : 'no shadows'} · ${q[k].pedBudget} people nearby`;
+    `${Math.round(q[k].resolutionScale * 100)}% resolution · ${q[k].shadows ? `${q[k].shadowMapSize}px shadows to ${q[k].shadowDistance} m` : 'no shadows'} · ${q[k].textureRes}px textures · ${q[k].pedBudget} people nearby`;
   root.innerHTML = `
     <div class="panel" role="dialog" aria-label="Paused">
       <h2>Paused</h2>

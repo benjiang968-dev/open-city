@@ -31,7 +31,17 @@ export function createSkyEnv(scene: THREE.Scene): SkyEnv {
   sky.renderOrder = -1;
   sky.name = 'sky';
   scene.add(sky);
-  const uniforms = (sky.material as THREE.ShaderMaterial).uniforms;
+  const skyMat = sky.material as THREE.ShaderMaterial;
+  const uniforms = skyMat.uniforms;
+  // night: the scattering model goes black; add a deep blue sky with the city's warm glow low on the horizon
+  uniforms.uNightSky = { value: 0 };
+  uniforms.uOvercast = { value: 0 };
+  skyMat.fragmentShader = skyMat.fragmentShader
+    .replace('uniform float time;', 'uniform float time;\nuniform float uNightSky;\nuniform float uOvercast;')
+    .replace('gl_FragColor = vec4( texColor, 1.0 );', `// overcast: a grey, much dimmer sky (the scattering model alone turns bright white under heavy cloud)
+			texColor = mix(texColor, vec3(dot(texColor, vec3(0.2126, 0.7152, 0.0722))) * vec3(0.94, 0.97, 1.03), uOvercast * 0.85) * (1.0 - ${T.overcastDim.toFixed(2)} * uOvercast);
+			texColor += uNightSky * mix(vec3(${T.nightSkyZenith.join(', ')}), vec3(${T.nightSkyHorizon.join(', ')}), pow(1.0 - max(direction.y, 0.0), 5.0));
+			gl_FragColor = vec4( texColor, 1.0 );`);
   uniforms.turbidity.value = T.skyTurbidity;
   uniforms.rayleigh.value = T.skyRayleigh;
   uniforms.mieCoefficient.value = T.skyMie;
@@ -66,6 +76,8 @@ export function updateSkyEnv(e: SkyEnv, renderer: THREE.WebGLRenderer, scene: TH
   u.turbidity.value = THREE.MathUtils.lerp(T.skyTurbidity, 12, cloud);
   u.rayleigh.value = THREE.MathUtils.lerp(T.skyRayleigh, 0.4, cloud);
   u.time.value = time;
+  u.uNightSky.value = night;
+  u.uOvercast.value = THREE.MathUtils.smoothstep(cloud, 0.3, 0.9);
   const L = e.last;
   const moved = L.dir.angleTo(sunDir) > THREE.MathUtils.degToRad(T.envRefreshDegrees);
   const changed = Math.abs(cloud - L.cloud) > 0.04 || Math.abs(night - L.night) > 0.04;
@@ -73,9 +85,14 @@ export function updateSkyEnv(e: SkyEnv, renderer: THREE.WebGLRenderer, scene: TH
   L.dir.copy(sunDir); L.cloud = cloud; L.night = night; L.at = time;
   if (!e.pmrem) { e.pmrem = new THREE.PMREMGenerator(renderer); e.pmrem.compileCubemapShader(); }
   // ground bounce: a mid-grey city floor lit by the day
-  const g = 0.012 + 0.11 * daylight;
-  (e.ground.material as THREE.MeshBasicMaterial).color.copy(groundCol.setRGB(g, g * 0.96, g * 0.9));
+  const g = 0.012 + T.groundBounce * daylight;
+  (e.ground.material as THREE.MeshBasicMaterial).color.copy(groundCol.setRGB(g, g * 0.95, g * 0.86));
+  // the sun disc stays out of the capture: the sun is a light of its own (with shadows); in the environment it would
+  // light every shadow too and wash them out
+  const disc = u.showSunDisc.value;
+  u.showSunDisc.value = 0;
   e.cubeCam.update(renderer, e.envScene);
+  u.showSunDisc.value = disc;
   e.pmremRT = e.pmrem.fromCubemap(e.cubeRT.texture, e.pmremRT);
   scene.environment = e.pmremRT.texture;
   e.refreshes++;

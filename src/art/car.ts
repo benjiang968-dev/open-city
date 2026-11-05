@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { GeoBuilder } from './geo';
 import type { CarTypeName } from '../tuning';
+import { makeCarMaterial, makeHubMaterial, makeTyreMaterial } from '../systems/render/vehicleMaterials';
 
 const C = (h: number | string) => new THREE.Color(h);
 const GLASS = C('#26303c');
@@ -9,9 +10,10 @@ const TRIM = C('#2b2b2b');
 const HEAD = C('#fff6d5');
 const TAIL = C('#d62828');
 
-export const carMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.45, metalness: 0.2 });
-const wheelMat = new THREE.MeshStandardMaterial({ color: 0x1d1d1f, flatShading: true, roughness: 0.9 });
-const hubMat = new THREE.MeshStandardMaterial({ color: 0xb8bcc2, flatShading: true, roughness: 0.4 });
+// clearcoat paint, glass, trim and lamps sorted per vertex colour; rubber tyres and polished hubs (render/vehicleMaterials.ts)
+export const carMaterial = makeCarMaterial();
+const wheelMat = makeTyreMaterial();
+const hubMat = makeHubMaterial();
 
 export interface CarParts {
   body: GeoBuilder; // deformable shell (includes glass and tail lights)

@@ -2406,3 +2406,70 @@ export async function parkcheck(page, S) {
     return { stats: { cars: st.cars, kerb: st.kerb, lot: st.lot, byClass: st.byClass, poolGrown: st.poolGrown }, per100: per100.slice(0, 14), lots, atMst, nearest: { dist: Math.round(bd), street: best.street, standIn: v ? `${v.type} #${v.id}` : null, prompt, locked: best.locked, owner: best.owner, local: best.ownerLocal } };
   });
 }
+
+// Look screenshots from the game itself (cars, people, weather, the chosen quality). URL params (through the seed
+// argument: `1337&lookview=mst&lookhour=21.6&weather=rain&quality=low`): lookview (a street view below), lookhour,
+// lookout (file name, default screenshots/33-look-game.png). Renders single frames with the camera fixed at the view
+// (software GL is slow: the animation loop is held while the shot is taken), writes the canvas as PNG, then restores.
+export async function lookgame(page, S) {
+  await S.start(page);
+  const res = await page.evaluate(() => {
+    const w = window.__oc, q = new URLSearchParams(location.search);
+    // x, height above ground, z (camera), look-at x, height above ground, z, default hour
+    const V = {
+      mst: [-262, 1.8, 158.4, -120, 4.5, 154.5, 15.5],
+      rowhouses: [12, 1.8, -9.6, 160, 3.0, -11.6, 9.5],
+      waterfront: [-140, 26, 640, 60, 2, 470, 17.5],
+      grid: [16, 2.2, -200, 16, 3, -120, 15.5],
+    };
+    const name = q.get('lookview') ?? (w.city.id === 'grid' ? 'grid' : 'mst');
+    const v = V[name];
+    w.dayNight.hour = Number(q.get('lookhour') ?? v[6]);
+    if (name !== 'grid') window.__mh.put(w.player.body, v[0] + 1.5, v[2] + 1.5, 1.2);
+    window.__ocRun(1.5);
+    const gy = (x, z) => w.city.heightAt(x, z);
+    // the grid city: the normal chase camera behind you at the spawn; the real maps: the fixed street view
+    if (name === 'grid') { w.cam.override = null; window.__ocRun(1); }
+    else w.cam.override = { px: v[0], py: gy(v[0], v[2]) + v[1], pz: v[2], lx: v[3], ly: gy(v[3], v[5]) + v[4], lz: v[5] };
+    window.__ocFrames(2, true);
+    // hold the animation loop's own rendering while capturing
+    const r = w.renderer, orig = r.render.bind(r);
+    window.__lookOrig = orig;
+    r.render = () => {};
+    const t0 = performance.now();
+    orig(w.scene, w.camera);
+    const url = r.domElement.toDataURL('image/png');
+    return { name, hour: w.dayNight.hour, quality: w.settings.quality, weather: w.weather.kind, wet: +w.look.uniforms.uWet.value.toFixed(2), calls: r.info.render.calls, tris: r.info.render.triangles, frameMs: Math.round(performance.now() - t0), url, out: q.get('lookout') };
+  });
+  const { writeFileSync } = await import('node:fs');
+  const file = res.out ? `screenshots/${res.out}.png` : 'screenshots/33-look-game.png';
+  writeFileSync(file, Buffer.from(res.url.split(',')[1], 'base64'));
+  await page.evaluate(() => { const w = window.__oc; w.renderer.render = window.__lookOrig; w.cam.override = null; });
+  delete res.url;
+  return { ...res, file };
+}
+
+// Shader compile stalls: after the boot warm-up, visiting the map by day, at night and in the rain must not compile a
+// single new program (a first-time compile mid-game is a frame spike). Renders two frames per stop.
+export async function lookstall(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, r = w.renderer;
+    const stops = w.city.id === 'grid'
+      ? [[16, -200], [200, -100], [-200, 50], [0, 60], [300, 200]]
+      : [[-240, 160], [-760, 200], [-140, 520], [60, -10], [900, 440], [-400, 240], [300, 120]];
+    const programs0 = r.info.programs.length;
+    const log = [];
+    const visit = (label) => {
+      for (const [x, z] of stops) {
+        window.__mh.put(w.player.body, x, z, 1.2);
+        window.__ocFrames(2, true);
+      }
+      log.push({ label, programs: r.info.programs.length });
+    };
+    w.dayNight.hour = 13; visit('day');
+    w.dayNight.hour = 22; visit('night');
+    w.weather.kind = 'rain'; w.weather.look.wet = 1; w.weather.look.rain = 0.8; w.weather.look.cloud = 0.8; visit('rain');
+    return { programs0, log, newPrograms: r.info.programs.length - programs0, envRefreshes: w.dayNight.env.refreshes };
+  });
+}

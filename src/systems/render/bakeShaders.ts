@@ -96,11 +96,11 @@ Mat asphalt(vec2 uv) {
   vec4 c = worley(uv + warp * 0.06, cyc(1.3), 7, 0.9);
   float edge = c.y - c.x;
   float crackZone = smoothstep(0.63, 0.74, fbm(uv, cyc(2.0), 3, 9));
-  float crack = (1.0 - smoothstep(0.0, 0.03, edge)) * crackZone;
+  float crack = (1.0 - smoothstep(0.0, 0.018, edge)) * crackZone * 0.75;
   float sealZone = smoothstep(0.6, 0.68, fbm(uv, cyc(2.0), 2, 11)) * (1.0 - crackZone);
   float seal = (1.0 - smoothstep(0.02, 0.07, edge)) * sealZone;
-  alb = mix(alb, srgb(vec3(0.075, 0.075, 0.08)), seal * 0.95);
-  alb = mix(alb, srgb(vec3(0.05, 0.05, 0.05)), crack);
+  alb = mix(alb, srgb(vec3(0.12, 0.12, 0.125)), seal * 0.7);
+  alb = mix(alb, srgb(vec3(0.08, 0.08, 0.08)), crack);
   float h = stone * 0.0025 * (0.4 + w.z) + grit * 0.0008 + fine * 0.0006 - crack * 0.004 + seal * 0.0005;
   float rough = mix(0.93, 0.8, stone);
   rough = mix(rough, 0.5, seal);

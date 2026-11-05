@@ -800,25 +800,34 @@ const RAW = {
     // shadowMapSize = px per side of each of the sun's two shadow cascades (near and far); shadowDistance = metres the
     // cascades reach from the camera (beyond it, no sun shadows); treeNear = metres within which trees are drawn in full
     // detail (bark trunk, branches, leaf cards; render/trees.ts), 0 = never
-    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, shadowDistance: 0, pedBudget: 30, textureRes: 256, anisotropy: 2, textureDetail: 0, treeNear: 0 },
-    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1536, shadowDistance: 320, pedBudget: 45, textureRes: 512, anisotropy: 8, textureDetail: 1, treeNear: 110 },
-    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, shadowDistance: 650, pedBudget: 60, textureRes: 1024, anisotropy: 16, textureDetail: 1, treeNear: 200 },
+    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, shadowDistance: 0, pedBudget: 30, textureRes: 256, anisotropy: 2, textureDetail: 0, treeNear: 0, lampLights: 0 },
+    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1536, shadowDistance: 320, pedBudget: 45, textureRes: 512, anisotropy: 8, textureDetail: 1, treeNear: 110, lampLights: 6 },
+    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, shadowDistance: 650, pedBudget: 60, textureRes: 1024, anisotropy: 16, textureDetail: 1, treeNear: 200, lampLights: 10 },
   },
 
   look: {
     // sky (three's Preetham sky, render/sky.ts) and image-based lighting from it
     skyBoxSize: 1200, // m: the sky box around the camera (drawn at the far plane)
     skyTurbidity: 3.2, // haze in clear weather (2 = very clear, 10 = hazy); clouds raise it
-    skyRayleigh: 1.1, // blue scattering strength
+    skyRayleigh: 0.85, // blue scattering strength
     skyMie: 0.004, // aerosol scattering
     skyMieG: 0.82, // forward glow round the sun
     skyCloudClear: 0.18, // cloud cover drawn in clear weather (the weather's cloud value raises it)
     envCubeSize: 128, // px per face of the sky capture that lights everything (PMREM)
     envRefreshDegrees: 1.5, // recapture the sky when the sun has moved this far...
     envRefreshMinSeconds: 1.5, // ...but at most this often (real seconds)
-    envIntensityDay: 0.1, // scene.environmentIntensity by day (sky light on PBR materials)
+    envIntensityDay: 1.0, // scene.environmentIntensity by day (sky light on PBR materials)
     envIntensityNight: 0.35, // at night (the night sky is dark anyway; this keeps a little moonlit fill)
-    sunIntensity: 8.0, // sunlight at noon (the day/night keys scale it toward dawn and dusk)
+    skyDiffuseDay: 0.42, // share of the sky light that reaches diffuse surfaces by day (reflections keep it all): sets how
+    // bright the shade is next to sunlight (about 1:4 on a clear day)
+    skyDiffuseNight: 1.0,
+    skyDiffuseSaturation: 0.55, // colour saturation of that sky fill (1 = the sky's own blue; lower stands in for the warm
+    // light bounced off sunlit streets and walls, which the sky capture does not hold)
+    nightSkyZenith: [0.006, 0.008, 0.018], // linear radiance of the night sky overhead...
+    nightSkyHorizon: [0.035, 0.028, 0.026], // ...and near the horizon (city glow)
+    overcastDim: 0.62, // how much darker the sky (and so its light) gets under full cloud
+    groundBounce: 0.45, // brightness of the ground below the horizon in the sky capture by day (bounce light from below)
+    sunIntensity: 6.5, // sunlight at noon (the day/night keys scale it toward dawn and dusk)
     moonIntensity: 0.25, // night key light
     exposureDay: 0.86, // tone mapping exposure by day (ACES filmic)
     exposureNight: 1.1, // at night (eyes adapt)
@@ -827,7 +836,10 @@ const RAW = {
     shadowRadius: 2.2, // soft shadow filter radius (shadow map texels) on Medium/High
     shadowBias: -0.0004,
     shadowNormalBias: 0.035,
-    interiorDay: 0.35, // daylight reaching window interiors, relative (window glass, render/facadeMaterial.ts)
+    interiorDay: 0.35,
+    lampLightRange: 24, // m: reach of the real lights at the street lamps nearest the camera (render/nightLights.ts)
+    lampLightIntensity: 55, // candela-like intensity of one lamp at full night
+    lampLightsMax: 10, // the most lamp lights any preset uses (TUNING.quality.*.lampLights) // daylight reaching window interiors, relative (window glass, render/facadeMaterial.ts)
   },
 
   debug: {

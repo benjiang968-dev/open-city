@@ -113,7 +113,7 @@ export const SURFACES: SurfaceDef[] = [
   S(SURF.SOIL, 'soil', 3, MAP.TOP, 0x8a7357, { macro: 0.7, porosity: 1 }),
   S(SURF.GRAVEL, 'gravel', 2, MAP.TOP, 0xc2ad86, { macro: 0.6, porosity: 1 }),
   S(SURF.BARK, 'bark', [1.2, 1.6], MAP.BOX, 0x6b4a2f, { macro: 0.3, porosity: 0.6 }),
-  S(SURF.FOLIAGE, 'foliage', 1.6, MAP.BOX, 0x5c9e47, { macro: 0.5, porosity: 0.3 }),
+  S(SURF.FOLIAGE, 'foliage', 1.6, MAP.BOX, 0x5c9e47, { macro: 0.5, porosity: 0 }),
   S(SURF.WOOD, 'wood', 2, MAP.BOX, 0x8c6440, { macro: 0.5, porosity: 0.9 }),
   S(SURF.METAL_PAINT, 'metalPaint', 1, MAP.BOX, 0x2f3236, { macro: 0.15, porosity: 0.1 }),
   S(SURF.METAL_BARE, 'metalBare', 1, MAP.BOX, 0x9a9da0, { metal: 1, macro: 0.15, porosity: 0 }),

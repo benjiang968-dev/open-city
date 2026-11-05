@@ -25,6 +25,8 @@ export interface LookUniforms {
   /** lit-window colour, driven by the day/night system */
   uWin: THREE.IUniform<THREE.Color>;
   uTime: THREE.IUniform<number>;
+  /** share of the sky light (environment) on diffuse surfaces; specular reflections keep all of it */
+  uSkyDiffuse: THREE.IUniform<number>;
 }
 
 export interface Look {
@@ -66,7 +68,7 @@ export function createLook(quality: LookQuality): Look {
     uniforms: {
       uAlbTex: { value: null }, uNrmTex: { value: null }, uMacro: { value: null }, uSurfTab: { value: surfaceTable() },
       uWet: { value: 0 }, uSnow: { value: 0 }, uDetail: { value: 1 }, uNight: { value: 0 }, uDaylight: { value: 1 },
-      uWin: { value: new THREE.Color(0x8899aa) }, uTime: { value: 0 },
+      uWin: { value: new THREE.Color(0x8899aa) }, uTime: { value: 0 }, uSkyDiffuse: { value: 1 },
     },
     maps: null,
     quality,

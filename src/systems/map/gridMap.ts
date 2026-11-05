@@ -7,6 +7,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../../tuning';
 import { generateCity, updateCity } from '../cityGen';
 import type { Look } from '../render/look';
+import { applyGridLook } from '../render/gridLook';
 import {
   MapIndex, makeLaneGeometry, linkLaneNeighbours,
   type Building, type CityMap, type KerbHit, type LaneEdge, type LaneHit, type MinimapDrawOpts, type ParkingSpot,
@@ -19,6 +20,7 @@ const V = TUNING.vehicles;
 
 export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, look?: Look): CityMap {
   const g = generateCity(scene, R, physics, seed, look);
+  if (look) applyGridLook(scene, look, g.water); // PBR surfaces on the grid city's meshes (render/gridLook.ts)
   const { xs, zs, roadHalfX, roadHalfZ, streetNamesX, streetNamesZ } = g;
   const lastJ = zs.length - 1;
   const clsOfZ = (j: number): RoadClass => (j === lastJ ? 'secondary' : 'residential'); // the bay boulevard

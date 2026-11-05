@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import type { World } from '../world';
 import { GeoBuilder } from '../art/geo';
 import type { Ped } from './pedestrians';
+import { makePersonMaterial } from './render/vehicleMaterials';
 
 const WHITE = new THREE.Color(1, 1, 1);
 const PART_KEYS = ['torso', 'head', 'hair', 'legL', 'legR', 'armL', 'armR', 'phone', 'camera', 'parcel', 'cane', 'dog', 'dogTail'] as const;
@@ -24,7 +25,7 @@ function box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: num
 }
 
 export function createCrowd(w: World, capacity: number): CrowdRender {
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8 });
+  const mat = makePersonMaterial(); // cloth with a soft sheen (render/vehicleMaterials.ts)
   const make = (g: THREE.BufferGeometry, cap: number, colored: boolean, shadow: boolean): Part => {
     const mesh = new THREE.InstancedMesh(g, mat, cap);
     if (colored) mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);

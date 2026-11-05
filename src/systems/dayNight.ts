@@ -6,6 +6,7 @@ import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { workingHeadlights } from './carDamage';
 import { createSkyEnv, updateSkyEnv, type SkyEnv } from './render/sky';
+import { createNightLights, findLampHeads, type NightLights } from './render/nightLights';
 
 const LT = TUNING.look;
 
@@ -25,6 +26,8 @@ export interface DayNightState {
   skyTop: THREE.Color;
   skyHorizon: THREE.Color;
   headlight: THREE.SpotLight;
+  /** real lights at the street lamps nearest the camera (after the map is built: attachLampLights) */
+  lamps: NightLights | null;
 }
 
 /** Fog and horizon colours and light levels through the day (sun/hemi are multipliers of the TUNING.look levels). */
@@ -61,7 +64,7 @@ export function createDayNight(scene: THREE.Scene): DayNightState {
   scene.add(headlight); // always in the scene so the light count never changes (no shader recompiles)
   return {
     headlight, hour: TUNING.time.startHour, day: 1, night: 0, daylight: 1, sun, hemi, sky: env.sky, env, sunDir: new THREE.Vector3(0, 1, 0),
-    skyTop: new THREE.Color(), skyHorizon: new THREE.Color(),
+    skyTop: new THREE.Color(), skyHorizon: new THREE.Color(), lamps: null,
   };
 }
 
@@ -94,7 +97,7 @@ export function updateDayNight(w: World, dt: number): void {
   const up = s.sunDir.y;
   if (up > 0.02) {
     // warm and dimmer near the horizon (more air to pass through)
-    s.sun.color.set(0xfff4e6).lerp(ca.set(0xff9a55), 1 - THREE.MathUtils.smoothstep(up, 0.02, 0.45));
+    s.sun.color.set(0xffefd8).lerp(ca.set(0xff9a55), 1 - THREE.MathUtils.smoothstep(up, 0.02, 0.45));
     s.sun.intensity = LT.sunIntensity * sunK;
     s.sun.position.copy(s.sunDir);
   } else {
@@ -120,12 +123,21 @@ export function updateDayNight(w: World, dt: number): void {
   w.city.lampMat.color.setRGB(0.55 + 0.45 * lampOn, 0.55 + 0.4 * lampOn, 0.5 + 0.25 * lampOn);
   w.city.lampPoolMat.opacity = lampOn * 0.55;
   w.city.lampPoolMat.visible = lampOn > 0.01;
+  s.lamps?.update(w.camera.position, lampOn);
   const win = THREE.MathUtils.clamp((s.night - 0.15) * 2, 0, 1);
   w.city.litWindowMat.color.setRGB(0.22 + 0.78 * win, 0.28 + 0.62 * win, 0.36 + 0.24 * win);
   if (w.look) {
     w.look.uniforms.uNight.value = s.night;
     w.look.uniforms.uDaylight.value = s.daylight * LT.interiorDay;
+    w.look.uniforms.uSkyDiffuse.value = THREE.MathUtils.lerp(LT.skyDiffuseDay, LT.skyDiffuseNight, s.night);
   }
+}
+
+/** Once the map exists: the pool of real lights for the nearest street lamps (sized for the most demanding preset). */
+export function attachLampLights(w: World, active: number): void {
+  const s = w.dayNight;
+  if (!s.lamps) s.lamps = createNightLights(w.scene, findLampHeads(w.scene, w.city.lampMat), LT.lampLightsMax);
+  s.lamps.setActive(active);
 }
 
 /** After the weather has adjusted the light: point the sky and refresh the sky light if needed. */

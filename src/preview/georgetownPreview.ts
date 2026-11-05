@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning';
-import { createDayNight, updateDayNight, updateSky } from '../systems/dayNight';
+import { attachLampLights, createDayNight, updateDayNight, updateSky } from '../systems/dayNight';
 import { buildGeorgetownWorld, type GeoQuality, type GeoWorld } from '../systems/map/georgetownWorld';
 import type { GeoDoc } from '../systems/map/geoDoc';
 import type { World } from '../world';
@@ -93,6 +93,7 @@ async function boot() {
     const Q = TUNING.quality[q];
     const on = Q.shadows, size = Q.shadowMapSize;
     dn.sun.shadow.camera.far = Math.max(1, Q.shadowDistance);
+    dn.lamps?.setActive(Q.lampLights);
     const changed = renderer.shadowMap.enabled !== on;
     renderer.shadowMap.enabled = on;
     dn.sun.castShadow = on;
@@ -106,6 +107,7 @@ async function boot() {
   // a fake World with only what updateDayNight reads
   const target = new THREE.Object3D();
   const fake = { dayNight: dn, player: { mesh: target, vehicle: null }, camera, scene, renderer, city: geo, look } as unknown as World;
+  attachLampLights(fake, TUNING.quality[quality].lampLights);
   // texture sheet (debug): every baked layer, albedo above normals; ?texsheet=1 or __geo.texSheet(true)
   const sheet = createTexSheet(look);
   let showSheet = params.get('texsheet') === '1';

@@ -39,6 +39,7 @@ export function applyQuality(w: World, q: Quality, boot = false): void {
   w.settings.pedBudget = p.pedBudget;
   w.city?.setQuality?.(q); // the map's own draw distance, detail and trees (not yet loaded at the first call)
   if (!boot && w.look) bakeLook(w.look, w.renderer, q); // surface maps at the preset's resolution (a re-bake only if it changed)
+  w.dayNight.lamps?.setActive(p.lampLights); // real lights at the nearest street lamps
   const r = w.renderer;
   r.setPixelRatio(Math.min(window.devicePixelRatio || 1, p.maxDevicePixelRatio) * p.resolutionScale);
   r.setSize(window.innerWidth, window.innerHeight);

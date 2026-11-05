@@ -25,6 +25,7 @@ import { makeWorldMaterial } from '../render/worldMaterial';
 import { makeFacadeMaterial } from '../render/facadeMaterial';
 import { upgradePropMaterials } from '../render/propMaterials';
 import { createTreeLod } from '../render/trees';
+import { upgradeWater } from '../render/water';
 import { SURF, surf } from '../render/surfaces';
 
 const G = TUNING.geo;
@@ -214,6 +215,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   drawPaths(doc, ras, chunks);
   phase('roadMesh');
   const water = buildWater(doc, W, ras, chunks, phys, root);
+  upgradeWater(water.meshes, look);
   const pierDecks = buildPlazaAndPiers(doc, ras, chunks, phys, plazaH, W);
   phase('water');
   const bridges = buildBridges(net, doc, ras, W, chunks, phys);
