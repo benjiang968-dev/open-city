@@ -95,6 +95,15 @@ const RAW = {
     backSpeedFactor: 0.55, // walking backwards is this fraction of walk speed
     capsuleRadius: 0.35,
     capsuleHalfHeight: 0.55,
+    // character controller (Rapier KinematicCharacterController); stairs are smooth ramps under the treads, kerbs and
+    // stoop lips are steps
+    ccOffset: 0.04, // m: skin gap the controller keeps from surfaces
+    autostepHeight: 0.45, // m: tallest step walked up without jumping (kerbs 0.15, stair-flight lips 0.09, lot kerbs 0.15)
+    autostepMinWidth: 0.2, // m: free depth needed on top of a step to take it
+    snapToGround: 0.45, // m: walking down steps and ramps keeps the feet on the ground within this drop
+    maxSlopeDeg: 52, // steepest slope (degrees) walked up: stair ramps are 32 to 47 degrees, terrain banks steeper stop you
+    minSlopeSlideDeg: 52, // standing still, the character only slides down slopes steeper than this (no creep on stairs)
+    groundedVy: -1, // m/s pressed into the ground while standing (keeps contact on slopes and decks)
     enterCarRange: 3.6, // metres from the car to be able to press E
     talkRange: 3.0, // metres to an NPC to be able to press E and talk
     rescuePavementStep: 2.0, // metres past the kerb onto the pavement where you land after swimming back to shore
@@ -619,6 +628,8 @@ const RAW = {
     waterClearance: 0.3, // metres: a spot whose surface is less than this above water is in the water
     edgeProbe: 0.35, // metres out on four sides where the surface is checked (and must be free of buildings)...
     maxStep: 0.12, // ...and must be within this of the item's (no deck, pier, kerb or stair edge right beside it)
+    dropProbe: 0.6, // metres out on four sides where the surface may not drop or rise by more than maxDrop (map.heightAt is
+    maxDrop: 0.5, // the collider surface now, so a sharp ledge just past edgeProbe is no longer smoothed into it)
     wallProbe: 0.2, // metres: an item this close to a wall (or the map edge) on any side would stick into it: left out
     // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
     // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
@@ -780,14 +791,21 @@ const RAW = {
     freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
     deckThickness: 1.1, // m from deck surface to its underside
     stairWallFrom: 0.2, // m: a stair's side walls start once it has risen this far above its foot (the flat run-in stays open)
+    stairMaxSlope: 0.84, // rise per run: no stair flight is steeper than this (40 degrees; the character climbs up to TUNING.player.maxSlopeDeg)
+    stairMaxExtend: 3.5, // m: how far a stair's foot may move out along its line to stay under stairMaxSlope
+    stairMinRise: 0.3, // m: a data stair rising less than this (once cut back out of the carriageways) is a plain path
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)
     riverLevel: 0, // m: the Potomac surface (map heights are metres above the river)
     canalLevels: [5.2, 4.4, 3.6, 2.8, 2.0], // m: canal water west of lock 4, then after locks 4, 3, 2, 1 (east)
     canalDepth: 1.6, // m of water in the canal
     creekDepth: 1.2, // m of water in Rock Creek
-    treeColliderRoadDist: 9, // m: trees closer than this to a carriageway get a trunk collider
     stallWidth: 2.6, // m: painted parking bay width in car parks
+    // synthesized street furniture (map data marked synthetic) on a sidewalk stands in the furnishing strip by the
+    // kerb, out of the walking line along the sidewalk's middle (TUNING.geo.sidewalkWidth / 2 from the kerb)
+    streetTreeKerbOffset: 0.7, // m from the kerb to a street tree's trunk (a 0.3 m trunk leaves the walking line clear)
+    streetLampKerbOffset: 0.45, // m from the kerb to a street lamp's post
+    streetTreeLampGap: 2, // m: a synthesized street tree moved to the strip is dropped if a lamp stands this close
     stallLength: 5.2, // m: parking bay length
     lotAisle: 6.6, // m: aisle between bay rows
   },
@@ -803,6 +821,10 @@ const RAW = {
   debug: {
     spikeMs: 33, // a frame longer than this counts as a spike in the F3 overlay
     spikeWindow: 10, // seconds of history for the spike counter and worst frame
+    physRadius: 22, // m: the F4 collision view draws the colliders within this distance of the player
+    physHeight: 14, // m: ... and this far above or below them
+    physRefresh: 0.25, // s between rebuilds of the F4 collision view
+    physMaxSegments: 90000, // line segments the F4 view can draw (preallocated when first switched on)
   },
 
   hud: {

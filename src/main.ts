@@ -5,7 +5,7 @@ import { TUNING } from './tuning';
 import { Rng, seedFromUrl } from './rng';
 import type { World } from './world';
 import { createInput, endInputFrame, act } from './systems/input';
-import { loadMap } from './systems/map/loadMap';
+import { loadMap, physAuditFromUrl } from './systems/map/loadMap';
 import { validateCityMap, laneSample, projectOnLane, roadRouter, walkRouter } from './systems/map/cityMap';
 import { createDayNight, updateDayNight } from './systems/dayNight';
 import { createCamera, updateCamera } from './systems/camera';
@@ -44,6 +44,7 @@ import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtFx';
+import { createPhysDebug, physDebugKeys, updatePhysDebug } from './systems/physicsDebug';
 
 async function boot() {
   await RAPIER.init();
@@ -107,6 +108,7 @@ async function boot() {
   assignParkedOwners(w);
   w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
   w.hurtFx = createHurtFx(w);
+  w.physDebug = createPhysDebug();
   w.hud = createHud();
   w.chat = createChat(w);
   w.jobs.bind(w);
@@ -147,6 +149,11 @@ async function boot() {
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
+  // physics audit (tests only, ?physaudit=1): drawn geometry vs colliders, see systems/physicsAudit.ts
+  if (physAuditFromUrl()) {
+    const { runPhysicsAudit } = await import('./systems/physicsAudit');
+    (window as unknown as { __ocPhysAudit: unknown }).__ocPhysAudit = (opts?: Parameters<typeof runPhysicsAudit>[1]) => runPhysicsAudit(w, opts);
+  }
   (window as unknown as { __ocTraffic: unknown }).__ocTraffic = {
     placeOnEdge: (car: AiCar, edge: number, s0: number) => placeOnEdge(w, car, edge, s0),
     resetStats: () => resetTrafficStats(w.trafficSim.stats),
@@ -208,6 +215,7 @@ async function boot() {
       w.cam.yaw = Math.PI / 2;
     }
     if (act.debug(w.input)) w.debugVisible = !w.debugVisible;
+    physDebugKeys(w);
     updatePauseKeys(w);
     if (!w.paused) inventoryKeys(w);
     if (w.paused) {
@@ -255,7 +263,7 @@ async function boot() {
     P.begin('hud'); updateHud(w, dt); P.end('hud');
     if (render) {
       P.begin('minimap'); updateMinimap(w); P.end('minimap');
-      P.begin('debug'); updateDebug(w); P.end('debug');
+      P.begin('debug'); updateDebug(w); updatePhysDebug(w); P.end('debug');
       P.begin('render'); renderCrowd(w); renderer.render(scene, camera); P.end('render');
     }
     P.endFrame(realMs, w.time);

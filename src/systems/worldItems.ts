@@ -208,6 +208,7 @@ export function scatterItems(w: World): void {
     for (let k = 0; k < 4; k++) {
       const ox = k === 0 ? 1 : k === 1 ? -1 : 0, oz = k === 2 ? 1 : k === 3 ? -1 : 0;
       if (c.isBlocked(x + ox * b, z + oz * b) || Math.abs(c.heightAt(x + ox * e, z + oz * e, y + 0.5) - y) > IT.maxStep) return false;
+      if (Math.abs(c.heightAt(x + ox * IT.dropProbe, z + oz * IT.dropProbe, y + 0.5) - y) > IT.maxDrop) return false;
     }
     return true;
   };

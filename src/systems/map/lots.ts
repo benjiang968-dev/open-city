@@ -133,10 +133,12 @@ export function buildLots(plans: LotPlan[], ras: GeoRaster, chunks: RenderChunks
         const ya = H(ax, az), yb = H(bx, bz), kk = G.kerbHeight;
         const iax = ax + nx * 0.5, iaz = az + nz * 0.5, ibx = bx + nx * 0.5, ibz = bz + nz * 0.5;
         buf.quad(ax, ya + kk, az, bx, yb + kk, bz, ibx, yb + kk, ibz, iax, ya + kk, iaz, COL.kerb, 0, 1, 0);
+        chunks.tag('kerb');
         buf.wall(iax, iaz, ibx, ibz, ya, ya + kk, yb, yb + kk, COL.kerb, nx, nz);
         pb.quad(ax, ya + kk, az, bx, yb + kk, bz, ibx, yb + kk, ibz, iax, ya + kk, iaz);
         pb.quad(iax, ya, iaz, ibx, yb, ibz, ibx, yb + kk, ibz, iax, ya + kk, iaz);
       }
+      chunks.tag('decor'); // skirt below the kerbed edge (the edge collides)
       buf.wall(p[0], p[1], q[0], q[1], H(p[0], p[1]) - 1, H(p[0], p[1]) + G.kerbHeight, H(q[0], q[1]) - 1, H(q[0], q[1]) + G.kerbHeight, COL.skirt, -nx, -nz);
     }
     // entrance apron

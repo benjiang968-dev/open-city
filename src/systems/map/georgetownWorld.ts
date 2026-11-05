@@ -15,11 +15,13 @@ import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
 import { buildRoadNet, OMITTED_ROADS, solveProfiles, type REdge, type RoadNet } from './roadNet';
 import { buildNetMeshes, drapeRibbon, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
-import { buildBridges, buildStairs, rasterizeStairs } from './bridges';
+import { buildBridges, buildStairs, rasterizeStairs, stairHoles } from './bridges';
 import { buildBuildings, createFacadeMaterial, rasterizeBuildings } from './facades';
 import { buildMonuments } from './monuments';
 import { buildLots, rasterizeLots, type GeoLot } from './lots';
 import { buildProps } from './props';
+import { SurfaceIndex } from './surfaceIndex';
+import { SolidRecorder, type SolidTags } from '../objects/solidKinds';
 
 const G = TUNING.geo;
 
@@ -38,6 +40,8 @@ export interface GeoWorldOptions {
   /** World seed: varies shop names only, never the map geometry. */
   seed: number;
   quality: GeoQuality;
+  /** Physics audit mode (?physaudit=1): record every drawn box / cylinder / wall with its solid kind. */
+  audit?: boolean;
 }
 
 export interface GeoLane {
@@ -138,10 +142,18 @@ export interface GeoWorld {
   /** Ways left out of the render (to be removed from the graph): data ids with a reason. */
   omitted: { roadId: string; name: string; reason: string }[];
   /** Review data (optional): footprints cut back from streets / dropped, stoop bottoms (x, y, z, 0 per stoop). */
-  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array };
+  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array; stoopInfo: Float32Array };
   /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
   droppedBuildings: ReadonlySet<string>;
-  stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number };
+  stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number; surfaceTris: number };
+  /** Collider handle -> solid kind of every static collider the world made. */
+  solidTags: SolidTags;
+  /** Audit mode only: what was drawn, with kinds (null when off). */
+  solidRecorder: SolidRecorder | null;
+  /** Footbridges over the canal: centre line points and deck heights (tests). */
+  footbridges: { pts: Pt[]; h: number[]; hw: number }[];
+  /** Stair plans (centre line, width, ramp height profile) for tests and the audit. */
+  stairs: { pts: Pt[]; w: number; L: number; name: string | null; h: (s: number) => number; flights: [number, number][] }[];
   root: THREE.Group;
 }
 
@@ -189,36 +201,67 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   rasterizeNet(net, ras, doc.parking);
   const lotInfo = rasterizeLots(doc, ras, net);
   const { plazaH } = rasterizePlaza(doc, ras);
-  const stairs = rasterizeStairs(doc, ras);
+  // the walking surface of the street nearest (x, z): carriageway, or its sidewalk one kerb up (where stairs end)
+  const streetY = (x: number, z: number) => {
+    let best = NaN, bd = Infinity;
+    for (const e of net.edges) {
+      if (e.deck) continue;
+      const pr = net.project(e, x, z);
+      const lim = e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 1;
+      if (pr.d > lim || pr.d >= bd) continue;
+      bd = pr.d;
+      best = net.profAt(e, pr.s) + (pr.d > e.hw ? G.kerbHeight : 0);
+    }
+    return best;
+  };
+  const stairs = rasterizeStairs(doc, ras, streetY);
+  const holes = stairHoles(stairs); // stairwells: cut out of the terrain and the sidewalks
   ras.blendBands();
   ras.finish();
   phase('raster');
 
   // ---------------------------------------------------------------- meshes
   const chunks = new RenderChunks(RENDER_CHUNK, b, 760);
+  if (opts.audit) chunks.rec = new SolidRecorder();
   const phys = new PhysChunks(R, physics, PHYS_CHUNK);
+  phys.keepTriangles('ground', 'stair', 'deck'); // the walking surfaces map.heightAt reads (surfaceIndex.ts)
   const cemetery = doc.parks.find((p) => p.kind === 'landuse=cemetery')?.pts ?? null;
-  const terrainTris = buildTerrainMesh(ras, chunks, phys, cemetery, (x, z) => W.levelAt(x, z));
+  chunks.tag('ground');
+  const terrainTris = buildTerrainMesh(ras, chunks, phys, cemetery, (x, z) => W.levelAt(x, z), holes);
   buildOuterLand(ras, chunks, b, (x) => riverNorthZ(W.river, x));
   phase('terrainMesh');
-  const info = buildNetMeshes(net, doc, chunks, phys);
+  const info = buildNetMeshes(net, doc, chunks, phys, holes);
   drawPaths(doc, ras, chunks);
   phase('roadMesh');
-  const water = buildWater(doc, W, ras, chunks, phys, root);
+  chunks.tag('ground');
+  const water = buildWater(doc, W, ras, chunks, phys, root, holes);
+  chunks.tag('ground');
   const pierDecks = buildPlazaAndPiers(doc, ras, chunks, phys, plazaH, W);
   phase('water');
+  chunks.tag('ground');
   const bridges = buildBridges(net, doc, ras, W, chunks, phys);
-  buildStairs(stairs, chunks, phys);
+  buildStairs(stairs, chunks, phys, ras);
+  chunks.tag('ground');
   const lotStalls = buildLots(lotInfo, ras, chunks, phys);
   phase('bridges');
   const litWindowMat = new THREE.MeshBasicMaterial({ color: 0x8899aa });
   const facadeMat = createFacadeMaterial(litWindowMat, GEO_QUALITY[opts.quality].anisotropy);
   const bld = buildBuildings(doc, ras, net, info.edgeGrid, chunks, phys, opts.seed, root, dropped);
+  chunks.tag('untagged');
   buildMonuments(doc, ras, chunks, phys);
+  chunks.tag('untagged');
   phase('buildings');
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff1c4 });
   const lampPoolMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
-  const props = buildProps(doc, ras, net, info, bridges.lamps, chunks, phys, root, lampMat, lampPoolMat);
+  // props stand on the boardwalk and piers where those cover the ground (benches on the waterfront)
+  const deckIdx = buildDeckIndex(net, [...water.walkDecks, ...pierDecks]);
+  const standAt = (x: number, z: number) => {
+    const g = ras.heightAt(x, z);
+    let best = g;
+    deckIdx.query(x, z, true, (h) => { if (h > best && h < g + 2.5) best = h; });
+    return best;
+  };
+  const props = buildProps(doc, ras, net, info, bridges.lamps, chunks, phys, root, lampMat, lampPoolMat, standAt);
   phase('props');
 
   // ---------------------------------------------------------------- materials and chunk meshes
@@ -263,12 +306,17 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   // ---------------------------------------------------------------- physics
   // boundary walls (invisible) and a safety floor under everything
   const wallH = 120;
-  phys.box((b.x0 + b.x1) / 2, 0, b.z0 - 1, (b.x1 - b.x0) / 2 + 2, wallH, 1);
-  phys.box((b.x0 + b.x1) / 2, 0, b.z1 + 1, (b.x1 - b.x0) / 2 + 2, wallH, 1);
-  phys.box(b.x0 - 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2);
-  phys.box(b.x1 + 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2);
-  phys.box((b.x0 + b.x1) / 2, -3.2, (b.z0 + b.z1) / 2, (b.x1 - b.x0) / 2, 1, (b.z1 - b.z0) / 2);
+  phys.box((b.x0 + b.x1) / 2, 0, b.z0 - 1, (b.x1 - b.x0) / 2 + 2, wallH, 1, 1, 0, 'boundary');
+  phys.box((b.x0 + b.x1) / 2, 0, b.z1 + 1, (b.x1 - b.x0) / 2 + 2, wallH, 1, 1, 0, 'boundary');
+  phys.box(b.x0 - 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2, 1, 0, 'boundary');
+  phys.box(b.x1 + 1, 0, (b.z0 + b.z1) / 2, 1, wallH, (b.z1 - b.z0) / 2 + 2, 1, 0, 'boundary');
+  phys.box((b.x0 + b.x1) / 2, -3.2, (b.z0 + b.z1) / 2, (b.x1 - b.x0) / 2, 1, (b.z1 - b.z0) / 2, 1, 0, 'boundary');
   const trimeshTris = phys.finishTrimeshes();
+  // heights from the walking-surface colliders themselves (ground, kerbs, sidewalks, lots, aprons, stair ramps)
+  const surf = new SurfaceIndex([...phys.kept.get('ground')!, ...phys.kept.get('stair')!]);
+  const deckSurf = new SurfaceIndex(phys.kept.get('deck')!); // bridge and freeway decks, footbridges
+  phys.kept.clear();
+  const pierIdx = buildDeckIndex(null, pierDecks); // the boardwalk piers (box colliders, not in the triangles)
   phase('physics');
 
   // ---------------------------------------------------------------- exports for the graph builder
@@ -277,15 +325,23 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     id: n.id, x: n.x, z: n.z, y: n.h, degree: n.arms.length, signals: n.signals, stop: n.stop, roundabout: n.roundabout, outline: Float32Array.from(n.outline),
   }));
   const decks: GeoDeck[] = net.edges.filter((e) => e.deck).map((e) => ({ roadId: e.road.id, edge: e.id, name: e.name, layer: e.layer, centre: centreOf(net, e), halfWidth: e.hw }));
-  const deckIdx = buildDeckIndex(net, [...water.walkDecks, ...pierDecks]);
   const omitted = doc.roads.filter((r) => OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`)).map((r) => ({
     roadId: r.id, name: r.name ?? '', reason: 'K St underpass beneath Washington Circle: not rendered (ramps would need >15% grades between the split nodes and the ring); remove from the graph',
   }));
 
   // ---------------------------------------------------------------- queries (no allocation)
-  const heightAt = (x: number, z: number) => ras.heightAt(x, z);
+  /**
+   * The ground (not decks) under (x, z): the highest walking-surface collider there, or with y the highest one at
+   * most a level step above y (under a footbridge you stand on the towpath). The raster where no collider covers the
+   * point (inside buildings, open water).
+   */
+  const groundAt = (x: number, z: number, y?: number) => {
+    const h = surf.at(x, z, y === undefined ? Infinity : y + TUNING.map.levelStep);
+    return h === h ? h : ras.heightAt(x, z);
+  };
+  const heightAt = (x: number, z: number) => groundAt(x, z);
   const surface = (x: number, z: number, y: number | undefined, walk: boolean) => {
-    const g = ras.heightAt(x, z);
+    const g = groundAt(x, z, y);
     let best = g, bd = y === undefined ? -g : Math.abs(g - y);
     deckIdx.query(x, z, walk, (hDeck) => {
       const d = y === undefined ? -hDeck : Math.abs(hDeck - y);
@@ -294,7 +350,25 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     return best;
   };
   const roadSurfaceAt = (x: number, z: number, y?: number) => surface(x, z, y, false);
-  const walkSurfaceAt = (x: number, z: number, y?: number) => surface(x, z, y, true);
+  /**
+   * The walking surface under something at height y (the highest one without y): ground, a deck or a pier, from the
+   * colliders themselves where they are triangles (the analytic deck profiles put Key Bridge's carriageway a kerb
+   * high and the freeway up to 0.4 m off).
+   */
+  let pierBest = 0, pierD = 0, pierY: number | undefined;
+  const pierVisit = (h: number) => { const d = pierY === undefined ? -h : Math.abs(h - pierY); if (d < pierD) { pierD = d; pierBest = h; } };
+  const walkSurfaceAt = (x: number, z: number, y?: number) => {
+    const ceil = y === undefined ? Infinity : y + TUNING.map.levelStep;
+    const ge = surf.at(x, z, ceil), g = ge === ge ? ge : ras.heightAt(x, z);
+    pierBest = g; pierD = y === undefined ? -g : Math.abs(g - y); pierY = y;
+    const dk = deckSurf.at(x, z, ceil);
+    if (dk === dk) pierVisit(dk);
+    // no deck triangle and no ground near the height asked about (Key Bridge running off the map edge over the river):
+    // the deck profiles (at a bridge's end at grade the ground is right there, and the profiles are a kerb off)
+    if (dk !== dk && (ge !== ge || (y !== undefined && ge < y - TUNING.map.levelStep))) deckIdx.query(x, z, true, pierVisit);
+    else pierIdx.query(x, z, true, pierVisit);
+    return pierBest;
+  };
   const isRoad = (x: number, z: number) => (ras.kindAt(x, z) & K.ROAD) !== 0;
   const isBlocked = (x: number, z: number) => {
     const k = ras.kindAt(x, z);
@@ -348,9 +422,13 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     water: { meshes: water.meshes, update: water.update },
     update, setQuality, quality,
     omitted,
-    audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops },
+    audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops, stoopInfo: bld.stoopInfo },
     droppedBuildings: dropped,
-    stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris },
+    stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris, surfaceTris: surf.count },
+    solidTags: phys.tags,
+    solidRecorder: chunks.rec,
+    stairs: stairs.map((st) => ({ pts: st.pts, w: st.w, L: st.L, name: st.name, h: st.h, flights: st.flights })),
+    footbridges: water.walkDecks.map((d) => ({ pts: d.pts, h: d.h, hw: d.hw })),
     root,
   };
   setQuality(quality);
@@ -583,14 +661,14 @@ function exportEdge(net: RoadNet, e: REdge): GeoRoadPoly {
  * cover the carriageway plus a sidewalk only on the sides that have one (raised by the kerb), so a query beside a
  * deck that has no sidewalk on that side falls through to the ground below.
  */
-function buildDeckIndex(net: RoadNet, walkDecks: { pts: Pt[]; hw: number; h: number[] }[]) {
+function buildDeckIndex(net: RoadNet | null, walkDecks: { pts: Pt[]; hw: number; h: number[] }[]) {
   // flat arrays per segment: ax, az, bx, bz, ha, hb, carriageway half width, left extent, right extent, walkOnly
   const N = 10;
   const S: number[] = [];
   const grid = new SegGrid(16);
   const kerb = G.kerbHeight;
-  for (const e of net.edges) {
-    if (!e.deck) continue;
+  for (const e of net?.edges ?? []) {
+    if (!e.deck || !net) continue;
     const X = sections(e, e.trimA, e.L - e.trimB);
     for (let i = 1; i < X.length; i++) {
       const sm = (X[i - 1].s + X[i].s) / 2;

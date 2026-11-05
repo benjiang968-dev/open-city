@@ -4,7 +4,7 @@
 import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, lerp } from './geoDoc';
-import { lin, shade, type PhysChunks, type RenderChunks } from './meshKit';
+import { Holes, lin, shade, type PhysChunks, type RenderChunks } from './meshKit';
 import { pointAtS, type REdge, type RoadNet } from './roadNet';
 import { sections } from './roadMesh';
 import { B, K, type GeoRaster } from './terrain';
@@ -27,6 +27,8 @@ const COL = {
   rail: lin(0x2b2e31),
 };
 const PARAPET_T = 0.38; // m thick
+const STAIR_RISER = 0.17; // m: drawn riser height on stair flights
+const STAIR_INNER = 1.08; // the walls' inner faces stand this many half-widths from a stair's centre line
 const LAMP_SPACING = 32; // m along bridge sidewalks
 
 export interface StairPlan {
@@ -64,9 +66,10 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const ix1 = q.x + q.rx * (outer - PARAPET_T) * side, iz1 = q.z + q.rz * (outer - PARAPET_T) * side;
         const mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2;
         const buf = chunks.buf('ground', mx, mz);
-        const pb = phys.ground(mx, mz);
+        const pb = phys.trimesh(mx, mz, 'parapet');
         const nx = ((p.rx + q.rx) / 2) * side, nz = ((p.rz + q.rz) / 2) * side;
         const H = G.parapetHeight;
+        chunks.tag('parapet');
         buf.wall(ix0, iz0, ix1, iz1, hp, hp + H, hq, hq + H, shade(pCol, 0.94), -nx, -nz);
         buf.wall(ox0, oz0, ox1, oz1, hp - 0.2, hp + H, hq - 0.2, hq + H, pCol, nx, nz);
         buf.quad(ix0, hp + H, iz0, ox0, hp + H, oz0, ox1, hq + H, oz1, ix1, hq + H, iz1, COL.coping, 0, 1, 0);
@@ -76,6 +79,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         if (style === 'steel') {
           // girder fascia below the deck
           const th = G.deckThickness + 0.3;
+          chunks.tag('overhead'); // girder fascia under the freeway deck
           buf.wall(ox0 + nx * 0.05, oz0 + nz * 0.05, ox1 + nx * 0.05, oz1 + nz * 0.05, hp - base - th - 0.5, hp - base - 0.25, hq - base - th - 0.5, hq - base - 0.25, COL.steel, nx, nz);
         }
       }
@@ -101,8 +105,10 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
       const g = Math.min(ras.heightAt(ax, az), ras.heightAt(bx, bz), ras.heightAt(q.x, q.z)) - 1.5;
       if (y - g < 0.3) continue;
       const buf = chunks.buf('ground', q.x, q.z);
+      chunks.tag('bridgePier');
       buf.wall(ax, az, bx, bz, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), -q.ux * dir, -q.uz * dir);
       buf.wall(ax, az, bx, bz, g, y + 0.05, g, y + 0.05, shade(pCol, 0.85), q.ux * dir, q.uz * dir);
+      phys.trimesh(q.x, q.z, 'bridgePier').quad(ax, g, az, bx, g, bz, bx, y + 0.05, bz, ax, y + 0.05, az);
     }
     // ---- supports
     if (style === 'short') continue;
@@ -151,10 +157,12 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const y = net.profAt(e, s) - th;
         const g = Math.min(groundAt(q.x, q.z), groundAt(q.x - q.uz * W2, q.z + q.ux * W2), groundAt(q.x + q.uz * W2, q.z - q.ux * W2)) - 0.6;
         const buf = chunks.buf('ground', q.x, q.z);
+        chunks.tag('bridgePier');
         buf.obox(q.x, g, q.z, 2.2, W2 + 0.6, y, q.ux, q.uz, shade(pCol, 0.9), shade(pCol, 0.85));
         // cutwater noses
         buf.obox(q.x, g, q.z, 2.6, W2 + 1.4, Math.min(y, g + 4), q.ux, q.uz, shade(pCol, 0.8));
-        phys.box(q.x, (g + y) / 2, q.z, 2.2, (y - g) / 2, W2 + 0.6, q.ux, q.uz);
+        phys.box(q.x, (g + y) / 2, q.z, 2.2, (y - g) / 2, W2 + 0.6, q.ux, q.uz, 'bridgePier');
+        phys.box(q.x, g + Math.min(y - g, 4) / 2, q.z, 2.6, Math.min(y - g, 4) / 2, W2 + 1.4, q.ux, q.uz, 'bridgePier');
       }
       for (let i = 1; i < sup.length; i++) {
         const sa = sup[i - 1] + (i > 1 ? 2.2 : 0), sb = sup[i] - (i < sup.length - 1 ? 2.2 : 0);
@@ -176,12 +184,17 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
           const cur = [q.x - q.uz * W2, q.z + q.ux * W2, q.x + q.uz * W2, q.z - q.ux * W2, ya2, deckB, q.x, q.z];
           if (prev) {
             const buf = chunks.buf('ground', (prev[6] + cur[6]) / 2, (prev[7] + cur[7]) / 2);
+            chunks.tag('bridgePier');
             // intrados (underside of the arch)
             buf.quad(prev[0], prev[4], prev[1], prev[2], prev[4], prev[3], cur[2], cur[4], cur[3], cur[0], cur[4], cur[1], shade(pCol, 0.78), 0, -1, 0);
+            // the arch is solid: its underside and both spandrel faces collide (people walk under Key Bridge)
+            const pa = phys.trimesh((prev[6] + cur[6]) / 2, (prev[7] + cur[7]) / 2, 'bridgePier');
+            pa.quad(prev[0], prev[4], prev[1], prev[2], prev[4], prev[3], cur[2], cur[4], cur[3], cur[0], cur[4], cur[1]);
             // spandrel walls both sides
             for (const sd of [0, 2]) {
               const nx = sd === 0 ? -q.uz : q.uz, nz = sd === 0 ? q.ux : -q.ux;
               buf.wall(prev[sd], prev[sd + 1], cur[sd], cur[sd + 1], prev[4], prev[5], cur[4], cur[5], pCol, nx, nz);
+              pa.quad(prev[sd], prev[4], prev[sd + 1], cur[sd], cur[4], cur[sd + 1], cur[sd], cur[5], cur[sd + 1], prev[sd], prev[5], prev[sd + 1]);
             }
           }
           prev = cur;
@@ -197,13 +210,16 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
         const off = colOff;
         const cap = style === 'steel' ? COL.steel : COL.concreteDark;
         const buf = chunks.buf('ground', q.x, q.z);
+        chunks.tag('column');
         for (const sd of [-1, 1]) {
           const cx = q.x + rx * off * sd, cz = q.z + rz * off * sd;
           const g = groundAt(cx, cz) - 0.4;
           if (style === 'steel') buf.obox(cx, g, cz, 0.45, 0.45, y - 0.9, q.ux, q.uz, COL.steel, COL.steelDark);
           else buf.cyl(cx, g, cz, 0.75, 0.7, y - 0.9 - g, 10, COL.concrete);
-          phys.cylinder(cx, g, cz, style === 'steel' ? 0.62 : 0.75, y - 0.9 - g);
+          if (style === 'steel') phys.box(cx, (g + y - 0.9) / 2, cz, 0.45, (y - 0.9 - g) / 2, 0.45, q.ux, q.uz, 'column');
+          else phys.cylinder(cx, g, cz, 0.75, y - 0.9 - g, 'column');
         }
+        chunks.tag('overhead'); // cap beam under the deck
         buf.obox(q.x, y - 1.0, q.z, 0.8, off + 0.9, y, q.ux, q.uz, cap, shade(cap, 0.9));
       }
     }
@@ -213,23 +229,53 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
 
 // ======================================================================================================
 /** Stairs: steep flights with landings (the Exorcist Steps) or a single flight (canal steps); ramp into the raster. */
-export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster): StairPlan[] {
+export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number, z: number) => number): StairPlan[] {
   const plans: StairPlan[] = [];
   for (const f of doc.footways) {
     if (f.kind !== 'steps' || f.pts.length < 2) continue;
-    const pts = f.pts.map((p) => [p[0], p[1]] as Pt);
+    const trim = trimOutOfRoads(f.pts.map((p) => [p[0], p[1]] as Pt), ras);
+    if (!trim) continue;
+    let pts = trim.pts;
     const cum = [0];
-    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-    const L = cum[cum.length - 1];
+    const measure = () => { cum.length = 1; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return cum[cum.length - 1]; };
+    let L = measure();
     const big = !!f.name;
-    const ha = ras.workAt(pts[0][0], pts[0][1]), hb = ras.workAt(pts[pts.length - 1][0], pts[pts.length - 1][1]);
+    // an end cut back to a sidewalk meets that sidewalk's own surface: the raster a metre into the street (at the cut
+    // itself the raster blends into the bank)
+    const endY = (p: Pt, q: Pt, cut: boolean) => {
+      if (!cut) return ras.workAt(p[0], p[1]);
+      const dx = p[0] - q[0], dz = p[1] - q[1], l = Math.hypot(dx, dz) || 1;
+      const y = ras.workAt(p[0] + (dx / l) * 1.0, p[1] + (dz / l) * 1.0);
+      return y === y ? y : streetY(p[0], p[1]);
+    };
+    let ha = endY(pts[0], pts[1], trim.cutA), hb = endY(pts[pts.length - 1], pts[pts.length - 2], trim.cutB);
+    const nFlights = big ? 3 : 1;
+    const landing = big ? 2.4 : 0;
+    // a stair cut back to a sidewalk can be too short for its rise: its foot moves out along the stair line (onto the
+    // towpath) so no flight is steeper than TUNING.geo.stairMaxSlope
+    {
+      const need = Math.abs(hb - ha) / G.stairMaxSlope + landing * (nFlights - 1) + 1;
+      if (L < need) {
+        let ext = Math.min(need - L, G.stairMaxExtend);
+        const low = ha <= hb ? 0 : pts.length - 1, nb = ha <= hb ? 1 : pts.length - 2;
+        const dx = pts[low][0] - pts[nb][0], dz = pts[low][1] - pts[nb][1], dl = Math.hypot(dx, dz) || 1;
+        // never out into water or a carriageway
+        const bad = (e: number) => { const x = pts[low][0] + (dx / dl) * (e + 0.5), z = pts[low][1] + (dz / dl) * (e + 0.5); return (ras.kindAt(x, z) & (K.WATER | K.ROAD)) !== 0 || ras.bandAt(x, z) === B.ROAD; };
+        while (ext > 0 && bad(ext)) ext -= 0.25;
+        ext = Math.max(0, ext);
+        const foot: Pt = [pts[low][0] + (dx / dl) * ext, pts[low][1] + (dz / dl) * ext];
+        pts = low === 0 ? [foot, ...pts.slice(1)] : [...pts.slice(0, -1), foot];
+        L = measure();
+        if (low === 0) ha = ras.workAt(foot[0], foot[1]); else hb = ras.workAt(foot[0], foot[1]);
+      }
+    }
     // flights: rise at ~32 degrees, starting at the low end (so the steps rise straight from the street)
     const lowFirst = ha <= hb;
     const h0 = Math.min(ha, hb), h1 = Math.max(ha, hb);
     const rise = h1 - h0;
+    // what is left of a stair cut back out of the carriageways can be a single step: then it is just a path
+    if (rise < G.stairMinRise) continue;
     const slope = 0.62;
-    const nFlights = big ? 3 : 1;
-    const landing = big ? 2.4 : 0;
     const run = rise / slope;
     const total = Math.min(L - 1, run + landing * (nFlights - 1));
     const startS = big ? 0.6 : Math.max(0.3, (L - total) / 2);
@@ -240,12 +286,18 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster): StairPlan[] {
       flights.push([s, s + fr]);
       s += fr + landing;
     }
-    // ramp profile measured from the low end
+    // ramp profile measured from the low end. On a flight the ramp runs half a riser above the line through the
+    // risers' feet (so it cuts through the middle of each drawn tread: feet sink or float at most half a riser),
+    // capped at the flight's top; the half-riser lip at the foot of each flight is under the character's autostep.
+    const slopeK = rise / Math.max(0.01, flights.reduce((t, q) => t + q[1] - q[0], 0));
+    const lip = STAIR_RISER / 2;
     const hLow = (u: number) => {
       let h = h0;
       for (const [a, b] of flights) {
         if (u <= a) break;
-        h += (Math.min(u, b) - a) * (rise / Math.max(0.01, flights.reduce((t, q) => t + q[1] - q[0], 0)));
+        const top = h + (b - a) * slopeK;
+        h += (Math.min(u, b) - a) * slopeK;
+        if (u < b) return Math.min(h1, top, h + lip);
       }
       return Math.min(h1, h);
     };
@@ -268,7 +320,41 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster): StairPlan[] {
   return plans;
 }
 
-export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks) {
+/** Stairwells: each stair's footprint (to the inside of its walls) is cut out of the terrain and the sidewalks. */
+export function stairHoles(plans: StairPlan[]): Holes {
+  const H = new Holes();
+  for (const st of plans) {
+    const hw = (st.w / 2) * STAIR_INNER;
+    for (let i = 1; i < st.pts.length; i++) {
+      const a = st.pts[i - 1], b = st.pts[i];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L < 0.05) continue;
+      const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L, rx = -uz * hw, rz = ux * hw;
+      // at a bend the hole runs on past the joint (as the walking surface does, buildStairs); at the stair's two ends
+      // it stops exactly where the ramp stops (running on there left a slit down to the safety floor)
+      const e0 = jointExt(st.pts, i - 1, hw), e1 = jointExt(st.pts, i, hw);
+      const ax = a[0] - ux * e0, az = a[1] - uz * e0, bx = b[0] + ux * e1, bz = b[1] + uz * e1;
+      H.add([ax - rx, az - rz, bx - rx, bz - rz, bx + rx, bz + rz, ax + rx, az + rz]);
+    }
+  }
+  return H;
+}
+
+/**
+ * How far a stair segment's walking surface and stairwell run on past an interior joint of the stair line (pts[j],
+ * 0 < j < last): far enough to close the wedge on the outside of the bend between the two segments' rectangles (half
+ * width hw), plus a 5 cm overlap. 0 at the stair's ends.
+ */
+function jointExt(pts: Pt[], j: number, hw: number): number {
+  if (j <= 0 || j >= pts.length - 1) return 0;
+  const ax = pts[j][0] - pts[j - 1][0], az = pts[j][1] - pts[j - 1][1], bx = pts[j + 1][0] - pts[j][0], bz = pts[j + 1][1] - pts[j][1];
+  const la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
+  if (la < 1e-6 || lb < 1e-6) return 0.05;
+  const turn = Math.acos(clamp((ax * bx + az * bz) / (la * lb), -1, 1));
+  return 0.05 + hw * Math.tan(Math.min(turn, 1.2) / 2);
+}
+
+export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks, ras: GeoRaster) {
   for (const st of plans) {
     const { pts, cum, w } = st;
     const big = !!st.name;
@@ -278,28 +364,58 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
       const segL = cum[i] - cum[i - 1];
       if (segL < 0.05) continue;
       const ux = (b[0] - a[0]) / segL, uz = (b[1] - a[1]) / segL;
-      const rx = -uz * (w / 2), rz = ux * (w / 2);
+      // the walking surface reaches the walls (the stairwell is cut out to their inner faces)
+      const rx = -uz * (w / 2) * STAIR_INNER, rz = ux * (w / 2) * STAIR_INNER;
       const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
       const buf = chunks.buf('ground', mx, mz);
-      const pb = phys.ground(mx, mz);
+      const pb = phys.trimesh(mx, mz, 'stair');
+      const pw = phys.trimesh(mx, mz, 'stairWall');
+      // at a bend, the first and last pieces of the segment run on past the joint (see jointExt; the stairwell does too)
+      const hwIn = (w / 2) * STAIR_INNER;
+      const eA = jointExt(pts, i - 1, hwIn), eB = jointExt(pts, i, hwIn);
       // sample the ramp every 0.5 m: physics = smooth ramp; visuals = steps on flights, flat on landings
       const n = Math.max(1, Math.ceil(segL / 0.5));
       for (let k = 0; k < n; k++) {
         const s0 = cum[i - 1] + (segL * k) / n, s1 = cum[i - 1] + (segL * (k + 1)) / n;
-        const p0x = a[0] + ux * (s0 - cum[i - 1]), p0z = a[1] + uz * (s0 - cum[i - 1]);
-        const p1x = a[0] + ux * (s1 - cum[i - 1]), p1z = a[1] + uz * (s1 - cum[i - 1]);
+        const x0 = k === 0 ? eA : 0, x1 = k === n - 1 ? eB : 0;
+        const p0x = a[0] + ux * (s0 - cum[i - 1] - x0), p0z = a[1] + uz * (s0 - cum[i - 1] - x0);
+        const p1x = a[0] + ux * (s1 - cum[i - 1] + x1), p1z = a[1] + uz * (s1 - cum[i - 1] + x1);
         const h0 = st.h(s0), h1 = st.h(s1);
         pb.quad(p0x - rx, h0, p0z - rz, p0x + rx, h0, p0z + rz, p1x + rx, h1, p1z + rz, p1x - rx, h1, p1z - rz);
-        // side walls (render + physics) keep people on the stair, once it has risen above its foot: on the flat
-        // run-in at the bottom they stood across the towpath under every street bridge and blocked it
-        if (Math.max(h0, h1) < hLow + G.stairWallFrom) continue;
+        // landings and the flat run-in / run-out: paved like the treads (only the flights get steps)
+        chunks.tag('stair');
+        let f0 = s0;
+        for (const [fa, fb] of [...st.flights, [Infinity, Infinity] as [number, number]]) {
+          const g0 = f0, g1 = Math.min(s1, fa);
+          if (g1 - g0 > 0.01) {
+            const r0 = g0 === s0 ? x0 : 0, r1 = g1 === s1 ? x1 : 0;
+            const q0x = a[0] + ux * (g0 - cum[i - 1] - r0), q0z = a[1] + uz * (g0 - cum[i - 1] - r0);
+            const q1x = a[0] + ux * (g1 - cum[i - 1] + r1), q1z = a[1] + uz * (g1 - cum[i - 1] + r1);
+            const y0 = st.h(g0), y1 = st.h(g1);
+            buf.quad(q0x - rx, y0, q0z - rz, q0x + rx, y0, q0z + rz, q1x + rx, y1, q1z + rz, q1x - rx, y1, q1z - rz, shade(COL.step, 0.97), 0, 1, 0);
+          }
+          f0 = Math.max(f0, fb);
+          if (f0 >= s1) break;
+        }
+        // side walls (render + physics) keep people on the stair, once it has risen above its foot (on the flat
+        // run-in at the bottom they stood across the towpath under every street bridge and blocked it), or where the
+        // ground beside it is higher than the stair (a stairwell cut into a bank or below a sidewalk)
+        chunks.tag('stairWall');
         for (const sd of [-1, 1]) {
-          const wx0 = p0x + rx * sd * 1.08, wz0 = p0z + rz * sd * 1.08, wx1 = p1x + rx * sd * 1.08, wz1 = p1z + rz * sd * 1.08;
-          const top = big ? 1.1 : 0.9;
-          buf.wall(wx0, wz0, wx1, wz1, h0 - 1.6, h0 + top, h1 - 1.6, h1 + top, COL.stone, -rx * sd, -rz * sd);
-          buf.wall(wx0 + rx * sd * 0.3, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, wz1 + rz * sd * 0.3, h0 - 1.6, h0 + top, h1 - 1.6, h1 + top, COL.stoneDark, rx * sd, rz * sd);
-          buf.quad(wx0, h0 + top, wz0, wx0 + rx * sd * 0.3, h0 + top, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, h1 + top, wz1 + rz * sd * 0.3, wx1, h1 + top, wz1, COL.coping, 0, 1, 0);
-          pb.quad(wx0, h0 - 0.5, wz0, wx1, h1 - 0.5, wz1, wx1, h1 + top, wz1, wx0, h0 + top, wz0);
+          const wx0 = p0x + rx * sd, wz0 = p0z + rz * sd, wx1 = p1x + rx * sd, wz1 = p1z + rz * sd;
+          const out = (x: number, z: number) => ras.heightAt(x + rx * sd * 0.3 + (rx / Math.hypot(rx, rz)) * sd * 0.45, z + rz * sd * 0.3 + (rz / Math.hypot(rx, rz)) * sd * 0.45);
+          if (Math.max(h0, h1) < hLow + G.stairWallFrom && Math.max(out(wx0, wz0) - h0, out(wx1, wz1) - h1) < 0.25) continue;
+          // the walls stand a balustrade's height above the ground outside
+          const base = big ? 1.1 : 0.9;
+          const t0 = Math.max(h0 + base, out(wx0, wz0) + 0.9) - h0, t1 = Math.max(h1 + base, out(wx1, wz1) + 0.9) - h1;
+          const top = t0; // (named for the physics below)
+          buf.wall(wx0, wz0, wx1, wz1, h0 - 1.6, h0 + t0, h1 - 1.6, h1 + t1, COL.stone, -rx * sd, -rz * sd);
+          buf.wall(wx0 + rx * sd * 0.3, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, wz1 + rz * sd * 0.3, h0 - 1.6, h0 + t0, h1 - 1.6, h1 + t1, COL.stoneDark, rx * sd, rz * sd);
+          buf.quad(wx0, h0 + t0, wz0, wx0 + rx * sd * 0.3, h0 + t0, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, h1 + t1, wz1 + rz * sd * 0.3, wx1, h1 + t1, wz1, COL.coping, 0, 1, 0);
+          const ox0 = wx0 + rx * sd * 0.3, oz0 = wz0 + rz * sd * 0.3, ox1 = wx1 + rx * sd * 0.3, oz1 = wz1 + rz * sd * 0.3;
+          pw.quad(wx0, h0 - 0.5, wz0, wx1, h1 - 0.5, wz1, wx1, h1 + t1, wz1, wx0, h0 + top, wz0);
+          pw.quad(wx0, h0 + top, wz0, ox0, h0 + top, oz0, ox1, h1 + t1, oz1, wx1, h1 + t1, wz1);
+          pw.quad(ox0, h0 - 1.6, oz0, ox1, h1 - 1.6, oz1, ox1, h1 + t1, oz1, ox0, h0 + top, oz0);
         }
       }
       // steps: risers of ~0.17 m on the flights
@@ -307,7 +423,8 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         const a0 = Math.max(fa, cum[i - 1]), b0 = Math.min(fb, cum[i]);
         if (b0 - a0 < 0.1) continue;
         const hA = st.h(a0), hB = st.h(b0);
-        const nSteps = Math.max(1, Math.round(Math.abs(hB - hA) / 0.17));
+        const nSteps = Math.max(1, Math.round(Math.abs(hB - hA) / STAIR_RISER));
+        chunks.tag('stair');
         for (let k = 0; k < nSteps; k++) {
           const t0 = k / nSteps, t1 = (k + 1) / nSteps;
           const s0 = lerp(a0, b0, t0), s1 = lerp(a0, b0, t1);
@@ -323,6 +440,7 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         }
         // a hand rail down the middle of the big stair
         if (big) {
+          chunks.tag('railing');
           const x0 = a[0] + ux * (a0 - cum[i - 1]), z0 = a[1] + uz * (a0 - cum[i - 1]);
           const x1 = a[0] + ux * (b0 - cum[i - 1]), z1 = a[1] + uz * (b0 - cum[i - 1]);
           buf.quad(x0 - uz * 0.03, hA + 0.95, z0 + ux * 0.03, x0 + uz * 0.03, hA + 0.95, z0 - ux * 0.03, x1 + uz * 0.03, hB + 0.95, z1 - ux * 0.03, x1 - uz * 0.03, hB + 0.95, z1 + ux * 0.03, COL.rail, 0, 1, 0);
@@ -330,11 +448,42 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
             const px = lerp(x0, x1, t), pz = lerp(z0, z1, t), py = lerp(hA, hB, t);
             buf.obox(px, py, pz, 0.04, 0.04, py + 0.95, ux, uz, COL.rail);
           }
+          // a thin slab under the rail keeps people to one side of it
+          const hr: number[] = [];
+          for (const o of [-0.04, 0.04]) hr.push(x0 - uz * o, hA + 0.95, z0 + ux * o, x1 - uz * o, hB + 0.95, z1 + ux * o, x1 - uz * o, hB - 0.2, z1 + ux * o, x0 - uz * o, hA - 0.2, z0 + ux * o);
+          phys.hull(hr, 'railing');
         }
       }
     }
   }
   void clamp;
+}
+
+/**
+ * The part of a stair line outside carriageways: the map data sometimes runs a stair's end into the street it climbs
+ * to, and the road surface then covered the top steps (a 1 m ledge over the ramp). The stair ends at the road's edge
+ * (sidewalks over it are cut away: stairHoles). Null if nothing is left.
+ */
+function trimOutOfRoads(pts: Pt[], ras: GeoRaster): { pts: Pt[]; cutA: boolean; cutB: boolean } | null {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const L = cum[cum.length - 1];
+  const at = (s: number): Pt => {
+    let i = 1;
+    while (i < cum.length - 1 && cum[i] < s) i++;
+    const t = (s - cum[i - 1]) / (cum[i] - cum[i - 1] || 1);
+    return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
+  };
+  const road = (s: number) => { const p = at(s); return ras.bandAt(p[0], p[1]) === B.ROAD || (ras.kindAt(p[0], p[1]) & K.ROAD) !== 0; };
+  let s0 = 0, s1 = L;
+  while (s0 < L && road(s0)) s0 += 0.25;
+  while (s1 > s0 && road(s1)) s1 -= 0.25;
+  if (s1 - s0 < 2) return null;
+  if (s0 === 0 && s1 === L) return { pts, cutA: false, cutB: false };
+  const out: Pt[] = [at(s0)];
+  for (let i = 1; i < pts.length - 1; i++) if (cum[i] > s0 && cum[i] < s1) out.push(pts[i]);
+  out.push(at(s1));
+  return { pts: out, cutA: s0 > 0, cutB: s1 < L };
 }
 
 export type { REdge };

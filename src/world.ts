@@ -29,6 +29,7 @@ import type { CrowdRender } from './systems/crowdRender';
 import type { PedDensityState } from './systems/pedDensity';
 import type { ParkedState } from './systems/parkedCars';
 import type { HurtFxState } from './systems/hurtFx';
+import type { PhysDebugState } from './systems/physicsDebug';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -71,6 +72,8 @@ export interface World {
   combat: CombatState;
   crowd: CrowdRender;
   hurtFx: HurtFxState;
+  /** F4 collision view (physicsDebug.ts). */
+  physDebug: PhysDebugState;
   /** Crowd density from the map: busyness per walk link, the target around the player (pedDensity.ts). */
   pedDensity: PedDensityState;
   /** Every parked car on the map, the pool of drivable stand-ins near you, the instanced parked-car meshes. */
