@@ -628,6 +628,8 @@ const RAW = {
     waterClearance: 0.3, // metres: a spot whose surface is less than this above water is in the water
     edgeProbe: 0.35, // metres out on four sides where the surface is checked (and must be free of buildings)...
     maxStep: 0.12, // ...and must be within this of the item's (no deck, pier, kerb or stair edge right beside it)
+    dropProbe: 0.6, // metres out on four sides where the surface may not drop or rise by more than maxDrop (map.heightAt is
+    maxDrop: 0.5, // the collider surface now, so a sharp ledge just past edgeProbe is no longer smoothed into it)
     wallProbe: 0.2, // metres: an item this close to a wall (or the map edge) on any side would stick into it: left out
     // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
     // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
