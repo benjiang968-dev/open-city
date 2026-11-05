@@ -515,12 +515,14 @@ Mat roofTar(vec2 uv) {
   float fv = fract(uv.y * 4.0);
   float lap = 1.0 - smoothstep(0.0, 0.01, fv * uSize.y / 4.0);
   vec4 pt = worley(uv, cyc(1.2), 233, 1.0);
-  float pat = step(0.85, pt.z) * smoothstep(0.42, 0.38, pt.x);
+  // repair patches: rare and faint, because any distinct shape repeats with the 4 m tile (dark ones read as a lattice of
+  // oval pairs across every flat roof from the air)
+  float pat = step(0.92, pt.z) * smoothstep(0.42, 0.3, pt.x);
   vec3 alb = srgb(vec3(0.45, 0.44, 0.42)) * (0.8 + 0.35 * speck) * (0.85 + 0.3 * base);
-  alb = mix(alb, srgb(vec3(0.16, 0.16, 0.17)), pat * 0.8);
+  alb = mix(alb, srgb(vec3(0.3, 0.3, 0.3)), pat * 0.25);
   alb *= 1.0 - 0.3 * lap;
-  float h = speck * 0.0015 + base * 0.003 + lap * 0.002 + pat * 0.001;
-  return Mat(alb, 1.0, h, 0.92 - pat * 0.3, 1.0);
+  float h = speck * 0.0015 + base * 0.003 + lap * 0.002 + pat * 0.0005;
+  return Mat(alb, 1.0, h, 0.92 - pat * 0.1, 1.0);
 }
 
 Mat canvas(vec2 uv) {
