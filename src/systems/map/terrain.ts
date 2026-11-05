@@ -3,7 +3,7 @@
 // (grass, earth, river banks, the Rock Creek valley) with matching static physics.
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, pointInPoly } from './geoDoc';
-import { lin, mixc, shade, type RenderChunks, type PhysChunks } from './meshKit';
+import { lin, mixc, shade, type Holes, type RenderChunks, type PhysChunks } from './meshKit';
 
 /** Kind flags stored per 1 m cell. */
 export const K = {
@@ -295,7 +295,7 @@ export class GeoRaster {
 }
 
 /** Terrain mesh on a 5 m grid sampled from the raster (dipped under bands, holes in the canal corridor). */
-export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, cemetery: Pt[] | null, waterLevelAt: (x: number, z: number) => number) {
+export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, cemetery: Pt[] | null, waterLevelAt: (x: number, z: number) => number, holes: Holes) {
   const st = MESH_STEP;
   const nx = Math.floor((ras.nx - 1) / st) + 1, nz = Math.floor((ras.nz - 1) / st) + 1;
   const n = nx * nz;
@@ -393,8 +393,12 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
         const [a, b, c, ax, az, bx, bz, cx, cz] = T[t];
         if (!keepTri(a, b, c, i, j, t, flip)) continue;
         kept[(j * (nx - 1) + i) * 2 + t] = 1;
-        emitSmooth(buf, ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz, vc[a], vc[b], vc[c], nx, vy, st, ras.x0, ras.z0);
-        pb.tri(ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz);
+        // stairwells cut out (render and physics): pieces keep the triangle's smooth shading and vertex colours
+        holes.clipTri(ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz, (v) => {
+          const col = (k: number) => mixc(mixc(vc[a], vc[b], v[k + 4] / Math.max(1e-6, v[k + 3] + v[k + 4])), vc[c], v[k + 5]);
+          emitSmooth(buf, v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14], col(0), col(6), col(12), nx, vy, st, ras.x0, ras.z0);
+          pb.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14]);
+        });
         tris++;
       }
     }

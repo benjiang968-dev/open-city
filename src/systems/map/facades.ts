@@ -156,6 +156,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
 
   let extraTris = 0;
   const stoopBottoms: number[] = [];
+  /** per stoop: door x, z on the wall line, landing height, outward normal x, z, reach of the last step, foot height, steps */
+  const stoopInfo: number[] = [];
   for (const b of doc.buildings) {
     if (skip.has(b.id)) continue;
     const key = special.get(b.id) ?? '';
@@ -360,6 +362,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           }
           stoopColliders(px, pz, w, y0, stepH, outN, Math.min(gy, yMin) - 0.3);
           stoopBottoms.push(px + w.nx * outN, y0 - stoop, pz + w.nz * outN, 0);
+          stoopInfo.push(px, pz, y0, w.nx, w.nz, outN, y0 - stoop, steps);
           }
           // door canopy
           chunks.tag('overhead');
@@ -744,6 +747,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   return {
     extraTris,
     stoops: Float32Array.from(stoopBottoms),
+    stoopInfo: Float32Array.from(stoopInfo),
     update(_cam: THREE.Vector3, _detail: number) { /* chunk LOD is handled by the world */ },
   };
 }

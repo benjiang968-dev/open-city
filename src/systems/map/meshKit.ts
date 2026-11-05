@@ -355,3 +355,116 @@ export class PhysChunks {
     return total;
   }
 }
+
+// ------------------------------------------------------------------------------------------ holes (stairwells)
+/**
+ * Convex footprints (x, z rings) cut out of the ground and sidewalk geometry, render and physics alike: a stair that
+ * climbs a bank or runs down beside a street sits in its own stairwell instead of under the pavement.
+ */
+export class Holes {
+  readonly polys: Float32Array[] = [];
+  private readonly box: number[] = [];
+  add(ring: ArrayLike<number>) {
+    const p = Float32Array.from(ring);
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); z0 = Math.min(z0, p[i + 1]); z1 = Math.max(z1, p[i + 1]); }
+    // counter-clockwise (x right, z down) so the outward side of edge i is to its right
+    let a = 0;
+    for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) a += (p[j] - p[i]) * (p[j + 1] + p[i + 1]);
+    if (a < 0) { const r = new Float32Array(p.length); for (let i = 0; i < p.length; i += 2) { r[i] = p[p.length - 2 - i]; r[i + 1] = p[p.length - 1 - i]; } this.polys.push(r); }
+    else this.polys.push(p);
+    this.box.push(x0, z0, x1, z1);
+  }
+  get empty() { return this.polys.length === 0; }
+  /** Index of a hole whose box overlaps [x0, x1] x [z0, z1], from `from` on; -1 if none. */
+  next(x0: number, z0: number, x1: number, z1: number, from: number): number {
+    const B = this.box;
+    for (let i = from; i < this.polys.length; i++) if (B[i * 4] < x1 && B[i * 4 + 2] > x0 && B[i * 4 + 1] < z1 && B[i * 4 + 3] > z0) return i;
+    return -1;
+  }
+  inside(x: number, z: number): boolean {
+    for (let i = this.next(x, z, x, z, 0); i >= 0; i = this.next(x, z, x, z, i + 1)) if (inConvex(this.polys[i], x, z)) return true;
+    return false;
+  }
+  /**
+   * Triangle a-b-c minus every hole: calls emit with the pieces (x, y, z triples and barycentric weights of a, b, c
+   * per vertex, so colours or normals can be interpolated). No hole near: emits the triangle itself.
+   */
+  clipTri(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number,
+    emit: (v: number[]) => void) {
+    const x0 = Math.min(ax, bx, cx), x1 = Math.max(ax, bx, cx), z0 = Math.min(az, bz, cz), z1 = Math.max(az, bz, cz);
+    // vertex: x, y, z, wa, wb, wc
+    let pieces: number[][][] = [[[ax, ay, az, 1, 0, 0], [bx, by, bz, 0, 1, 0], [cx, cy, cz, 0, 0, 1]]];
+    for (let h = this.next(x0, z0, x1, z1, 0); h >= 0; h = this.next(x0, z0, x1, z1, h + 1)) {
+      const P = this.polys[h];
+      const out: number[][][] = [];
+      for (let piece of pieces) {
+        for (let i = 0; i < P.length && piece.length >= 3; i += 2) {
+          const j = (i + 2) % P.length;
+          const ex = P[j] - P[i], ez = P[j + 1] - P[i + 1];
+          // outward normal of a counter-clockwise ring in x-right z-down: (ez, -ex) points out... test with a sign
+          const side = (v: number[]) => (v[0] - P[i]) * ez - (v[2] - P[i + 1]) * ex;
+          const outside = clipPoly(piece, side, 1);
+          if (outside.length >= 3) out.push(outside);
+          piece = clipPoly(piece, side, -1);
+        }
+        // what is left of the piece is inside the hole: dropped
+      }
+      pieces = out;
+      if (!pieces.length) return;
+    }
+    for (const p of pieces) for (let k = 1; k + 1 < p.length; k++) emit([...p[0], ...p[k], ...p[k + 1]]);
+  }
+}
+function inConvex(P: Float32Array, x: number, z: number): boolean {
+  for (let i = 0; i < P.length; i += 2) {
+    const j = (i + 2) % P.length;
+    if ((x - P[i]) * (P[j + 1] - P[i + 1]) - (z - P[i + 1]) * (P[j] - P[i]) > 0) return false;
+  }
+  return true;
+}
+/** Part of a convex polygon where sign * side(v) > 0 (strictly outside / inside one edge line). */
+function clipPoly(poly: number[][], side: (v: number[]) => number, sign: number): number[][] {
+  const out: number[][] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const fa = side(a) * sign, fb = side(b) * sign;
+    if (fa > 0) out.push(a);
+    if ((fa > 0) !== (fb > 0) && fa !== fb) {
+      const t = fa / (fa - fb);
+      out.push(a.map((va, k) => va + (b[k] - va) * t));
+    }
+  }
+  return out;
+}
+
+/** Pieces [t0, t1] of segment a-b (t from 0 at a to 1 at b) that lie outside every hole. */
+export function segmentOutsideHoles(holes: Holes, ax: number, az: number, bx: number, bz: number): [number, number][] {
+  let parts: [number, number][] = [[0, 1]];
+  const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), z0 = Math.min(az, bz), z1 = Math.max(az, bz);
+  for (let h = holes.next(x0, z0, x1, z1, 0); h >= 0; h = holes.next(x0, z0, x1, z1, h + 1)) {
+    const P = holes.polys[h];
+    // the part of the line inside the convex hole: intersect the half-planes
+    let tin = -Infinity, tout = Infinity;
+    for (let i = 0; i < P.length; i += 2) {
+      const j = (i + 2) % P.length;
+      const ex = P[j] - P[i], ez = P[j + 1] - P[i + 1];
+      const fa = (ax - P[i]) * ez - (az - P[i + 1]) * ex, fb = (bx - P[i]) * ez - (bz - P[i + 1]) * ex; // <= 0 inside
+      if (fa > 0 && fb > 0) { tin = Infinity; break; }
+      if (fa > 0 || fb > 0) {
+        const t = fa / (fa - fb);
+        if (fa > 0) tin = Math.max(tin, t); else tout = Math.min(tout, t);
+      }
+    }
+    const a = Math.max(0, tin), b = Math.min(1, tout);
+    if (!(b > a)) continue;
+    const next: [number, number][] = [];
+    for (const [p, q] of parts) {
+      if (b <= p || a >= q) { next.push([p, q]); continue; }
+      if (a > p) next.push([p, a]);
+      if (b < q) next.push([b, q]);
+    }
+    parts = next;
+  }
+  return parts;
+}

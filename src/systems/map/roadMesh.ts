@@ -5,7 +5,7 @@
 import { TUNING } from '../../tuning';
 import type { GeoDoc } from './geoDoc';
 import { SegGrid, clamp, pointInPoly } from './geoDoc';
-import { lin, shade, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
+import { lin, shade, type Holes, type MeshBuf, type PhysBuf, type PhysChunks, type RenderChunks } from './meshKit';
 import { pointAtS, type REdge, type RNode, type RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
 
@@ -184,7 +184,16 @@ export interface NetMeshInfo {
   crossings: { x: number; z: number; ux: number; uz: number; len: number; edge: number }[];
 }
 
-export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, phys: PhysChunks): NetMeshInfo {
+export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, phys: PhysChunks, holes: Holes): NetMeshInfo {
+  /** A sidewalk quad (render and physics) with the stairwells cut out of it. */
+  const paveQuad = (buf: MeshBuf, pb: PhysBuf, ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, dx: number, dy: number, dz: number, col: number) => {
+    for (const [p, q, r] of [[[ax, ay, az], [bx, by, bz], [cx, cy, cz]], [[ax, ay, az], [cx, cy, cz], [dx, dy, dz]]]) {
+      holes.clipTri(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2], (v) => {
+        buf.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14], col, 0, 1, 0);
+        pb.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14]);
+      });
+    }
+  };
   const kerb = G.kerbHeight, sw = G.sidewalkWidth;
   const edgeGrid = new SegGrid(32);
   for (const e of net.edges) edgeGrid.addLine(e.pts, e.id, e.hw + sw + 2);
@@ -221,12 +230,13 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
           const ik = dropped ? 0.01 : kerb;
           if (!dropped) {
             chunks.tag('kerb');
-            buf.wall(ex0, ez0, ex1, ez1, hp, hp + kerb, hq, hq + kerb, COL.kerb, -nx, -nz);
-            pb.quad(ex0, hp, ez0, ex1, hq, ez1, ex1, hq + kerb, ez1, ex0, hp + kerb, ez0);
+            if (!holes.inside((ex0 + ex1) / 2, (ez0 + ez1) / 2)) {
+              buf.wall(ex0, ez0, ex1, ez1, hp, hp + kerb, hq, hq + kerb, COL.kerb, -nx, -nz);
+              pb.quad(ex0, hp, ez0, ex1, hq, ez1, ex1, hq + kerb, ez1, ex0, hp + kerb, ez0);
+            }
           }
           const wc = walkCol(mx);
-          buf.quad(ex0, hp + ik, ez0, ox0, hp + kerb, oz0, ox1, hq + kerb, oz1, ex1, hq + ik, ez1, wc, 0, 1, 0);
-          pb.quad(ex0, hp + ik, ez0, ox0, hp + kerb, oz0, ox1, hq + kerb, oz1, ex1, hq + ik, ez1);
+          paveQuad(buf, pb, ex0, hp + ik, ez0, ox0, hp + kerb, oz0, ox1, hq + kerb, oz1, ex1, hq + ik, ez1, wc);
           chunks.tag('decor'); // skirts hang below a surface whose edge collides
           if (!e.deck) buf.wall(ox0, oz0, ox1, oz1, hp + kerb - SKIRT, hp + kerb, hq + kerb - SKIRT, hq + kerb, COL.skirt, nx, nz);
           if (side < 0) outerL = hw + sw; else outerR = hw + sw;
@@ -295,8 +305,7 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
       chunks.tag('kerb');
       buf.wall(ax, az, bx, bz, y0, y1, y0, y1, COL.kerb, -hx, -hz);
       pb.quad(ax, y0, az, bx, y0, bz, bx, y1, bz, ax, y1, az);
-      buf.quad(ax, y1, az, aox, y1, aoz, box, y1, boz, bx, y1, bz, wc, 0, 1, 0);
-      pb.quad(ax, y1, az, aox, y1, aoz, box, y1, boz, bx, y1, bz);
+      paveQuad(buf, pb, ax, y1, az, aox, y1, aoz, box, y1, boz, bx, y1, bz, wc);
       chunks.tag('decor');
       buf.wall(aox, aoz, box, boz, y1 - SKIRT, y1, y1 - SKIRT, y1, COL.skirt, hx, hz);
     }

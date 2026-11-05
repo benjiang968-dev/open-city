@@ -15,7 +15,7 @@ import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
 import { buildRoadNet, OMITTED_ROADS, solveProfiles, type REdge, type RoadNet } from './roadNet';
 import { buildNetMeshes, drapeRibbon, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
-import { buildBridges, buildStairs, rasterizeStairs } from './bridges';
+import { buildBridges, buildStairs, rasterizeStairs, stairHoles } from './bridges';
 import { buildBuildings, createFacadeMaterial, rasterizeBuildings } from './facades';
 import { buildMonuments } from './monuments';
 import { buildLots, rasterizeLots, type GeoLot } from './lots';
@@ -135,7 +135,7 @@ export interface GeoWorld {
   /** Ways left out of the render (to be removed from the graph): data ids with a reason. */
   omitted: { roadId: string; name: string; reason: string }[];
   /** Review data (optional): footprints cut back from streets / dropped, stoop bottoms (x, y, z, 0 per stoop). */
-  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array };
+  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array; stoopInfo: Float32Array };
   /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
   droppedBuildings: ReadonlySet<string>;
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number };
@@ -143,6 +143,8 @@ export interface GeoWorld {
   solidTags: SolidTags;
   /** Audit mode only: what was drawn, with kinds (null when off). */
   solidRecorder: SolidRecorder | null;
+  /** Footbridges over the canal: centre line points and deck heights (tests). */
+  footbridges: { pts: Pt[]; h: number[]; hw: number }[];
   /** Stair plans (centre line, width, ramp height profile) for tests and the audit. */
   stairs: { pts: Pt[]; w: number; L: number; name: string | null; h: (s: number) => number; flights: [number, number][] }[];
   root: THREE.Group;
@@ -206,6 +208,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     return best;
   };
   const stairs = rasterizeStairs(doc, ras, streetY);
+  const holes = stairHoles(stairs); // stairwells: cut out of the terrain and the sidewalks
   ras.blendBands();
   ras.finish();
   phase('raster');
@@ -216,20 +219,20 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   const phys = new PhysChunks(R, physics, PHYS_CHUNK);
   const cemetery = doc.parks.find((p) => p.kind === 'landuse=cemetery')?.pts ?? null;
   chunks.tag('ground');
-  const terrainTris = buildTerrainMesh(ras, chunks, phys, cemetery, (x, z) => W.levelAt(x, z));
+  const terrainTris = buildTerrainMesh(ras, chunks, phys, cemetery, (x, z) => W.levelAt(x, z), holes);
   buildOuterLand(ras, chunks, b, (x) => riverNorthZ(W.river, x));
   phase('terrainMesh');
-  const info = buildNetMeshes(net, doc, chunks, phys);
+  const info = buildNetMeshes(net, doc, chunks, phys, holes);
   drawPaths(doc, ras, chunks);
   phase('roadMesh');
   chunks.tag('ground');
-  const water = buildWater(doc, W, ras, chunks, phys, root);
+  const water = buildWater(doc, W, ras, chunks, phys, root, holes);
   chunks.tag('ground');
   const pierDecks = buildPlazaAndPiers(doc, ras, chunks, phys, plazaH, W);
   phase('water');
   chunks.tag('ground');
   const bridges = buildBridges(net, doc, ras, W, chunks, phys);
-  buildStairs(stairs, chunks, phys);
+  buildStairs(stairs, chunks, phys, ras);
   chunks.tag('ground');
   const lotStalls = buildLots(lotInfo, ras, chunks, phys);
   phase('bridges');
@@ -378,12 +381,13 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     water: { meshes: water.meshes, update: water.update },
     update, setQuality, quality,
     omitted,
-    audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops },
+    audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops, stoopInfo: bld.stoopInfo },
     droppedBuildings: dropped,
     stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris },
     solidTags: phys.tags,
     solidRecorder: chunks.rec,
     stairs: stairs.map((st) => ({ pts: st.pts, w: st.w, L: st.L, name: st.name, h: st.h, flights: st.flights })),
+    footbridges: water.walkDecks.map((d) => ({ pts: d.pts, h: d.h, hw: d.hw })),
     root,
   };
   setQuality(quality);

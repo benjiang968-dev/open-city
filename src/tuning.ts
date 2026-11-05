@@ -94,6 +94,15 @@ const RAW = {
     backSpeedFactor: 0.55, // walking backwards is this fraction of walk speed
     capsuleRadius: 0.35,
     capsuleHalfHeight: 0.55,
+    // character controller (Rapier KinematicCharacterController); stairs are smooth ramps under the treads, kerbs and
+    // stoop lips are steps
+    ccOffset: 0.04, // m: skin gap the controller keeps from surfaces
+    autostepHeight: 0.45, // m: tallest step walked up without jumping (kerbs 0.15, stair-flight lips 0.09, lot kerbs 0.15)
+    autostepMinWidth: 0.2, // m: free depth needed on top of a step to take it
+    snapToGround: 0.45, // m: walking down steps and ramps keeps the feet on the ground within this drop
+    maxSlopeDeg: 52, // steepest slope (degrees) walked up: stair ramps are 32 to 47 degrees, terrain banks steeper stop you
+    minSlopeSlideDeg: 52, // standing still, the character only slides down slopes steeper than this (no creep on stairs)
+    groundedVy: -1, // m/s pressed into the ground while standing (keeps contact on slopes and decks)
     enterCarRange: 3.6, // metres from the car to be able to press E
     talkRange: 3.0, // metres to an NPC to be able to press E and talk
     rescuePavementStep: 2.0, // metres past the kerb onto the pavement where you land after swimming back to shore
@@ -637,6 +646,8 @@ const RAW = {
     freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
     deckThickness: 1.1, // m from deck surface to its underside
     stairWallFrom: 0.2, // m: a stair's side walls start once it has risen this far above its foot (the flat run-in stays open)
+    stairMaxSlope: 0.84, // rise per run: no stair flight is steeper than this (40 degrees; the character climbs up to TUNING.player.maxSlopeDeg)
+    stairMaxExtend: 3.5, // m: how far a stair's foot may move out along its line to stay under stairMaxSlope
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)
     riverLevel: 0, // m: the Potomac surface (map heights are metres above the river)

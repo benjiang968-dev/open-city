@@ -4,7 +4,7 @@
 import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, lerp } from './geoDoc';
-import { lin, shade, type PhysChunks, type RenderChunks } from './meshKit';
+import { Holes, lin, shade, type PhysChunks, type RenderChunks } from './meshKit';
 import { pointAtS, type REdge, type RoadNet } from './roadNet';
 import { sections } from './roadMesh';
 import { B, K, type GeoRaster } from './terrain';
@@ -28,6 +28,7 @@ const COL = {
 };
 const PARAPET_T = 0.38; // m thick
 const STAIR_RISER = 0.17; // m: drawn riser height on stair flights
+const STAIR_INNER = 1.08; // the walls' inner faces stand this many half-widths from a stair's centre line
 const LAMP_SPACING = 32; // m along bridge sidewalks
 
 export interface StairPlan {
@@ -234,21 +235,45 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number
     if (f.kind !== 'steps' || f.pts.length < 2) continue;
     const trim = trimOutOfRoads(f.pts.map((p) => [p[0], p[1]] as Pt), ras);
     if (!trim) continue;
-    const pts = trim.pts;
+    let pts = trim.pts;
     const cum = [0];
-    for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
-    const L = cum[cum.length - 1];
+    const measure = () => { cum.length = 1; for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1])); return cum[cum.length - 1]; };
+    let L = measure();
     const big = !!f.name;
-    // an end cut back to a sidewalk meets that sidewalk's own surface (the raster blends there)
-    const endY = (p: Pt, cut: boolean) => { const y = cut ? streetY(p[0], p[1]) : NaN; return y === y ? y : ras.workAt(p[0], p[1]); };
-    const ha = endY(pts[0], trim.cutA), hb = endY(pts[pts.length - 1], trim.cutB);
+    // an end cut back to a sidewalk meets that sidewalk's own surface: the raster a metre into the street (at the cut
+    // itself the raster blends into the bank)
+    const endY = (p: Pt, q: Pt, cut: boolean) => {
+      if (!cut) return ras.workAt(p[0], p[1]);
+      const dx = p[0] - q[0], dz = p[1] - q[1], l = Math.hypot(dx, dz) || 1;
+      const y = ras.workAt(p[0] + (dx / l) * 1.0, p[1] + (dz / l) * 1.0);
+      return y === y ? y : streetY(p[0], p[1]);
+    };
+    let ha = endY(pts[0], pts[1], trim.cutA), hb = endY(pts[pts.length - 1], pts[pts.length - 2], trim.cutB);
+    const nFlights = big ? 3 : 1;
+    const landing = big ? 2.4 : 0;
+    // a stair cut back to a sidewalk can be too short for its rise: its foot moves out along the stair line (onto the
+    // towpath) so no flight is steeper than TUNING.geo.stairMaxSlope
+    {
+      const need = Math.abs(hb - ha) / G.stairMaxSlope + landing * (nFlights - 1) + 1;
+      if (L < need) {
+        let ext = Math.min(need - L, G.stairMaxExtend);
+        const low = ha <= hb ? 0 : pts.length - 1, nb = ha <= hb ? 1 : pts.length - 2;
+        const dx = pts[low][0] - pts[nb][0], dz = pts[low][1] - pts[nb][1], dl = Math.hypot(dx, dz) || 1;
+        // never out into water or a carriageway
+        const bad = (e: number) => { const x = pts[low][0] + (dx / dl) * (e + 0.5), z = pts[low][1] + (dz / dl) * (e + 0.5); return (ras.kindAt(x, z) & (K.WATER | K.ROAD)) !== 0 || ras.bandAt(x, z) === B.ROAD; };
+        while (ext > 0 && bad(ext)) ext -= 0.25;
+        ext = Math.max(0, ext);
+        const foot: Pt = [pts[low][0] + (dx / dl) * ext, pts[low][1] + (dz / dl) * ext];
+        pts = low === 0 ? [foot, ...pts.slice(1)] : [...pts.slice(0, -1), foot];
+        L = measure();
+        if (low === 0) ha = ras.workAt(foot[0], foot[1]); else hb = ras.workAt(foot[0], foot[1]);
+      }
+    }
     // flights: rise at ~32 degrees, starting at the low end (so the steps rise straight from the street)
     const lowFirst = ha <= hb;
     const h0 = Math.min(ha, hb), h1 = Math.max(ha, hb);
     const rise = h1 - h0;
     const slope = 0.62;
-    const nFlights = big ? 3 : 1;
-    const landing = big ? 2.4 : 0;
     const run = rise / slope;
     const total = Math.min(L - 1, run + landing * (nFlights - 1));
     const startS = big ? 0.6 : Math.max(0.3, (L - total) / 2);
@@ -293,7 +318,24 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number
   return plans;
 }
 
-export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks) {
+/** Stairwells: each stair's footprint (to the inside of its walls) is cut out of the terrain and the sidewalks. */
+export function stairHoles(plans: StairPlan[]): Holes {
+  const H = new Holes();
+  for (const st of plans) {
+    const hw = (st.w / 2) * STAIR_INNER;
+    for (let i = 1; i < st.pts.length; i++) {
+      const a = st.pts[i - 1], b = st.pts[i];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L < 0.05) continue;
+      const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L, rx = -uz * hw, rz = ux * hw;
+      const ex = ux * 0.05, ez = uz * 0.05; // overlap the next segment a little
+      H.add([a[0] - ex - rx, a[1] - ez - rz, b[0] + ex - rx, b[1] + ez - rz, b[0] + ex + rx, b[1] + ez + rz, a[0] - ex + rx, a[1] - ez + rz]);
+    }
+  }
+  return H;
+}
+
+export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks, ras: GeoRaster) {
   for (const st of plans) {
     const { pts, cum, w } = st;
     const big = !!st.name;
@@ -303,7 +345,8 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
       const segL = cum[i] - cum[i - 1];
       if (segL < 0.05) continue;
       const ux = (b[0] - a[0]) / segL, uz = (b[1] - a[1]) / segL;
-      const rx = -uz * (w / 2), rz = ux * (w / 2);
+      // the walking surface reaches the walls (the stairwell is cut out to their inner faces)
+      const rx = -uz * (w / 2) * STAIR_INNER, rz = ux * (w / 2) * STAIR_INNER;
       const mx = (a[0] + b[0]) / 2, mz = (a[1] + b[1]) / 2;
       const buf = chunks.buf('ground', mx, mz);
       const pb = phys.trimesh(mx, mz, 'stair');
@@ -330,20 +373,25 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
           f0 = Math.max(f0, fb);
           if (f0 >= s1) break;
         }
-        // side walls (render + physics) keep people on the stair, once it has risen above its foot: on the flat
-        // run-in at the bottom they stood across the towpath under every street bridge and blocked it
-        if (Math.max(h0, h1) < hLow + G.stairWallFrom) continue;
+        // side walls (render + physics) keep people on the stair, once it has risen above its foot (on the flat
+        // run-in at the bottom they stood across the towpath under every street bridge and blocked it), or where the
+        // ground beside it is higher than the stair (a stairwell cut into a bank or below a sidewalk)
         chunks.tag('stairWall');
         for (const sd of [-1, 1]) {
-          const wx0 = p0x + rx * sd * 1.08, wz0 = p0z + rz * sd * 1.08, wx1 = p1x + rx * sd * 1.08, wz1 = p1z + rz * sd * 1.08;
-          const top = big ? 1.1 : 0.9;
-          buf.wall(wx0, wz0, wx1, wz1, h0 - 1.6, h0 + top, h1 - 1.6, h1 + top, COL.stone, -rx * sd, -rz * sd);
-          buf.wall(wx0 + rx * sd * 0.3, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, wz1 + rz * sd * 0.3, h0 - 1.6, h0 + top, h1 - 1.6, h1 + top, COL.stoneDark, rx * sd, rz * sd);
-          buf.quad(wx0, h0 + top, wz0, wx0 + rx * sd * 0.3, h0 + top, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, h1 + top, wz1 + rz * sd * 0.3, wx1, h1 + top, wz1, COL.coping, 0, 1, 0);
+          const wx0 = p0x + rx * sd, wz0 = p0z + rz * sd, wx1 = p1x + rx * sd, wz1 = p1z + rz * sd;
+          const out = (x: number, z: number) => ras.heightAt(x + rx * sd * 0.3 + (rx / Math.hypot(rx, rz)) * sd * 0.45, z + rz * sd * 0.3 + (rz / Math.hypot(rx, rz)) * sd * 0.45);
+          if (Math.max(h0, h1) < hLow + G.stairWallFrom && Math.max(out(wx0, wz0) - h0, out(wx1, wz1) - h1) < 0.25) continue;
+          // the walls stand a balustrade's height above the ground outside
+          const base = big ? 1.1 : 0.9;
+          const t0 = Math.max(h0 + base, out(wx0, wz0) + 0.9) - h0, t1 = Math.max(h1 + base, out(wx1, wz1) + 0.9) - h1;
+          const top = t0; // (named for the physics below)
+          buf.wall(wx0, wz0, wx1, wz1, h0 - 1.6, h0 + t0, h1 - 1.6, h1 + t1, COL.stone, -rx * sd, -rz * sd);
+          buf.wall(wx0 + rx * sd * 0.3, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, wz1 + rz * sd * 0.3, h0 - 1.6, h0 + t0, h1 - 1.6, h1 + t1, COL.stoneDark, rx * sd, rz * sd);
+          buf.quad(wx0, h0 + t0, wz0, wx0 + rx * sd * 0.3, h0 + t0, wz0 + rz * sd * 0.3, wx1 + rx * sd * 0.3, h1 + t1, wz1 + rz * sd * 0.3, wx1, h1 + t1, wz1, COL.coping, 0, 1, 0);
           const ox0 = wx0 + rx * sd * 0.3, oz0 = wz0 + rz * sd * 0.3, ox1 = wx1 + rx * sd * 0.3, oz1 = wz1 + rz * sd * 0.3;
-          pw.quad(wx0, h0 - 0.5, wz0, wx1, h1 - 0.5, wz1, wx1, h1 + top, wz1, wx0, h0 + top, wz0);
-          pw.quad(wx0, h0 + top, wz0, ox0, h0 + top, oz0, ox1, h1 + top, oz1, wx1, h1 + top, wz1);
-          pw.quad(ox0, h0 - 1.6, oz0, ox1, h1 - 1.6, oz1, ox1, h1 + top, oz1, ox0, h0 + top, oz0);
+          pw.quad(wx0, h0 - 0.5, wz0, wx1, h1 - 0.5, wz1, wx1, h1 + t1, wz1, wx0, h0 + top, wz0);
+          pw.quad(wx0, h0 + top, wz0, ox0, h0 + top, oz0, ox1, h1 + t1, oz1, wx1, h1 + t1, wz1);
+          pw.quad(ox0, h0 - 1.6, oz0, ox1, h1 - 1.6, oz1, ox1, h1 + t1, oz1, ox0, h0 + top, oz0);
         }
       }
       // steps: risers of ~0.17 m on the flights
@@ -388,9 +436,9 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
 }
 
 /**
- * The part of a stair line outside streets: the map data sometimes runs a stair's end into the street it climbs to,
- * and the carriageway or sidewalk surface (drawn and collided at the street's own height) then covered the top steps
- * (a 1 m ledge over the ramp). The stair now ends where the sidewalk starts. Null if nothing is left.
+ * The part of a stair line outside carriageways: the map data sometimes runs a stair's end into the street it climbs
+ * to, and the road surface then covered the top steps (a 1 m ledge over the ramp). The stair ends at the road's edge
+ * (sidewalks over it are cut away: stairHoles). Null if nothing is left.
  */
 function trimOutOfRoads(pts: Pt[], ras: GeoRaster): { pts: Pt[]; cutA: boolean; cutB: boolean } | null {
   const cum = [0];
@@ -402,7 +450,7 @@ function trimOutOfRoads(pts: Pt[], ras: GeoRaster): { pts: Pt[]; cutA: boolean; 
     const t = (s - cum[i - 1]) / (cum[i] - cum[i - 1] || 1);
     return [pts[i - 1][0] + (pts[i][0] - pts[i - 1][0]) * t, pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * t];
   };
-  const road = (s: number) => { const p = at(s); const b = ras.bandAt(p[0], p[1]); return b === B.ROAD || b === B.FLAT; };
+  const road = (s: number) => { const p = at(s); return ras.bandAt(p[0], p[1]) === B.ROAD || (ras.kindAt(p[0], p[1]) & K.ROAD) !== 0; };
   let s0 = 0, s1 = L;
   while (s0 < L && road(s0)) s0 += 0.25;
   while (s1 > s0 && road(s1)) s1 -= 0.25;

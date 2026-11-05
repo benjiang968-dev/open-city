@@ -1843,3 +1843,407 @@ export async function physaudit(page) {
   console.log(lines.join('\n'));
   return { map: rep.map, colliders: rep.colliders, records: rep.records, totals: rep.totals, ms: rep.ms, pass: rep.totals.probeMismatches === 0 && rep.totals.surfaceMismatches === 0 };
 }
+
+/**
+ * Page helpers for the walking tests: the player is put at a start spot (the only teleport), then moved ONLY by held
+ * keys (W, A/D to turn, Space to jump) through the real game loop (window.__ocStep, 60 Hz). Each frame records the
+ * feet height against the static collider surface right under the player (a ray that ignores the player).
+ */
+function installWalkHelpers() {
+  const w = window.__oc, c = w.city, P = w.player, R = w.R;
+  const hh = P.collider.halfHeight(), rad = P.collider.radius();
+  const STATIC = (0xffff << 16) | 1; // query: every membership, filter = static colliders only
+  const ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+  const H = {};
+  H.kindName = (id) => ['untagged', 'ground', 'kerb', 'deck', 'parapet', 'stair', 'stairWall', 'stoop', 'stoopRail', 'building', 'tower', 'column', 'bridgePier', 'monument', 'railing', 'wall', 'canopy', 'pier', 'boat', 'lockGate', 'fountain', 'tree', 'lamp', 'signalPole', 'signPost', 'bench', 'busShelter', 'gravestone', 'container', 'kiosk', 'boundary'][id] ?? `#${id}`;
+  /** Static floor under (x, z) from y down: { y, kind } or null. */
+  H.floor = (x, y, z, max = 60) => {
+    ray.origin.x = x; ray.origin.y = y; ray.origin.z = z; ray.dir.x = 0; ray.dir.y = -1; ray.dir.z = 0;
+    const h = w.physics.castRay(ray, max, true, undefined, STATIC);
+    return h ? { y: y - h.timeOfImpact, kind: H.kindName(c.solidTags.get(h.collider.handle)), toi: h.timeOfImpact } : null;
+  };
+  /** Horizontal ray (static only): distance to the first hit and its kind, or null. */
+  H.cast = (x, y, z, dx, dz, max) => {
+    const l = Math.hypot(dx, dz) || 1;
+    ray.origin.x = x; ray.origin.y = y; ray.origin.z = z; ray.dir.x = dx / l; ray.dir.y = 0; ray.dir.z = dz / l;
+    const h = w.physics.castRay(ray, max, true, undefined, STATIC);
+    return h ? { d: h.timeOfImpact, kind: H.kindName(c.solidTags.get(h.collider.handle)) } : null;
+  };
+  H.feet = () => P.body.translation().y - hh - rad;
+  H.pos = () => P.body.translation();
+  /** Put the player standing at (x, z) on the floor under `from` (a physics ray), facing `facing`. */
+  H.put = (x, z, facing, from) => {
+    const f = H.floor(x, from, z, 80);
+    const y = (f ? f.y : c.heightAt(x, z)) + hh + rad + 0.03;
+    P.body.setTranslation({ x, y, z }, true);
+    P.body.setNextKinematicTranslation({ x, y, z });
+    P.vy = 0; P.facing = facing; P.knockT = 0;
+    w.input.keys.clear();
+    window.__ocStep(20); // settle (feet on the ground)
+    return H.feet();
+  };
+  /** Hold keys for `sec` seconds; returns per-run stats (max penetration below the static floor, path). */
+  H.hold = (keys, sec, onFrame) => {
+    for (const k of keys) w.input.keys.add(k);
+    let pen = -Infinity, airborneMax = 0, frames = Math.round(sec * 60), air = 0;
+    const p0 = H.pos();
+    for (let i = 0; i < frames; i++) {
+      window.__ocStep(1);
+      const t = H.pos(), fy = t.y - hh - rad;
+      const f = H.floor(t.x, fy + 0.6, t.z);
+      if (f) pen = Math.max(pen, f.y - fy); // > 0: feet below the static surface under the player
+      if (!P.grounded) air++; else { airborneMax = Math.max(airborneMax, air); air = 0; }
+      if (onFrame && onFrame(i / 60, t, fy) === false) { frames = i + 1; break; }
+    }
+    for (const k of keys) w.input.keys.delete(k);
+    const p1 = H.pos();
+    return { pen: +pen.toFixed(3), moved: +Math.hypot(p1.x - p0.x, p1.z - p0.z).toFixed(2), seconds: +(frames / 60).toFixed(2), airborneFramesMax: Math.max(airborneMax, air) };
+  };
+  H.press = (key) => { w.input.pressed.add(key); };
+  /** Turn on the spot by holding A or D (tank controls) until facing `to` (radians). */
+  H.turnTo = (to) => {
+    const d = Math.atan2(Math.sin(to - P.facing), Math.cos(to - P.facing));
+    const key = d > 0 ? 'KeyA' : 'KeyD';
+    const frames = Math.round(Math.abs(d) / 3.0 * 60); // TUNING.player.turnSpeed = 3 rad/s
+    w.input.keys.add(key);
+    window.__ocStep(frames);
+    w.input.keys.delete(key);
+    P.facing = to; // remove the last fraction of a frame of turn
+  };
+  window.__wk = H;
+}
+
+/**
+ * Stairs and props on foot (Georgetown, or any map for the props part): walks up and down one instance of every
+ * stair type (the big landmark stair, canal steps, a footbridge, house stoops of several heights, the statue plinth
+ * by jumping, kerbs, a car park kerb, Key Bridge and the freeway deck) and into one instance of every solid prop
+ * kind, with held keys only. Asserts: feet never below the static surface (> 5 cm), the height gained matches the
+ * stair (10 cm), climbs finish in reasonable time, and props stop the player at their collider.
+ */
+export async function stairs(page) {
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
+  await page.evaluate(installWalkHelpers);
+  const out = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, P = w.player, H = window.__wk, geo = c.geo;
+    const res = { stairs: [], stoops: [], special: [], props: [], fails: [] };
+    const fail = (what) => res.fails.push(what);
+    const PEN = 0.05; // m: feet may not go deeper than this below the static surface
+    const along = (pts, s) => {
+      let acc = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const L = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+        if (s <= acc + L || i === pts.length - 1) {
+          const t = (s - acc) / L;
+          const ux = (pts[i][0] - pts[i - 1][0]) / L, uz = (pts[i][1] - pts[i - 1][1]) / L;
+          return { x: pts[i - 1][0] + ux * (s - acc), z: pts[i - 1][1] + uz * (s - acc), ux, uz, t };
+        }
+        acc += L;
+      }
+    };
+    const face = (ux, uz) => Math.atan2(ux, uz);
+    // ------------------------------------------------------------------ stairs (up, then down)
+    if (geo) {
+      const pick = geo.stairs.map((_s, i) => i); // every stair: the landmark stair, the canal steps, path stairs
+      for (const si of pick) {
+        const st = geo.stairs[si];
+        if (!st) continue;
+        const up = st.h(st.L) > st.h(0);
+        const sLow = up ? 0 : st.L, dir = up ? 1 : -1;
+        const lane = st.name ? st.w / 4 : 0; // the big stair has a hand rail down the middle
+        const a = along(st.pts, sLow - dir * 1.2);
+        const ox = -a.uz * lane, oz = a.ux * lane;
+        const hLow = st.h(sLow), hTop = st.h(up ? st.L : 0);
+        const feet0 = H.put(a.x + ox, a.z + oz, face(a.ux * dir, a.uz * dir), hLow + 2);
+        let reached = -1;
+        const upRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => {
+          if (reached < 0 && fy > hTop - 0.12) reached = t;
+          // stop a little past the top
+          const b = along(st.pts, up ? st.L + 1.2 : -1.2);
+          if (reached >= 0 && Math.hypot(p.x - b.x - ox, p.z - b.z - oz) < 0.6) return false;
+        });
+        const feetTop = H.feet();
+        H.turnTo(P.facing + Math.PI);
+        let back = -1;
+        const downRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => { if (back < 0 && fy < hLow + 0.12) back = t; if (back >= 0 && t > back + 0.4) return false; });
+        const feetEnd = H.feet();
+        const r = { stair: st.name ?? `steps #${si}`, L: +st.L.toFixed(1), rise: +(hTop - hLow).toFixed(2), feet0: +feet0.toFixed(2), feetTop: +feetTop.toFixed(2), climbSec: +reached.toFixed(2), descendSec: +back.toFixed(2), feetEnd: +feetEnd.toFixed(2), penUp: upRun.pen, penDown: downRun.pen };
+        res.stairs.push(r);
+        if (reached < 0) fail(`${r.stair}: never reached the top (feet ${r.feetTop} vs ${hTop.toFixed(2)})`);
+        else if (reached > (st.L + 2.4) / 4.2 * 1.6 + 1) fail(`${r.stair}: slow climb ${r.climbSec} s`);
+        if (back < 0) fail(`${r.stair}: never got back down (feet ${r.feetEnd} vs ${hLow.toFixed(2)})`);
+        if (Math.max(upRun.pen, downRun.pen) > PEN) fail(`${r.stair}: feet ${Math.max(upRun.pen, downRun.pen)} m below the surface`);
+      }
+      // standing still on a flight: no creeping, no jitter
+      {
+        const st = geo.stairs[0];
+        const f0 = st.flights[0];
+        const a = along(st.pts, (f0[0] + f0[1]) / 2);
+        H.put(a.x - a.uz * st.w / 4, a.z + a.ux * st.w / 4, face(a.ux, a.uz), st.h((f0[0] + f0[1]) / 2) + 1.5);
+        const p0 = H.pos(), y0 = H.feet();
+        let ymin = Infinity, ymax = -Infinity;
+        H.hold([], 3, (t, p, fy) => { ymin = Math.min(ymin, fy); ymax = Math.max(ymax, fy); });
+        const p1 = H.pos();
+        const creep = Math.hypot(p1.x - p0.x, p1.z - p0.z);
+        res.special.push({ test: 'stand still 3 s mid-flight', creep: +creep.toFixed(3), jitter: +(ymax - ymin).toFixed(3) });
+        if (creep > 0.05 || ymax - ymin > 0.03) fail(`standing on the stair: creep ${creep.toFixed(3)} m, jitter ${(ymax - ymin).toFixed(3)} m`);
+        void y0;
+      }
+      // ------------------------------------------------------------------ footbridge over the canal (arched deck)
+      {
+        const fb = geo.footbridges[0];
+        if (fb) {
+          const a = fb.pts[0], b = fb.pts[fb.pts.length - 1];
+          const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+          H.put(a[0] - ux * 0.6, a[1] - uz * 0.6, face(ux, uz), fb.h[0] + 0.8); // on the bank the bridge lands on
+          const top = Math.max(...fb.h);
+          let peak = -Infinity;
+          const run = H.hold(['KeyW'], (L + 3) / 4.2 + 1.5, (t, p, fy) => { peak = Math.max(peak, fy); });
+          const e = H.pos();
+          const crossed = (e.x - a[0]) * ux + (e.z - a[1]) * uz > L;
+          res.special.push({ test: 'footbridge', L: +L.toFixed(1), deckTop: +top.toFixed(2), feetPeak: +peak.toFixed(2), crossed, pen: run.pen });
+          if (!crossed) fail('footbridge: did not get across');
+          if (Math.abs(peak - top) > 0.15) fail(`footbridge: peak ${peak.toFixed(2)} vs deck ${top.toFixed(2)}`);
+          if (run.pen > PEN) fail(`footbridge: feet ${run.pen} below the deck`);
+        }
+      }
+      // ------------------------------------------------------------------ stoops of several heights (up to the door, down)
+      const S = geo.audit?.stoopInfo;
+      if (S) {
+        const want = [2, 3, 5, 7, 10];
+        for (const steps of want) {
+          let best = -1, bd = Infinity;
+          for (let i = 0; i < S.length; i += 8) {
+            if (S[i + 7] !== steps) continue;
+            const d = Math.hypot(S[i] - c.spawn.x, S[i + 1] - c.spawn.z);
+            // open pavement in front of the foot
+            const fx = S[i] + S[i + 3] * (S[i + 5] + 1.5), fz = S[i + 1] + S[i + 4] * (S[i + 5] + 1.5);
+            if (c.isBlocked(fx, fz) || c.isRoad(fx, fz)) continue;
+            if (d < bd) { bd = d; best = i; }
+          }
+          if (best < 0) continue;
+          const [dx, dz, y0, nx, nz, outN, gy] = Array.from(S.slice(best, best + 7));
+          const sx = dx + nx * (outN + 1.3), sz = dz + nz * (outN + 1.3);
+          const f0 = H.put(sx, sz, face(-nx, -nz), gy + 2);
+          let reachedT = -1;
+          const upRun = H.hold(['KeyW'], 3, (t, p, fy) => { if (reachedT < 0 && fy > y0 - 0.12) reachedT = t; });
+          const e = H.pos();
+          const wallGap = (e.x - dx) * nx + (e.z - dz) * nz; // distance of the capsule axis from the facade
+          const top = H.feet();
+          H.turnTo(P.facing + Math.PI);
+          let end = NaN;
+          const downRun = H.hold(['KeyW'], 2.5, (t, p, fy) => { if ((p.x - dx) * nx + (p.z - dz) * nz > outN + 0.6) { end = fy; return false; } });
+          const r = { steps, rise: +(y0 - gy).toFixed(2), feet0: +f0.toFixed(2), feetTop: +top.toFixed(2), landing: +y0.toFixed(2), climbSec: +reachedT.toFixed(2), wallGap: +wallGap.toFixed(2), feetEnd: +end.toFixed(2), pen: Math.max(upRun.pen, downRun.pen) };
+          res.stoops.push(r);
+          if (Math.abs(top - y0) > 0.12) fail(`stoop ${steps} steps: landing feet ${r.feetTop} vs ${r.landing}`);
+          if (wallGap < 0.3) fail(`stoop ${steps} steps: walked into the facade (gap ${r.wallGap})`);
+          if (r.pen > PEN) fail(`stoop ${steps} steps: feet ${r.pen} below the surface`);
+          if (Math.abs(end - gy) > 0.15) fail(`stoop ${steps} steps: back down at ${r.feetEnd} vs ${gy.toFixed(2)}`);
+          // sideways off the landing into the iron rail
+          if (steps >= 3) {
+            const ux = -nz, uz = nx;
+            H.put(dx + nx * 0.6, dz + nz * 0.6, face(ux, uz), y0 + 1.5);
+            const p0 = H.pos();
+            H.hold(['KeyW'], 1.2);
+            const p1 = H.pos();
+            const side = Math.abs((p1.x - dx) * ux + (p1.z - dz) * uz);
+            res.stoops.push({ steps, test: 'into the rail', sideOffset: +side.toFixed(2), feet: +H.feet().toFixed(2) });
+            if (side > 0.72 - 0.35 + 0.08) fail(`stoop ${steps} steps: walked through the rail (offset ${side.toFixed(2)})`);
+            void p0;
+          }
+        }
+      }
+    }
+    // ------------------------------------------------------------------ kerb: road to sidewalk and back
+    {
+      const k = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
+      c.kerbPoint(c.spawn.x, c.spawn.z, k);
+      const rx = -Math.cos(k.heading), rz = Math.sin(k.heading); // the pavement side
+      H.put(k.x, k.z, face(rx, rz), k.y + 2);
+      const f0 = H.feet();
+      const run = H.hold(['KeyW'], 1.2);
+      const f1 = H.feet();
+      H.turnTo(P.facing + Math.PI);
+      const back = H.hold(['KeyW'], 1.2);
+      const f2 = H.feet();
+      res.special.push({ test: 'kerb up and down', road: +f0.toFixed(2), sidewalk: +f1.toFixed(2), backOnRoad: +f2.toFixed(2), moved: run.moved, pen: Math.max(run.pen, back.pen) });
+      if (run.moved < 3) fail(`kerb: stuck at the kerb (moved ${run.moved} m)`);
+      if (f1 - f0 < 0.1) fail(`kerb: did not step up (${f0.toFixed(2)} -> ${f1.toFixed(2)})`);
+      if (Math.max(run.pen, back.pen) > PEN) fail('kerb: feet below the surface');
+    }
+    // ------------------------------------------------------------------ statue plinth: blocked, then jump up two tiers
+    {
+      let tier = null;
+      w.physics.colliders.forEach((col) => {
+        if (tier || H.kindName(c.solidTags.get(col.handle)) !== 'monument' || col.shapeType() !== 1) return;
+        const h = col.halfExtents();
+        if (Math.abs(h.x - 4.5) < 0.01 && Math.abs(h.z - 3.2) < 0.01) { const t = col.translation(); tier = { x: t.x, y: t.y + h.y, z: t.z }; }
+      });
+      if (tier) {
+        const y = tier.y - 0.5; // ground level at the plinth
+        H.put(tier.x, tier.z + 3.2 + 2.5, Math.PI, y + 2);
+        const blocked = H.hold(['KeyW'], 1.2);
+        const gap1 = H.pos().z - (tier.z + 3.2);
+        H.press('Space');
+        const j1 = H.hold(['KeyW'], 0.9);
+        const onTier1 = H.feet();
+        H.press('Space');
+        const j2 = H.hold(['KeyW'], 0.9);
+        const onTier2 = H.feet();
+        const j3 = H.hold(['KeyW'], 1.0);
+        res.special.push({ test: 'statue plinth', groundFeet: +y.toFixed(2), blockedGap: +gap1.toFixed(2), tier1: +(onTier1 - y).toFixed(2), tier2: +(onTier2 - y).toFixed(2), pen: Math.max(blocked.pen, j1.pen, j2.pen, j3.pen), stoppedByMarble: j3.moved < 0.6 });
+        if (gap1 < 0.35 - 0.08) fail(`plinth: walked into the first tier (gap ${gap1.toFixed(2)})`);
+        // one running jump lands on tier 1 (0.5 m) or, carried on by the run and the autostep, on tier 2 (1.0 m)
+        if (onTier1 - y < 0.4) fail(`plinth: jump onto tier 1 failed (${(onTier1 - y).toFixed(2)})`);
+        if (Math.abs(onTier2 - y - 1.0) > 0.1) fail(`plinth: not standing on tier 2 after two jumps (${(onTier2 - y).toFixed(2)})`);
+        if (!(j3.moved < 0.6)) fail('plinth: the marble block did not stop the player');
+      }
+    }
+    // ------------------------------------------------------------------ decks: Key Bridge sidewalk, the freeway carriageway
+    for (const [name, onSidewalk] of [['Key Bridge', true], ['Whitehurst Freeway', false]]) {
+      const e = c.roads.edges.find((q) => q.bridge && (q.name ?? '').includes(name) && q.len > 80);
+      if (!e) continue;
+      const lp = { x: 0, y: 0, z: 0, heading: 0 };
+      window.__ocMap.laneSample?.(e, e.len * 0.3, lp);
+      const off = onSidewalk ? e.halfWidth - e.offset + 1.5 : 0;
+      const sx = lp.x - Math.cos(lp.heading) * off, sz = lp.z + Math.sin(lp.heading) * off;
+      H.put(sx, sz, lp.heading, lp.y + 2.5);
+      const f0 = H.feet();
+      let minY = Infinity, maxDrop = 0;
+      const run = H.hold(['KeyW'], 8, (t, p, fy) => { minY = Math.min(minY, fy); const s = c.heightAt(p.x, p.z, fy + 0.5); maxDrop = Math.max(maxDrop, s - fy); });
+      const f1 = H.feet();
+      res.special.push({ test: `walk the ${name} deck`, start: +f0.toFixed(2), end: +f1.toFixed(2), minFeet: +minY.toFixed(2), deckAt: +lp.y.toFixed(2), moved: run.moved, pen: run.pen, belowDeck: +maxDrop.toFixed(3) });
+      if (run.pen > PEN || maxDrop > 0.3) fail(`${name}: feet below the deck`);
+      if (minY < lp.y - 3) fail(`${name}: fell off the deck`);
+      if (run.moved < 20) fail(`${name}: stuck on the deck (moved ${run.moved} m)`);
+    }
+    // ------------------------------------------------------------------ props: walk into one of each kind
+    {
+      const byKind = new Map();
+      w.physics.colliders.forEach((col) => {
+        const kn = H.kindName(c.solidTags.get(col.handle));
+        if (!['tree', 'lamp', 'signalPole', 'signPost', 'bench', 'busShelter', 'gravestone', 'fountain', 'lockGate', 'column', 'railing', 'boat', 'kiosk', 'container', 'monument', 'wall', 'building', 'stoopRail', 'tower'].includes(kn)) return;
+        if (col.shapeType() !== 1 && col.shapeType() !== 10) return; // primitives (their centre is meaningful)
+        const t = col.translation();
+        const d = Math.hypot(t.x - c.spawn.x, t.z - c.spawn.z);
+        let l = byKind.get(kn);
+        if (!l) byKind.set(kn, (l = []));
+        l.push({ col, d, x: t.x, z: t.z });
+      });
+      for (const [kn, list] of byKind) {
+        list.sort((a, b) => a.d - b.d);
+        let done = false;
+        for (const cand of list.slice(0, 60)) {
+          if (done) break;
+          for (let k = 0; k < 8 && !done; k++) {
+            const a = (k / 8) * Math.PI * 2;
+            const dx = Math.cos(a), dz = Math.sin(a);
+            // start 3 m out on open ground, nothing else between the start and the prop at knee height
+            const sx = cand.x + dx * 3, sz = cand.z + dz * 3;
+            if (c.isBlocked(sx, sz) || c.isWater(sx, sz)) continue;
+            const fl = H.floor(sx, c.heightAt(sx, sz, 1e3) + 3, sz);
+            if (!fl || fl.kind !== 'ground' && fl.kind !== 'pier' && fl.kind !== 'kerb') continue;
+            const knee = fl.y + 0.4;
+            const hit = H.cast(sx, knee, sz, -dx, -dz, 4);
+            if (!hit || hit.kind !== kn || hit.d > 3.2 || hit.d < 1.0) continue;
+            // the floor between must be walkable and level-ish
+            const mid = H.floor(sx - dx * hit.d * 0.5, fl.y + 1.5, sz - dz * hit.d * 0.5);
+            if (!mid || Math.abs(mid.y - fl.y) > 0.3) continue;
+            // how high the obstacle stands above that floor (a low one is stepped over or jumped on, not a wall)
+            const hx = sx - dx * (hit.d + 0.06), hz = sz - dz * (hit.d + 0.06);
+            const topHit = H.floor(hx, fl.y + 8, hz, 9);
+            const height = topHit ? topHit.y - fl.y : 0;
+            H.put(sx, sz, face(-dx, -dz), fl.y + 1.5);
+            // closest the capsule's axis gets to the prop's collider (at knee and chest height), minus its radius
+            let worst = Infinity;
+            const run = H.hold(['KeyW'], 1.5, (t, p, fy) => {
+              for (const hgt of [0.4, 1.2]) {
+                const pr = cand.col.projectPoint({ x: p.x, y: fy + hgt, z: p.z }, true);
+                const gap = pr.isInside ? -1 : Math.hypot(pr.point.x - p.x, pr.point.z - p.z) - 0.35;
+                if (gap < worst) worst = gap;
+              }
+            });
+            const r = { kind: kn, at: [+cand.x.toFixed(1), +cand.z.toFixed(1)], startGap: +(hit.d - 0.35).toFixed(2), obstacleHeight: +height.toFixed(2), closestGap: +worst.toFixed(3), moved: run.moved, pen: run.pen };
+            res.props.push(r);
+            if (height > 0.5 && worst < -0.06) fail(`${kn}: the capsule went ${(-worst).toFixed(2)} m into it at (${r.at})`);
+            done = true;
+          }
+        }
+        if (!done) res.props.push({ kind: kn, skipped: 'no clear approach found' });
+      }
+    }
+    w.input.keys.clear();
+    return res;
+  });
+  return { ...out, pass: out.fails.length === 0 };
+}
+
+/**
+ * Drops the player from 2 m at thousands of random points over the whole map (fixed sequence) and checks where the
+ * feet come to rest: on a surface within 5 cm of map.heightAt (props, stoops and decks are reported separately:
+ * landing on a bench is right), never below it, never inside a building. SAMPLES=<n> (default 2000).
+ */
+export async function fallthrough(page) {
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
+  await page.evaluate(installWalkHelpers);
+  const n = Number(process.env.SAMPLES ?? 2000);
+  return page.evaluate((n) => {
+    const w = window.__oc, c = w.city, P = w.player, H = window.__wk, R = w.R;
+    const hh = P.collider.halfHeight(), rad = P.collider.radius();
+    const b = c.bounds;
+    let seed = 987654;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, above: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
+    const examples = { below: [], above: [], insideBuilding: [], notSettled: [], onProp: {} };
+    const capsule = new R.Capsule(hh, rad);
+    const STATIC = (0xffff << 16) | 1;
+    const t0 = performance.now();
+    let maxDrift = 0;
+    for (let i = 0; i < n; i++) {
+      const x = b.minX + 3 + rnd() * (b.maxX - b.minX - 6), z = b.minZ + 3 + rnd() * (b.maxZ - b.minZ - 6);
+      st.tried++;
+      if (c.isWater(x, z)) { st.water++; continue; }
+      if (c.isBlocked(x, z)) { st.blocked++; continue; }
+      const g = c.heightAt(x, z);
+      // a post, trunk or wall standing on the spot: nothing to land on there
+      if (w.physics.intersectionWithShape({ x, y: g + hh + rad + 0.25, z }, { x: 0, y: 0, z: 0, w: 1 }, capsule, undefined, STATIC) !== null) { st.occupied++; continue; }
+      const top = g + 2;
+      P.body.setTranslation({ x, y: top + hh + rad, z }, true);
+      P.body.setNextKinematicTranslation({ x, y: top + hh + rad, z });
+      P.vy = 0;
+      let settled = false;
+      for (let f = 0; f < 90; f++) {
+        window.__ocStep(1);
+        if (f > 20 && P.grounded && Math.abs(P.vy) < 1.5) { settled = true; window.__ocStep(3); break; }
+      }
+      const p = P.body.translation();
+      const feet = p.y - hh - rad;
+      const drift = Math.hypot(p.x - x, p.z - z);
+      maxDrift = Math.max(maxDrift, drift);
+      if (!settled) { st.notSettled++; if (examples.notSettled.length < 8) examples.notSettled.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(2), +g.toFixed(2)]); continue; }
+      st.landed++;
+      if (drift > 0.3) st.drift++;
+      const under = H.floor(p.x, feet + 0.3, p.z, 5);
+      const kind = under ? under.kind : 'none';
+      const gy = c.heightAt(p.x, p.z), gyy = c.heightAt(p.x, p.z, feet + 0.3);
+      // inside a building: the capsule overlaps a building collider, or stands where the map says it's blocked
+      let inBld = false;
+      w.physics.intersectionsWithShape({ x: p.x, y: p.y, z: p.z }, { x: 0, y: 0, z: 0, w: 1 }, new R.Capsule(hh - 0.05, rad - 0.05), (col) => { if (H.kindName(c.solidTags.get(col.handle)) === 'building') inBld = true; return !inBld; }, undefined, STATIC);
+      if (inBld) { st.insideBuilding++; if (examples.insideBuilding.length < 8) examples.insideBuilding.push([+x.toFixed(1), +z.toFixed(1)]); continue; }
+      if (kind !== 'ground' && kind !== 'kerb' && kind !== 'stair' && kind !== 'deck') {
+        st.onProp++; examples.onProp[kind] = (examples.onProp[kind] ?? 0) + 1;
+        if (feet < gy - 0.05) { st.below++; if (examples.below.length < 8) examples.below.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), +gy.toFixed(3), kind]); }
+        continue;
+      }
+      const ref = Math.abs(gyy - feet) < Math.abs(gy - feet) ? gyy : gy;
+      if (ref !== gy) st.onDeck++;
+      const d = feet - ref;
+      if (d < -0.05) { st.below++; if (examples.below.length < 8) examples.below.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), +ref.toFixed(3), kind]); }
+      else if (d > 0.05) { st.above++; if (examples.above.length < 8) examples.above.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), +ref.toFixed(3), kind]); }
+      else st.ok++;
+    }
+    const ms = Math.round(performance.now() - t0);
+    return { samples: n, ...st, maxDrift: +maxDrift.toFixed(3), examples, ms, pass: st.below === 0 && st.insideBuilding === 0 && st.notSettled === 0 && st.above <= Math.ceil(st.landed * 0.002) };
+  }, n);
+}
