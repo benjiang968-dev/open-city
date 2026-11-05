@@ -54,7 +54,8 @@
 //  people   six people standing on the M St north pavement 4-8 m from the camera (placed at fixed spots, idle).
 //  (door, car and tree leave the crowd out of the picture: a passer-by in front of the lens is chance, not content.)
 //  car      a parked sedan on M St (kerbside, north kerb at x=-241, z=141.4) from 5 m, three-quarter front view.
-//  tree     a street tree on M St (x=-271.3, z=140.2) from 6 m, seen from the pavement to its east.
+//  tree     a street tree on M St (x=-271.3, z=140.2) from 6 m, seen from the pavement to its east (FOV 70 so the whole
+//           crown and the trunk's foot are in the frame).
 //  road-far M St carriageway at eye height (1.7 m) from x=-300 looking east: the road recedes past 200 m (the
 //           "television static" test). Traffic hidden.
 //  aerial   190 m up over the waterfront, looking north-east at M St and Wisconsin Ave (the rep block in the middle).
@@ -76,7 +77,7 @@ export const VIEWS = {
     peds: [[-263.4, 139.5, -1.2], [-262.0, 138.3, 1.6], [-261.2, 140.9, -2.0], [-260.4, 138.7, -0.9], [-264.6, 138.0, 0.4], [-262.8, 141.4, 1.9]],
   },
   car: { pos: [-245, 1.6, 138.4], look: [-241, 0.7, 141.4], fov: 55, lookRel: [-245, 138.4], hidePeople: true },
-  tree: { pos: [-265.4, 1.6, 139.3], look: [-271.3, 3.1, 140.2], fov: 62, lookRel: [-265.4, 139.3], hidePeople: true },
+  tree: { pos: [-265.4, 1.6, 139.3], look: [-271.3, 3.6, 140.2], fov: 70, lookRel: [-265.4, 139.3], hidePeople: true },
   'road-far': { pos: [-300, 1.7, 147.3], look: [-80, 1.7, 145.4], fov: 62, hideTraffic: true, lookRel: [-300, 147.3] },
   aerial: { pos: [-420, 190, 380], look: [-200, 21, 140], fov: 55, abs: true },
   spawn: { player: true },
