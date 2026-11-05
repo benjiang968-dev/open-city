@@ -12,7 +12,7 @@ import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, polyArea, SegGrid } from './geoDoc';
 import { lin as linHex, PhysChunks, RenderChunks, type Layer } from './meshKit';
 import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
-import { buildRoadNet, omittedRoads, solveProfiles, type REdge, type RoadNet } from './roadNet';
+import { buildRoadNet, omittedRoads, solveProfiles, type REdge, type RNode, type RoadNet } from './roadNet';
 import { buildNetMeshes, drapeRibbon, isDeckNode, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
 import { buildBridges, buildStairs, rasterizeStairs } from './bridges';
@@ -521,6 +521,17 @@ function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc, syn
   const paths = new SegGrid(32);
   for (const f of doc.footways) if ((f.kind === 'path' || f.kind === 'cycleway') && !f.towpath) paths.addLine(f.pts, 0, 3); // the towpath is handled with the canal
   const CANAL_HALF = 6;
+  /** Nodes one short at-grade piece away from n. */
+  const hops = new Map<RNode, Set<RNode>>();
+  const hop1 = (n: RNode) => {
+    let s = hops.get(n);
+    if (!s) {
+      s = new Set();
+      for (const a of n.arms) if (!a.edge.deck && a.edge.L < G.deckJoinHop) s.add(a.edge.a === n ? a.edge.b : a.edge.a);
+      hops.set(n, s);
+    }
+    return s;
+  };
   return (x: number, z: number, layer: number, self: REdge) => {
     const th = G.deckThickness + (self.freeway ? 0.3 : 0);
     let req = -Infinity;
@@ -529,11 +540,13 @@ function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc, syn
       const e = net.edges[id];
       if (e === self || d > e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 0.6) return;
       if (e.deck && e.layer >= layer) return;
-      if (e.a === self.a || e.a === self.b || e.b === self.a || e.b === self.b) {
-        // a road sharing a node with this deck: ignore near that node (it's where they join)
+      // a road sharing a node with this deck, or one short piece away (real data: K St's bridge over Rock Creek ends
+      // 6 m before the junction its at-grade continuation leaves): ignore it near that node, it is where they join
+      const near = (n: RNode) => n === self.a || n === self.b || (!synthetic && (hop1(self.a).has(n) || hop1(self.b).has(n)));
+      if (near(e.a) || near(e.b)) {
         const pr0 = net.project(e, x, z);
-        if (pr0.s < e.trimA + 25 && (e.a === self.a || e.a === self.b)) return;
-        if (pr0.s > e.L - e.trimB - 25 && (e.b === self.a || e.b === self.b)) return;
+        if (pr0.s < e.trimA + 25 && near(e.a)) return;
+        if (pr0.s > e.L - e.trimB - 25 && near(e.b)) return;
       }
       const pr = net.project(e, x, z);
       const hh = net.profAt(e, pr.s);

@@ -83,12 +83,25 @@ export function turnCurve(e: LaneEdge, n: LaneEdge, P: Float32Array, C: Float32A
   const rx = b.x - a.x, rz = b.z - a.z, gap = Math.hypot(rx, rz);
   const cross = d1x * d2z - d1z * d2x, dot = d1x * d2x + d1z * d2z;
   let cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
+  // the exit lane starts a little BEHIND the stop line (offset lanes on the inside of a bend through a node with tiny
+  // plateaus, real data): no curve back to it (cars turned round to reach it); the car carries straight on from the
+  // stop line, and the exit lane picks it up where it stands
+  if (dot > -0.5 && (rx * d1x + rz * d1z < 0 || rx * d2x + rz * d2z < 0) && gap < TT.overlapStartMax) {
+    const oc0 = o / 2;
+    for (let k = 0; k <= TURN_SEGS; k++) { P[o + k * 2] = a.x; P[o + k * 2 + 1] = a.z; C[oc0 + k] = 0; }
+    return 0.01;
+  }
   if (dot < -0.5) {
     cx += d1x * (gap * 0.9 + TT.uTurnReach);
     cz += d1z * (gap * 0.9 + TT.uTurnReach);
   } else if (Math.abs(cross) > 0.05) {
     const t = (rx * d2z - rz * d2x) / cross;
-    if (t > 0 && t < gap * 2) { cx = a.x + d1x * t; cz = a.z + d1z * t; }
+    // the corner must lie ahead of the stop line AND before the exit lane's start: two nearly parallel lanes (a ring
+    // exit diverging at 5 degrees, real data) meet far beyond b, and a control point there hooked the curve past the
+    // lane start and back (cars reversed onto the exit lane)
+    const ux = a.x + d1x * t, uz = a.z + d1z * t;
+    const back = (b.x - ux) * d2x + (b.z - uz) * d2z;
+    if (t > 0 && t < gap * 2 && back > 0) { cx = ux; cz = uz; }
   }
   const oc = o / 2;
   for (let k = 0; k <= TURN_SEGS; k++) {

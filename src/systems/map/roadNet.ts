@@ -655,9 +655,9 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
   // steep bank (or beside a bridge abutment the DEM half keeps) could differ by metres: a short street piece between
   // them became a 40 % ramp. Relax: where an at-grade edge's free length cannot take the height difference at the
   // class's grade limit, both ends move toward each other (iterated; long edges are untouched).
+  const lim = (e: REdge) => (e.cls === 'service' ? G.relaxGradeService : /^(primary|secondary|trunk|motorway)/.test(e.cls) ? G.relaxGradeMain : G.relaxGrade);
+  const insideDeck = (n: RNode) => n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
   if (!net.synthetic) {
-    const lim = (e: REdge) => (e.cls === 'service' ? G.relaxGradeService : /^(primary|secondary|trunk|motorway)/.test(e.cls) ? G.relaxGradeMain : G.relaxGrade);
-    const insideDeck = (n: RNode) => n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
     for (let it = 0; it < 60; it++) {
       let worst = 0;
       for (const e of atGrade) {
@@ -749,6 +749,29 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
     // a deck processed early can end with its plateau at a node height a later deck raised: one more pass with the
     // node heights frozen makes every plateau match its junction (moving nodes again ratchets decks upward)
     for (const e of decks) deckProfile(e, false);
+    // a deck end raised for clearance next to a ground junction (K St's bridge over the Rock Creek parkway ends 6 m
+    // from 27th St's junction): the short piece between them became a wall. The ground junction rises toward the deck
+    // end until the piece is within its grade limit, each node at most G.approachMaxLift above its own height (a
+    // bounded cascade: the next pieces relax the same way). Deck ends keep their heights.
+    const h0 = new Map<RNode, number>();
+    for (const n of nodes) h0.set(n, n.h);
+    for (let it = 0; it < 40; it++) {
+      let moved = false;
+      for (const e of atGrade) {
+        if (e.a === e.b || insideDeck(e.a) || insideDeck(e.b)) continue;
+        const free = Math.max(1, e.L - e.trimA - e.trimB);
+        const ex = Math.abs(e.a.h - e.b.h) - lim(e) * free;
+        if (ex <= 0.02) continue;
+        const lo = e.a.h < e.b.h ? e.a : e.b, hi = lo === e.a ? e.b : e.a;
+        if (!hi.raised || lo.arms.some((a) => a.edge.deck)) continue;
+        const room = h0.get(lo)! + G.approachMaxLift - lo.h;
+        if (room <= 0.02) continue;
+        lo.h += Math.min(ex, room);
+        lo.raised = true;
+        moved = true;
+      }
+      if (!moved) break;
+    }
     for (const e of atGrade) if (e.a.raised || e.b.raised) shape(e, ground.get(e)!);
   }
 

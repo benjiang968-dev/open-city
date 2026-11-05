@@ -76,6 +76,40 @@ function classOf(highway: string, name: string): RoadClass {
   return 'service';
 }
 
+/**
+ * Lane directions that lead nowhere: one-way pieces into a node that no route leaves and from which no road reaches
+ * the map's edge (real data: the approaches to the omitted K St underpass and Potomac Freeway tunnel end at the
+ * portal; traffic drove in and circled at the end). Found by a reverse search from the map-edge exits over the route
+ * pieces' lane directions. Returns poly index -> bits (1: forward lanes trapped, 2: backward lanes trapped).
+ */
+function trapDirections(polys: GeoRoadPoly[], J: GeoWorld['junctions'], roadById: Map<string, GeoDoc['roads'][number]>, bounds: { minX: number; maxX: number; minZ: number; maxZ: number }): Map<number, number> {
+  const route = (P: GeoRoadPoly) => { const r = roadById.get(P.roadId); return !(r?.service && NOT_ROUTES.has(r.service)); };
+  const inAdj: number[][] = J.map(() => []);
+  const deg = new Int32Array(J.length);
+  polys.forEach((P) => {
+    if (!route(P)) return;
+    deg[P.nodeA]++; deg[P.nodeB]++;
+    if (P.lanes.some((l) => l.dir === 1)) inAdj[P.nodeB].push(P.nodeA);
+    if (P.lanes.some((l) => l.dir === -1)) inAdj[P.nodeA].push(P.nodeB);
+  });
+  const m = TUNING.traffic.mapEdgeRange;
+  const ok = new Uint8Array(J.length);
+  const stack: number[] = [];
+  J.forEach((j, i) => {
+    if (deg[i] === 1 && (j.x < bounds.minX + m || j.x > bounds.maxX - m || j.z < bounds.minZ + m || j.z > bounds.maxZ - m)) { ok[i] = 1; stack.push(i); }
+  });
+  while (stack.length) { const n = stack.pop()!; for (const p of inAdj[n]) if (!ok[p]) { ok[p] = 1; stack.push(p); } }
+  const out = new Map<number, number>();
+  polys.forEach((P, i) => {
+    if (!route(P)) return;
+    let bits = 0;
+    if (P.lanes.some((l) => l.dir === 1) && !ok[P.nodeB]) bits |= 1;
+    if (P.lanes.some((l) => l.dir === -1) && !ok[P.nodeA]) bits |= 2;
+    if (bits) out.set(i, bits);
+  });
+  return out;
+}
+
 /** Fetch the map data (only when this map is picked: loadMap imports this module on demand). */
 export async function loadGeorgetownDoc(): Promise<GeoDoc> {
   return loadGeoDoc();
@@ -125,6 +159,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   /** per poly: lane edge ids by direction (index = lane, 0 kerbside); parked-car offset per side (pts-right +1 / left -1) */
   const polyLanes: { fwd: number[]; bwd: number[]; parkR: boolean; parkL: boolean; cls: RoadClass }[] = [];
   const band = M.parkingBand;
+  const trapDir = trapDirections(polys, J, roadById, bounds);
   polys.forEach((P, pi) => {
     const road = roadById.get(P.roadId);
     const cls = classOf(P.highway, P.name);
@@ -171,7 +206,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
       }
       return raw;
     };
+    const trapped = trapDir.get(pi) ?? 0; // bit 1: forward lanes lead nowhere, bit 2: backward ones
     for (const dir of [1, -1] as const) {
+      if (trapped & (dir === 1 ? 1 : 2)) continue;
       const offs = dir === 1 ? fwdOff : bwdOff;
       offs.forEach((off, k) => {
         const raw = flatten(atOffset(P, off));
@@ -180,7 +217,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
         const e: LaneEdge = {
           id: edges.length, from: dir === 1 ? P.nodeA : P.nodeB, to: dir === 1 ? P.nodeB : P.nodeA, pts, cum, len: cum[cum.length - 1],
           trimStart: dir === 1 ? tA : tB, trimEnd: dir === 1 ? tB : tA, speed, cls, name: P.name || null, roadId: P.roadId,
-          lane: k, lanesSameDir: offs.length, offset: dir === 1 ? off : -off, oneway: P.oneway !== 0, roundabout: ring,
+          lane: k, lanesSameDir: offs.length, offset: dir === 1 ? off : -off, oneway: P.oneway !== 0 || trapped !== 0, roundabout: ring,
           bridge: P.deck, halfWidth: hw, twin: -1, left: -1, right: -1, stopSign: J[dir === 1 ? P.nodeB : P.nodeA].stopEdges.includes(P.edge),
           parking: k === 0 && (dir === 1 ? parkR : parkL),
         };
@@ -194,6 +231,11 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     for (let k = 0; k < info.bwd.length; k++) if (info.fwd.length) edges[info.bwd[k]].twin = info.fwd[Math.min(k, info.fwd.length - 1)];
   });
   linkLaneNeighbours(edges);
+  // real data: lanes lie on the surface the colliders have. The raster gives overlapping carriageways to the nearest
+  // centre line and blends driveway mouths, kerbs and car-park aisles, so a lane on its own road's profile floated or
+  // sank up to 2.5 m there (traffic counted cars on the wrong level). The surface nearest the lane's own height keeps
+  // decks and the roads under them apart.
+  if (!doc.meta.synthetic) for (const e of edges) { const p = e.pts; for (let k = 0; k < p.length; k += 3) p[k + 1] = geo.roadSurfaceAt(p[k], p[k + 2], p[k + 1]); }
   const oneWayCheck = checkOneWays(doc, polys, edges, polyLanes);
   const ringCheck = checkRing(polys, roadById, edges, polyLanes);
   const tRoads = performance.now();

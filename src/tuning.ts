@@ -336,6 +336,7 @@ const RAW = {
     stopBackMax: 8, // ... but never more than this many metres behind the line
     boxNudgeTime: 6, // seconds stopped inside a junction after which other AI cars no longer hold a car back (breaks a mutual block)
     uTurnReach: 2.5, // metres a U-turn's curve reaches forward beyond the width it turns across (dead ends)
+    overlapStartMax: 3, // metres: an exit lane that starts up to this far behind the stop line it continues from (inside of a bend) is joined with no turn curve
     mapEdgeRange: 40, // metres: a dead end this close to the map's edge is a road leaving the map (cars drive off it)
     // roundabout (Washington Circle): entering cars yield to circulating ones
     ringSpeed: 8.5, // m/s (31 km/h): top speed on the roundabout ring and through its nodes
@@ -788,6 +789,8 @@ const RAW = {
     freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
     deckThickness: 1.1, // m from deck surface to its underside
     deckGroundGap: 0.6, // m: natural ground under a bridge deck is cut down to at least this far below its underside
+    deckJoinHop: 30, // m: real data: an at-grade piece shorter than this between a deck end and the next junction joins the deck to its street (the deck need not clear roads beyond it)
+    approachMaxLift: 3, // m: real data: a junction next to a raised deck end may rise this much at most so the short piece between them stays within its grade limit (bigger lifts cascaded through the Rock Creek valley)
     gradeSeparation: 2.5, // m: overlapping carriageways closer in height than this are one surface (the smaller road conforms to the bigger); more is a real grade separation
     conformBlend: 12, // m over which a road blends into the surface of a bigger road it overlaps
     overlayTolerance: 0.25, // m: an at-grade road this far off the raster's surface is a grade separation (kept as its own surface)
