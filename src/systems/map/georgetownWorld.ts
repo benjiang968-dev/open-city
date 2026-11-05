@@ -540,6 +540,11 @@ function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc, syn
       const e = net.edges[id];
       if (e === self || d > e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 0.6) return;
       if (e.deck && e.layer >= layer) return;
+      // real data: the street's own other carriageway is alongside, not beneath (no named road crosses itself on another
+      // layer in the data). The Whitehurst Freeway's two halves drop to layer 1 under the Key Bridge 8 m apart, so
+      // each half's layer-2 deck "cleared" the other half's layer-1 piece, which then cleared the first: they
+      // leapfrogged to 37 m and the Key Bridge, clearing them, to 38 m (M St is at 21 m)
+      if (!synthetic && self.name && e.name === self.name) return;
       // a road sharing a node with this deck, or one short piece away (real data: K St's bridge over Rock Creek ends
       // 6 m before the junction its at-grade continuation leaves): ignore it near that node, it is where they join
       const near = (n: RNode) => n === self.a || n === self.b || (!synthetic && (hop1(self.a).has(n) || hop1(self.b).has(n)));
