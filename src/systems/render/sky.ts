@@ -47,8 +47,8 @@ export function createSkyEnv(scene: THREE.Scene): SkyEnv {
   uniforms.mieCoefficient.value = T.skyMie;
   uniforms.mieDirectionalG.value = T.skyMieG;
   uniforms.cloudCoverage.value = T.skyCloudClear;
-  uniforms.cloudDensity.value = 0.45;
-  uniforms.cloudElevation.value = 0.55;
+  uniforms.cloudDensity.value = T.skyCloudDensityClear;
+  uniforms.cloudElevation.value = T.skyCloudElevation;
   // the environment capture: the same sky material, and a dark ground disc below the horizon (bounce light)
   const envScene = new THREE.Scene();
   const envSky = new THREE.Mesh(sky.geometry, sky.material);
@@ -72,7 +72,10 @@ const groundCol = new THREE.Color();
 export function updateSkyEnv(e: SkyEnv, renderer: THREE.WebGLRenderer, scene: THREE.Scene, sunDir: THREE.Vector3, cloud: number, night: number, daylight: number, time: number, force = false): boolean {
   const u = e.uniforms;
   (u.sunPosition.value as THREE.Vector3).copy(sunDir);
-  u.cloudCoverage.value = THREE.MathUtils.lerp(T.skyCloudClear, 0.95, cloud);
+  // full cloud must close the deck: Sky.js varies coverage by +-0.3 per region, so anything below ~1.0 leaves holes
+  // that the overcast greying turns into dark blue patches (an inverted-looking sky in the rain)
+  u.cloudCoverage.value = THREE.MathUtils.lerp(T.skyCloudClear, T.skyCloudOvercast, cloud);
+  u.cloudDensity.value = THREE.MathUtils.lerp(T.skyCloudDensityClear, T.skyCloudDensityOvercast, cloud);
   u.turbidity.value = THREE.MathUtils.lerp(T.skyTurbidity, 12, cloud);
   u.rayleigh.value = THREE.MathUtils.lerp(T.skyRayleigh, 0.4, cloud);
   u.time.value = time;

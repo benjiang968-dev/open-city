@@ -812,7 +812,11 @@ const RAW = {
     skyRayleigh: 0.85, // blue scattering strength
     skyMie: 0.004, // aerosol scattering
     skyMieG: 0.82, // forward glow round the sun
-    skyCloudClear: 0.18, // cloud cover drawn in clear weather (the weather's cloud value raises it)
+    skyCloudClear: 0.18, // cloud cover drawn in clear weather (the weather's cloud value raises it)...
+    skyCloudOvercast: 1.25, // ...toward this at full cloud (above 1 so the deck closes: rain 0.8 -> 1.04, cloudy 0.65 -> 0.88)
+    skyCloudDensityClear: 0.45, // cloud opacity in clear weather (three's Sky cloudDensity)...
+    skyCloudDensityOvercast: 0.85, // ...and at full cloud (an opaque grey deck)
+    skyCloudElevation: 0.55, // apparent height of the cloud layer (three's Sky cloudElevation, 0..1)
     envCubeSize: 128, // px per face of the sky capture that lights everything (PMREM)
     envRefreshDegrees: 1.5, // recapture the sky when the sun has moved this far...
     envRefreshMinSeconds: 1.5, // ...but at most this often (real seconds)
