@@ -889,6 +889,9 @@ export function updateTraffic(w: World, dt: number): void {
       }
       // a road leaving the map: the car drives off it (moved near the player again once out of sight)
       if (J.mapEdge[e.to] && rem < 10 && !car.keep && !visible(w, car.px, car.py - 0.62, car.pz)) { car.respawnWanted = true; w.trafficSim.stats.leftMap++; }
+      // (a car tests follow round the map, which is never moved nearer the player, starts again somewhere else: on a one-way
+      // road off the map it would wait at the edge for ever)
+      else if (J.mapEdge[e.to] && rem < 3 && car.keep && car.speed < 0.5) placeRandom(w, car, 90, Math.random);
       want = Math.min(want, Math.sqrt(vEnd * vEnd + 2 * TT.approachDecel * Math.max(0, remStop)));
       if (car.speed < 0.5) car.commit = false;
       if (car.hold !== HOLD_GO && remStop < 1 && car.speed < 1) toWait(w, car); // pulled up at the line: wait there

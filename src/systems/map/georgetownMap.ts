@@ -808,7 +808,9 @@ function buildWalkGraph(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes:
       if (covered) continue;
       const kl = sampleAt(atOffset(P, -P.halfWidth + 0.4), S, s, [0, 0, 0]);
       const kr = sampleAt(atOffset(P, P.halfWidth - 0.4), S, s, [0, 0, 0]);
-      const xl = add(kl[0], kl[1], kl[2], 'crossing', P.name || null), xr = add(kr[0], kr[1], kr[2], 'crossing', P.name || null);
+      // (heights from the surface people walk on there: the road's own profile can differ from the raster where
+      // carriageways overlap, as beside the raised K St bridge end at Rock Creek)
+      const xl = add(kl[0], geo.walkSurfaceAt(kl[0], kl[2], kl[1]), kl[2], 'crossing', P.name || null), xr = add(kr[0], geo.walkSurfaceAt(kr[0], kr[2], kr[1]), kr[2], 'crossing', P.name || null);
       W.link(el, xl); W.link(xl, xr); W.link(xr, er);
     }
   });

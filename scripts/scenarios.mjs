@@ -940,7 +940,12 @@ export async function witness(page, S) {
     window.__mh.put(w.player.body, bottle.px, bottle.pz - 1.0, 1.2); w.player.facing = 0;
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
     const pp = w.player.mesh.position;
-    const victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly'));
+    // (real maps: the bottle may lie on a quiet street where nobody suitable is out yet; let the crowd fill in)
+    let victim = null;
+    for (let k = 0; k < 40 && !victim; k++) {
+      victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly')) ?? (k > 10 ? w.peds.find((p) => p.active && p.archetype === 'adult') : null);
+      if (!victim) run(0.5);
+    }
     victim.pos.set(pp.x, window.__mh.gy(pp.x, pp.z + 5) + 0.02, pp.z + 5); victim.state = 'idle'; victim.timer = 30; victim.route = [];
     w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
     w.input.keys.add('KeyF'); run(0.36); w.input.keys.delete('KeyF');
@@ -1003,8 +1008,12 @@ export async function gate2(page, S) {
   // 2) an NPC stands in front; hold F to charge, release to throw
   const victim = await page.evaluate(() => {
     const w = window.__oc; const pp = w.player.mesh.position;
-    const v = w.peds.find((p) => p.active && p.archetype === 'adult' && p.npc.personality === 'friendly') ?? w.peds.find((p) => p.active && p.archetype === 'adult');
-    v.pos.set(pp.x, 0.02, pp.z + 5); v.state = 'idle'; v.timer = 30; v.route = [];
+    let v = null;
+    for (let k = 0; k < 40 && !v; k++) {
+      v = w.peds.find((p) => p.active && p.archetype === 'adult' && p.npc.personality === 'friendly') ?? w.peds.find((p) => p.active && p.archetype === 'adult');
+      if (!v) window.__ocRun(0.5); // (real maps: a quiet street; let the crowd fill in)
+    }
+    v.pos.set(pp.x, window.__mh?.gy ? window.__mh.gy(pp.x, pp.z + 5) + 0.02 : 0.02, pp.z + 5); v.state = 'idle'; v.timer = 30; v.route = [];
     w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
     return { id: v.id, personality: v.npc.personality };
   });
