@@ -52,13 +52,15 @@ async function run(label, dir, q) {
     w.player.body.setTranslation({ x: at.x, y: w.city.heightAt(at.x, at.z) + 1.2, z: at.z }, true);
     window.__ocRun(1);
     window.__ocFrames(2, true); // settle (sky light, streaming)
-    const f = window.__ocFrames(n, true).map((x) => x.cpu).sort((a, b) => a - b);
+    const frames = window.__ocFrames(n, true);
+    const f = frames.map((x) => x.cpu).sort((a, b) => a - b);
+    const top = frames[frames.length - 1].top; // the profiler's biggest sections of the last frame
     const info = w.renderer.info;
     const mem = performance.memory ? Math.round(performance.memory.usedJSHeapSize / 1048576) : null;
     return {
       boot: window.__ocBoot, bake: w.look ? w.look.stats : null, calls: info.render.calls, tris: info.render.triangles,
       textures: info.memory.textures, geometries: info.memory.geometries, programs: info.programs ? info.programs.length : null,
-      cpuMedian: f[Math.floor(f.length / 2)], cpuP90: f[Math.floor(f.length * 0.9)], heapMB: mem,
+      cpuMedian: f[Math.floor(f.length / 2)], cpuP90: f[Math.floor(f.length * 0.9)], heapMB: mem, top,
     };
   }, [frames]);
   await browser.close();

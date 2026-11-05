@@ -706,3 +706,46 @@ Format: date · what changed · what to test · known issues.
     - **Drawn-only parked cars still have no physics:** a thrown item or a car that isn't yours further than 26 m away passes through them. In 3.5 minutes of probing that was 1 traffic car stuck on Q St, more than 1 km from the player.
     - **Frames over 33 ms** can't be judged here: the machine ran at a load of 18–26 on 4 cores, and both builds had them (`crashspikes` on the grid: 13 frames over 33 ms, the worst 205 ms in `sync`).
     - The towpath ahead of you is still often empty when you stand on it: most of the people counted there are on M St and K St, which are inside the 90 m.
+
+## 2026-11-05: Stage 1 (fix the foundation)
+
+- **S1.4 PBR look (branch `s1-look`):** the city is now drawn with physically based materials and lighting instead of flat vertex colours. Everything new lives in `src/systems/render/`; generator files change only where a material is assigned.
+  - **Procedural textures, baked on the GPU at boot** (`bakeShaders.ts`, `texBake.ts`): 27 surfaces drawn from noise, cells and parametric layouts (original by construction, nothing downloaded): asphalt with aggregate, wear, crack networks and tar-sealed cracks; worn road paint; concrete slabs; Georgetown herringbone brick pavers; granite; granite setts; grass; soil; gravel; bark; leaf clusters; timber decking; painted and bare metal; board-formed concrete; dressed stone; brick in running, Flemish (burnt headers) and common bond; painted brick; stucco; clapboard; slate; standing-seam metal; tar roofing; awning canvas; water ripples. Each bakes albedo + tint mask and normal + roughness + occlusion into two texture arrays with mipmaps and anisotropy, plus a macro-variation texture. One program per surface: a single shader with all of them ran every branch on software GL (110 s bake; now 1.5–5 s there, milliseconds on a real GPU).
+  - **World materials** (`worldMaterial.ts`, `surfaces.ts`, `palette.ts`): one patched `MeshStandardMaterial` per chunk layer reads a per-vertex surface id (`aSurf`) and projects that surface in world space (from above for ground, along the face for walls and roofs), tinted by the vertex colour relative to the surface's reference colour, with large-scale macro variation so tiles never repeat visibly. Surfaces come from tagged palette colours (`surf()` in the road, terrain and lot colour tables) or are inferred from the generators' existing palette colours, so bridges, waterworks, props and monuments needed no edits. Chunk batching and draw calls are unchanged.
+  - **Facades** (`facadeMaterial.ts`, facade tiles now 256 px with relief normals and window-reveal occlusion): walls show the building's own surface (brick bond, painted brick, stucco, clapboard, ashlar, chosen per building from its id), plinths are dressed stone, frames and doors have relief, and windows are glass: a sharp sky reflection (Fresnel) over a room behind it (interior mapping: back wall, side walls, floor, ceiling, furniture, blinds or curtains per window), dim by day and warm when lit at night.
+  - **Lighting** (`sky.ts`, `dayNight.ts`): three's Preetham sky with clouds and the sun where the clock puts it; the sky (without the sun disc, plus a warm ground bounce) captured into a 128 px cube and prefiltered as the scene environment, refreshed only when the sun moved 1.5° or the weather changed; a `SunLight` with two shadow cascades out to 320 m (Medium) or 650 m (High), soft PCF edges; ACES filmic tone mapping; deep blue night sky with city glow; grey, dimmer sky under cloud. All levels in `TUNING.look`.
+  - **Trees** (`trees.ts`): within `treeNear` (110 m Medium, 200 m High) a detailed tree replaces the far crown: tapered bark trunk, branches, a dense inner crown and 38–46 rounded alpha-to-coverage leaf cards; far crowns get bark and leaf textures and hide inside the ring in the vertex shader (no buffer rewrites).
+  - **Water** (`water.ts`): river, canal and creek mirror the sky with three scrolling layers of baked ripple normals over the existing swell.
+  - **Night** (`nightLights.ts`): real point lights at the 6 (Medium) or 10 (High) street lamps nearest the camera, a fixed pool so no shader ever recompiles; lit rooms; headlights as before.
+  - **Rain and snow:** porous surfaces darken, upward faces turn glossy and puddles form in the dips of the macro field (`uWet` from the weather); snow settles on upward faces.
+  - **Vehicles and people** (`vehicleMaterials.ts`): car paint under a clearcoat, dark glass, trim and lamps sorted per vertex colour; rubber tyres and polished hubs; people in cloth with a soft sheen (shapes unchanged).
+  - **Grid city** (`gridLook.ts`): the same materials, applied after it is built.
+  - **Presets** (`TUNING.quality`, pause menu): Low = 256 px textures without normal maps, no shadows, no near trees, no lamp lights, 70 % resolution; Medium = 512 px, two 1536 px cascades to 320 m, near trees to 110 m, 6 lamp lights; High = 1024 px, 2048 px cascades to 650 m, near trees to 200 m, 10 lamp lights. GPU memory of the bake: 19 MiB (Low), 73 MiB (Medium), 289 MiB (High), plus 16 MiB of facade tiles and the shadow cascades (Medium 2 x 1536², 18 MiB; High 2 x 2048², 32 MiB). Download grows by about 100 KB of code; no texture files.
+  - **No first-draw stalls:** after `renderer.compile()`, `warmup.ts` draws one representative of every material and mesh kind on screen behind the title, because some drivers (and software GL entirely) finish a program only at its first draw.
+  - **Test:**
+    - `npm run build && node scripts/lookShots.mjs --dist <base dist> --prefix 33-look-before` and `node scripts/lookShots.mjs --prefix 33-look-after mst rowhouses keybridge waterfront circle night`: the same preview cameras before and after (`screenshots/33-look-before-*.png`, `33-look-after-*.png`, side by side in `33-look-mst-before-after.png`); `texsheet` as a view shows every baked map.
+    - In the game: `MAP=georgetown node scripts/shot.mjs x lookgame "1337&quality=low&lookhour=15.5&lookout=33-look-low"` (also `weather=rain`, `lookhour=21.6`).
+    - `node scripts/shot.mjs x lookstall` (and with `MAP=georgetown`): no new shader program by day, at night or in the rain after boot.
+    - `node scripts/lookPerf.mjs --base <base dist>`: boot, draw calls, triangles and CPU per frame per preset, base vs this build, interleaved.
+  - **Measured** (`lookPerf.mjs`, base = main 8192ea1, Georgetown, M St at 15:30, 640 x 360, medians of 2 interleaved rounds; software GL on a shared 4-core machine at load 6-14, so frame times say little about a real GPU):
+
+    | Preset | Draw calls | Triangles | CPU per frame | CPU per frame, 4x throttle | Page start to first frame | Bake |
+    |---|---|---|---|---|---|---|
+    | Low | 92 -> 93 | 0.46 -> 0.46 M | 8.7 -> 4.5 ms | 29.1 -> 37.1 ms | 3.7 -> 9.7 s | 2.3 s |
+    | Medium | 159 -> 259 | 0.88 -> 1.38 M | 10.2 -> 6.1 ms | 34.9 -> 44.7 ms | 3.6 -> 15.3 s | 4.6 s |
+    | High | 242 -> 418 | 1.13 -> 2.01 M | 10.0 -> 13.5 ms | not run | 3.7 -> 29.6 s | 14.2 s |
+
+    - Medium's extra draw calls and triangles are the second shadow cascade and the near trees.
+    - The throttled CPU rise is the render call waiting for software GL, not script: a JS profile of 30 Low frames on a 64 x 36 canvas took 551 ms (base) and 524 ms (new), 72 % of both in native GL calls. CPU-side cost per frame is unchanged within noise.
+    - Software GL frame at 1280 x 720 Medium on M St: about 1.5-2 s before, 7-10 s now; the first street-level frame after boot about 35 s before, 110-200 s now. `scripts/shot.mjs` timeouts are raised to match.
+    - The bake and the boot times above are software-GL times (27 shader compiles plus the passes); on a real GPU the passes take milliseconds.
+    - No new shader program while visiting 7 places by day, at night and in the rain (`lookstall`: 46 programs before and after on Georgetown, 41 on the grid).
+  - **Known issues:**
+    - Frame times on a real GPU are not measured; only software GL is available here.
+    - No screen-space ambient occlusion on High (occlusion is baked into the textures and window reveals only).
+    - Shapes are unchanged: cars and people are still low-poly boxes, buildings keep their extrusions; the rooms behind windows are interior mapping, not enterable.
+    - Leaf cards very close to the camera show speckled edges; far canopies are solid crowns with a leaf texture.
+    - Under heavy rain with a bright overcast the wet streets still read light.
+    - Mortar colour is the same on every brick building (bond, brick colour and paint vary).
+    - The in-game shots show the taxi job's fare beacon (an existing 40 m light column) at the end of M St.
+    - Headless runs are slower (see above): budget minutes for a scenario's first rendered frame.
