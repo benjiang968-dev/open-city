@@ -357,7 +357,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const m = arms.length;
     if (m === 1) { arms[0].trim = 0; return; }
     const req = new Float64Array(m).fill(m >= 3 ? MIN_TRIM : 0.3);
-    type Corner = { kind: 'in' | 'out' | 'straight'; s: number; t: number; d: number; R: number; X?: [number, number] };
+    type Corner = { kind: 'in' | 'out' | 'straight'; s: number; t: number; d: number; R: number; X?: [number, number]; sharp?: boolean };
     const corners: Corner[] = [];
     for (let k = 0; k < m; k++) {
       const A = arms[k], Bm = arms[(k + 1) % m];
@@ -378,7 +378,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
       if (delta < Math.PI) {
         const R = delta < 0.6 ? GORE_RADIUS : cornerRadiusFor(A.edge, Bm.edge, synthetic);
         const d = Math.min(30, R / Math.tan(delta / 2));
-        corners.push({ kind: 'in', s, t, d, R, X: [P0x + A.ux * s, P0z + A.uz * s] });
+        corners.push({ kind: 'in', s, t, d, R, X: [P0x + A.ux * s, P0z + A.uz * s], sharp: delta < 0.6 });
         req[k] = Math.max(req[k], Math.max(0, s) + d);
         req[(k + 1) % m] = Math.max(req[(k + 1) % m], Math.max(0, t) + d);
       } else corners.push({ kind: 'out', s, t, d: 0, R: 0, X: [P0x + A.ux * s, P0z + A.uz * s] });
@@ -425,8 +425,15 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
         if (sA < A.trim - 0.01) path.push(T0x, T0z);
         // a true circular arc when both tangent points sit where the circle touches; else a curve via X
         const exact = c.s >= 0 && c.t >= 0 && Math.abs(sA - (c.s + c.d)) < 0.01 && Math.abs(sB - (c.t + c.d)) < 0.01;
+        // real data, a sharp merge (under 35 degrees) whose kerbs cross beyond the capped trims (L St into Pennsylvania
+        // Ave): a curve via the crossing bulged the flat plateau 20 m out over both arms while they still climb to it, a
+        // 0.3-0.4 m ridge across the lanes (a car at 50 km/h crashed into it). The outline stops at the trims; beyond them
+        // the arms overlap (at wider angles they part: the curve stays, or the chord left holes)
+        const beyond = !synthetic && !exact && !!c.sharp && (Math.max(0, c.s) + c.d > A.trim + 0.01 || Math.max(0, c.t) + c.d > Bm.trim + 0.01);
         const segs = 8;
-        if (exact) {
+        if (beyond) {
+          // straight from one tangent point to the other
+        } else if (exact) {
           const Ox = T0x + anx * c.R, Oz = T0z + anz * c.R;
           let a0 = Math.atan2(T0z - Oz, T0x - Ox), a1 = Math.atan2(T1z - Oz, T1x - Ox);
           let sw = a1 - a0;
