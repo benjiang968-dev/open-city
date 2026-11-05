@@ -22,8 +22,10 @@ The full phased plan, its status and open decisions live in docs/ROADMAP.md. Rea
 - No multiplayer in v1.
 
 ## Look
-- Realistic, physically based rendering (PBR materials, image-based lighting, soft shadows, weather, night lighting) that reads like a real city, on a browser budget. (Changed 2026-11-05 at the owner's request; previously low-poly vertex colours.)
-- Textures are generated in code (procedural PBR maps) or come from appropriately licensed sources (CC0 preferred). Every non-procedural asset is listed with its source and licence in assets/LICENSES.md.
+- A believable, realistic contemporary city, on a browser budget: physically based materials (base colour, normal, roughness), image-based lighting coordinated with the sun, soft shadows, natural exposure and tone mapping, weather and night lighting. Models matter as much as textures: human characters with skeletal animation (idle, walk, run, jump), vehicles with real proportions, wheel arches, windows, lights and interiors, trees with connected trunks and foliage, and facades with real depth (recessed entrances, window frames, roof details, varied ground floors). (Changed 2026-11-05 at the owner's request, twice: previously low-poly vertex colours, then code-generated art only. There is no low-poly or code-only requirement any more.)
+- Assets may be generated in code or downloaded: properly licensed textures, models, HDRIs and animations are welcome (CC0 preferred; CC BY allowed with the required credit). Never use assets with an unclear licence, ripped from games, or taken from Google Maps. Every downloaded asset is recorded in ASSET_SOURCES.md (exact source URL, author, licence, date fetched, what it is used for, any changes made). Assets ship inside the build (no run-time fetch from third-party hosts) so production loading is reliable.
+- Use a small shared library of good textures and modules reused everywhere, scaled by physical size (a brick is a brick everywhere), rather than huge unique textures per object. Correct colour spaces, mipmaps, filtering and anisotropy; distant surfaces must look stable, never like television static.
+- Never hide visual problems with heavy fog, bloom, blur, film grain or darkness; fix the cause.
 - Graphics quality presets (Low, Medium, High) in the pause menu; Low must stay smooth on a mid-range laptop.
 
 ## Core loop
@@ -41,7 +43,7 @@ Taxi (done), courier, restaurant and shop work, deliveries, office job with a ma
 ## World
 - Georgetown and the Potomac waterfront, Washington DC, at 1:1 scale (1 unit = 1 m), about 2 km across, built from legal open data: road network, sidewalks, buildings and places from Overture Maps (OpenStreetMap-derived, ODbL; places CDLA-Permissive-2.0) and terrain from public elevation tiles, with attribution in the pause menu and README. The older hand-authored approximation (scripts/georgetownFromSpec.mjs) and the grid city (?map=grid) remain as fallbacks.
 - The generator (src/systems/map/) turns the data into roads with lanes, kerbs, crossings, signals, parking, terrain, water, bridges and buildings with facades. Roads are smooth enough to drive; terrain keeps its natural hills.
-- Every building has a working entrance and a deterministic interior generated from its persistent building id (same layout on every visit). Interiors are built only near the player.
+- Every building has a working entrance and a deterministic interior generated from its persistent building id (same layout on every visit): real doorway openings with doors that open and close, rooms, floors, ceilings, furniture, interior lighting and reachable stairs to usable upper floors, fitted to the footprint, the exterior's floor heights and the terrain. Building collision is walls, floors, door frames and openings, never one solid box over the footprint. Interiors (and their collision) are built near the player before they can reach the door, and are never unloaded from under the player or an active object.
 - Day and night cycle (24 real minutes = 1 game day), weather, traffic AI on the road graph with signals and the roundabout rule, pedestrians on the walk graph with routines, shops and restaurants with opening hours.
 - Police respond to crime with a heat level of 1 to 5 stars. They lose you when you break line of sight and change vehicle. Caught: fine or arrest; serious or repeated offences mean jail, a separate scene.
 - GPS routes are drawn ONLY on the minimap and the big map. Never place route lines, arrows or markers in the 3D world for navigation.
@@ -59,6 +61,7 @@ Taxi (done), courier, restaurant and shop work, deliveries, office job with a ma
 - I inventory (mouse to select, inspect, use, move between containers), G drop the held item, 1-9 or wheel hotbar, left click use / throw / swing.
 - M or clicking the minimap opens the big map (search, destinations, GPS). Mute lives in the pause menu.
 - F3 debug overlay; F4 physics debug view (collision shapes near the player). Esc pause.
+- The full controls list lives in the pause / help panel. During play the HUD shows only short contextual prompts ("E open door", "E pick up bottle").
 
 ## Tech stack (do not change without asking)
 - TypeScript, Vite, three.js, Rapier physics (@dimforge/rapier3d-compat). No game framework on top.
