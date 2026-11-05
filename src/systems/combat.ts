@@ -206,7 +206,7 @@ export function thrownItemHitCollider(w: World, item: WorldItem, otherHandle: nu
     if (d.heavy && v.locked && !v.driven) triggerAlarm(w, v);
     emit(w, { type: 'vandalism', x: item.px, z: item.pz, what: v.spec.label });
   } else if (owner.kind === 'traffic' || owner.kind === 'police') {
-    const car = owner.kind === 'traffic' ? w.traffic[owner.id] : w.police.cars.find((q) => q.id === owner.id);
+    const car = owner.kind === 'traffic' ? w.traffic.find((q) => q.id === owner.id) : w.police.cars.find((q) => q.id === owner.id);
     if (car) { car.honkCd = 0; w.audio.horn?.(car.px, car.pz); }
     emit(w, { type: 'vandalism', x: item.px, z: item.pz, what: 'a car' });
   }

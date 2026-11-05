@@ -123,6 +123,12 @@ export interface GeoWorld {
   lotStalls: GeoLot[];
   /** Street lamp bases: x, y, z per lamp (the lamp head is 4.6 m above). */
   lampPositions: Float32Array;
+  /**
+   * Traffic signal heads (one per inbound lane of each signalised arm): 7 floats each: x, y, z of the head's top,
+   * yaw (the head's local -z faces the approaching traffic), the junction id, and the arm direction ux, uz (away from
+   * the junction). The lenses are drawn unlit; signalHeads.ts lights them from the traffic signal state.
+   */
+  signalHeads: Float32Array;
   litWindowMat: THREE.MeshBasicMaterial;
   lampMat: THREE.MeshBasicMaterial;
   lampPoolMat: THREE.MeshBasicMaterial;
@@ -377,6 +383,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     bandAt: (x, z) => ras.bandAt(x, z),
     roadPolys, junctions, decks, lotStalls,
     lampPositions: props.lampPositions,
+    signalHeads: props.signalHeads,
     litWindowMat, lampMat, lampPoolMat, groundMats: [groundMat, decalMat],
     water: { meshes: water.meshes, update: water.update },
     update, setQuality, quality,

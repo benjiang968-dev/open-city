@@ -32,28 +32,50 @@ export function createMinimap(w: World): void {
   base.width = Math.ceil((b.maxX - b.minX + 40) * scale);
   base.height = Math.ceil((b.maxZ - b.minZ + 40) * scale);
   const g = base.getContext('2d')!;
-  const X = (x: number) => (x - ox) * scale, Z = (z: number) => (z - oz) * scale;
   c.drawMinimapBase(g, { scale, ox, oz, width: base.width, height: base.height });
   buildLabels(w);
-  g.fillStyle = '#f4c430';
-  for (const r of c.taxiRanks) { g.beginPath(); g.arc(X(r.curbX), Z(r.curbZ), 3, 0, Math.PI * 2); g.fill(); }
-  // car dealerships: a blue badge with a dollar sign
+  // taxi ranks and car dealerships are drawn on top each frame at a fixed size (painted into the base image they
+  // shrank to a pixel or two at the minimap's zoom)
+  badgeX.length = badgeZ.length = badgeKind.length = 0;
+  for (const r of c.taxiRanks) { badgeX.push(r.curbX); badgeZ.push(r.curbZ); badgeKind.push(0); }
   const dealer = w.jobs.get<DealershipJob>('dealership');
   for (const site of dealer?.sites ?? []) {
-    const x = X(site.x), z = Z(site.z);
-    g.fillStyle = '#1d4ed8';
-    g.strokeStyle = '#fff';
-    g.lineWidth = 1.5;
-    g.beginPath();
-    g.arc(x, z, 6, 0, Math.PI * 2);
-    g.fill();
-    g.stroke();
-    g.fillStyle = '#fff';
-    g.font = 'bold 9px system-ui, sans-serif';
-    g.textAlign = 'center';
-    g.textBaseline = 'middle';
-    g.fillText('$', x, z + 0.5);
+    // the badge sits by the showroom cars (a car park can be a little way from the place's door)
+    const sl = site.slots[0];
+    badgeX.push(sl ? (sl.x + site.x) / 2 : site.x);
+    badgeZ.push(sl ? (sl.z + site.z) / 2 : site.z);
+    badgeKind.push(1);
     minimapStats.dealerships++;
+  }
+}
+
+// fixed-size badges: taxi ranks (0) and car dealerships (1)
+const badgeX: number[] = [];
+const badgeZ: number[] = [];
+const badgeKind: number[] = [];
+const DEALER_FONT = `bold ${Math.round(H.minimapDealerBadgePx * 1.35)}px system-ui, sans-serif`; // built once, not per frame
+const RANK_FONT = `bold ${Math.round(H.minimapRankBadgePx * 1.35)}px system-ui, sans-serif`;
+/** Badges within the minimap circle, upright, at a size you can read (`k`: px per metre; (r, r) the centre). */
+function drawBadges(px: number, pz: number, yaw: number, k: number, r: number): void {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), lim = (r - 10) * (r - 10);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < badgeX.length; i++) {
+    const dx = (badgeX[i] - px) * k, dz = (badgeZ[i] - pz) * k;
+    const sx = dx * cy - dz * sy, sz = dx * sy + dz * cy;
+    if (sx * sx + sz * sz > lim) continue;
+    const dealer = badgeKind[i] === 1;
+    const rad = dealer ? H.minimapDealerBadgePx : H.minimapRankBadgePx;
+    ctx.fillStyle = dealer ? '#1d4ed8' : '#f4c430';
+    ctx.strokeStyle = dealer ? '#ffffff' : '#3d2c00';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(r + sx, r + sz, rad, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = dealer ? '#ffffff' : '#3d2c00';
+    ctx.font = dealer ? DEALER_FONT : RANK_FONT;
+    ctx.fillText(dealer ? '$' : 'T', r + sx, r + sz + 0.5);
   }
 }
 
@@ -62,18 +84,23 @@ const labelText: string[] = [];
 let labelX = new Float32Array(0);
 let labelZ = new Float32Array(0);
 let labelAng = new Float32Array(0);
+let labelW = new Float32Array(0); // text width in pixels
 const LABEL_FONT = `600 ${H.minimapLabelPx}px system-ui, sans-serif`;
+const RANK: Record<string, number> = { primary: 0, parkway: 1, secondary: 2, tertiary: 3, residential: 4, service: 5 };
 
-/** Anchor points for every named street: its middle if short, else one every minimapLabelSpacing metres. */
+/**
+ * Anchor points for every named street: its middle if short, else one every minimapLabelSpacing metres. Major
+ * streets first (they win where labels would overlap). Names lose a trailing quadrant (" NW"): the minimap is small.
+ */
 function buildLabels(w: World): void {
-  const ax: number[] = [], az: number[] = [], angs: number[] = [];
-  labelText.length = 0;
+  const items: { x: number; z: number; a: number; text: string; rank: number }[] = [];
   for (const st of w.city.streets) {
     if (!st.name) continue;
     const p = st.pts;
     let total = 0;
     for (let k = 2; k < p.length; k += 2) total += Math.hypot(p[k] - p[k - 2], p[k + 1] - p[k - 1]);
     if (total < H.minimapLabelMinLength) continue;
+    const text = st.name.replace(/\s+(NW|NE|SW|SE)$/, '');
     const step = H.minimapLabelSpacing;
     const first = total < step ? total / 2 : step / 2;
     for (let at = first; at < total; at += step) {
@@ -83,38 +110,70 @@ function buildLabels(w: World): void {
         const sl = Math.hypot(p[k] - p[k - 2], p[k + 1] - p[k - 1]);
         if (run + sl >= at || k === p.length - 2) {
           const t = sl > 0 ? Math.min(1, (at - run) / sl) : 0;
-          ax.push(p[k - 2] + (p[k] - p[k - 2]) * t);
-          az.push(p[k - 1] + (p[k + 1] - p[k - 1]) * t);
-          angs.push(Math.atan2(p[k + 1] - p[k - 1], p[k] - p[k - 2]));
-          labelText.push(st.name);
+          items.push({ x: p[k - 2] + (p[k] - p[k - 2]) * t, z: p[k - 1] + (p[k + 1] - p[k - 1]) * t, a: Math.atan2(p[k + 1] - p[k - 1], p[k] - p[k - 2]), text, rank: RANK[st.cls] ?? 9 });
           break;
         }
         run += sl;
       }
     }
   }
-  labelX = Float32Array.from(ax);
-  labelZ = Float32Array.from(az);
-  labelAng = Float32Array.from(angs);
+  items.sort((a, b) => a.rank - b.rank);
+  labelText.length = 0;
+  ctx.font = LABEL_FONT;
+  labelX = Float32Array.from(items, (i) => i.x);
+  labelZ = Float32Array.from(items, (i) => i.z);
+  labelAng = Float32Array.from(items, (i) => i.a);
+  labelW = Float32Array.from(items, (i) => ctx.measureText(i.text).width);
+  for (const i of items) labelText.push(i.text);
 }
 
-/** Street names near the player, upright and along their road. `k`: px per metre; (r, r) the centre. */
+// labels placed this frame (screen boxes and which label) for the overlap and repeat tests
+const placed = new Float32Array(4 * 48);
+const placedIdx = new Int32Array(48);
+/**
+ * Street names near the player, upright and along their road. `k`: px per metre; (r, r) the centre. A label is left
+ * out where it would overlap one already drawn, run past the rim, or repeat the same name close by.
+ */
 function drawLabels(px: number, pz: number, yaw: number, k: number, r: number): void {
   ctx.font = LABEL_FONT;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.lineWidth = 3;
+  ctx.lineJoin = 'round'; // mitred joins drew spikes round the letters
   ctx.strokeStyle = 'rgba(16,20,28,0.85)';
   ctx.fillStyle = '#f4f1e8';
-  const cy = Math.cos(yaw), sy = Math.sin(yaw), lim = (r - 14) * (r - 14);
-  for (let i = 0; i < labelText.length; i++) {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), th = H.minimapLabelPx * 0.6 + 2, pad = H.minimapLabelGapPx;
+  let n = 0;
+  // the badges (taxi ranks, dealerships) go on top: labels keep clear of them
+  for (let i = 0; i < badgeX.length && n < placedIdx.length; i++) {
+    const dx = (badgeX[i] - px) * k, dz = (badgeZ[i] - pz) * k;
+    const sx = dx * cy - dz * sy, sz = dx * sy + dz * cy;
+    if (sx * sx + sz * sz > r * r) continue;
+    const rad = (badgeKind[i] === 1 ? H.minimapDealerBadgePx : H.minimapRankBadgePx) + 1;
+    const o = n * 4;
+    placed[o] = sx; placed[o + 1] = sz; placed[o + 2] = rad; placed[o + 3] = rad;
+    placedIdx[n++] = -1;
+  }
+  for (let i = 0; i < labelText.length && n < placedIdx.length; i++) {
     const dx = (labelX[i] - px) * k, dz = (labelZ[i] - pz) * k;
     const sx = dx * cy - dz * sy, sz = dx * sy + dz * cy;
-    if (sx * sx + sz * sz > lim) continue;
     let a = labelAng[i] + yaw;
     a = Math.atan2(Math.sin(a), Math.cos(a));
     if (a > Math.PI / 2) a -= Math.PI;
     else if (a <= -Math.PI / 2) a += Math.PI;
+    const ca = Math.abs(Math.cos(a)), sa = Math.abs(Math.sin(a)), hw = labelW[i] / 2 + 2;
+    const bx = ca * hw + sa * th, bz = sa * hw + ca * th; // half size of the rotated label's screen box
+    if (Math.hypot(sx, sz) + Math.max(bx, bz) > r - 4) continue;
+    let clash = false;
+    for (let j = 0; j < n && !clash; j++) {
+      const o = j * 4;
+      if (Math.abs(sx - placed[o]) < bx + placed[o + 2] + pad && Math.abs(sz - placed[o + 1]) < bz + placed[o + 3] + pad) clash = true;
+      else if (labelText[placedIdx[j]] === labelText[i] && Math.hypot(sx - placed[o], sz - placed[o + 1]) < H.minimapLabelRepeatPx) clash = true;
+    }
+    if (clash) continue;
+    const o = n * 4;
+    placed[o] = sx; placed[o + 1] = sz; placed[o + 2] = bx; placed[o + 3] = bz;
+    placedIdx[n++] = i;
     ctx.setTransform(1, 0, 0, 1, r + sx, r + sz);
     ctx.rotate(a);
     ctx.strokeText(labelText[i], 0, 0);
@@ -160,6 +219,7 @@ export function updateMinimap(w: World): void {
   ctx.arc(r, r, r, 0, Math.PI * 2);
   ctx.clip();
   drawLabels(p.x, p.z, yaw, k, r);
+  drawBadges(p.x, p.z, yaw, k, r);
   ctx.restore();
   // job markers (clamped to the edge when far away)
   for (const mk of w.jobs.markers()) {

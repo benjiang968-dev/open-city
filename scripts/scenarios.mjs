@@ -1394,26 +1394,37 @@ async function frozenShot(page, path, cam) {
 // people -> ~3 s window smash, alarm, people turn to look, 999 call, stars; the owner shouts and holds a grudge.
 export async function theft(page, S) {
   await S.start(page);
-  await page.evaluate(() => {
+  return theftRun(page, { quiet: null, busy: null, shots: true });
+}
+
+/**
+ * The two thefts. A: an unlocked parked car (on a `quiet` street if given) with nobody within 120 m -> no calls, no
+ * stars. B: a locked car (on a `busy` street if given) with four people on the pavement and its owner up the street.
+ * Parked cars are records (w.parked.cars): standing next to one gives it a drivable stand-in (record.v).
+ */
+async function theftRun(page, opts) {
+  await page.evaluate((opts) => {
     const w = window.__oc, run = window.__ocRun;
-    const v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked && typeof c.owner === 'number' && w.peds[c.owner].active)
-      ?? w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.locked);
+    const kerbside = (r) => r.cls !== 'lot' && !r.v && (!opts.quiet || r.street === opts.quiet || r.cls === opts.quiet);
+    const rec = w.parked.cars.find((r) => kerbside(r) && !r.locked && typeof r.owner === 'number' && w.peds[r.owner].active)
+      ?? w.parked.cars.find((r) => kerbside(r) && !r.locked) ?? w.parked.cars.find((r) => kerbside(r));
+    rec.locked = false;
     // empty the street: everyone within 120 m (the owner too) is sent to a pavement far away
-    const far = w.city.walk.nodes.filter((n) => Math.hypot(n.x - v.px, n.z - v.pz) > 200);
+    const far = w.city.walk.nodes.filter((n) => Math.hypot(n.x - rec.x, n.z - rec.z) > 200);
     let moved = 0;
     for (const p of w.peds) {
-      if (!p.active || Math.hypot(p.pos.x - v.px, p.pos.z - v.pz) > 120) continue;
+      if (!p.active || Math.hypot(p.pos.x - rec.x, p.pos.z - rec.z) > 120) continue;
       const n = far[(p.id * 7) % far.length];
       p.pos.set(n.x, window.__mh.gy(n.x, n.z) + 0.02, n.z); p.state = 'idle'; p.timer = 40; p.route = []; moved++;
       if (p.dog) p.dog.pos.set(n.x + 1, window.__mh.gy(n.x + 1, n.z) + 0.02, n.z);
     }
-    const ch = Math.cos(v.heading), sh = Math.sin(v.heading);
-    window.__mh.put(w.player.body, v.px - ch * 2.0, v.pz + sh * 2.0, 1.2);
+    const ch = Math.cos(rec.heading), sh = Math.sin(rec.heading);
+    window.__mh.put(w.player.body, rec.x - ch * 2.0, rec.z + sh * 2.0, 1.2);
     w.player.facing = Math.atan2(ch, -sh); w.cam.yaw = w.player.facing + Math.PI;
     run(0.4);
-    window.__A = { car: v.id, moved };
-  });
-  await frozenShot(page, 'screenshots/23-theft-unlocked.png', null); // the empty street and the steal prompt
+    window.__A = { car: rec.v.id, moved, street: rec.street, cls: rec.cls };
+  }, opts);
+  if (opts.shots) await frozenShot(page, 'screenshots/23-theft-unlocked.png', null); // the empty street and the steal prompt
   const A = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__A.car], moved = window.__A.moved;
     const prompt = w.player.prompt;
@@ -1423,7 +1434,7 @@ export async function theft(page, S) {
     run(8);
     const owner = typeof v.owner === 'number' ? w.peds[v.owner] : null;
     return {
-      car: `${v.type} #${v.id}`, owner: owner ? owner.npc.name : 'nobody', pedsMoved: moved, prompt: prompt.replace(/<[^>]+>/g, ''), inCar, stolen: v.stolen,
+      car: `${v.type} #${v.id}`, street: window.__A.street, cls: window.__A.cls, owner: owner ? owner.npc.name : v.ownerLocal ? 'a local' : 'nobody', pedsMoved: moved, prompt: prompt.replace(/<[^>]+>/g, ''), inCar, stolen: v.stolen,
       thefts: window.__ocTheft.thefts - thefts0, callsStarted: window.__ocWitness.callsStarted - calls0, stars: w.police.stars, heat: w.police.heat,
       ownerMemory: owner ? owner.npc.memory.map((m) => `${m.kind}: ${m.note}`) : [], ownerRel: owner ? owner.npc.relationship : null,
     };
@@ -1431,37 +1442,44 @@ export async function theft(page, S) {
   await page.evaluate(() => { const w = window.__oc; const v = w.player.vehicle; if (v) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); window.__ocRun(0.3); w.input.pressed.add('KeyE'); window.__ocRun(0.2); } });
 
   // ---- B: a locked car, people on the pavement, the owner up the street ----
-  const B0 = await page.evaluate(() => {
+  const B0 = await page.evaluate((opts) => {
     const w = window.__oc, run = window.__ocRun;
     // (an owner who is out and about: not the taxi fare waiting at the rank)
     const free = (id) => w.peds[id].active && !w.peds[id].reserved && !w.peds[id].hidden;
-    let v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && c.locked && !c.stolen && typeof c.owner === 'number' && free(c.owner));
-    if (!v) { // fall back: lock a car and give it an active owner
-      v = w.vehicles.find((c) => c.id > 2 && !c.owned && !c.forSale && !c.stolen);
-      v.locked = true;
-      v.owner = w.peds.find((p) => free(p.id) && p.archetype === 'adult').id;
+    const kerbside = (r) => r.cls !== 'lot' && !r.v && (!opts.busy || r.street === opts.busy || r.cls === opts.busy);
+    let rec = w.parked.cars.find((r) => kerbside(r) && r.locked && typeof r.owner === 'number' && free(r.owner));
+    if (!rec) { // fall back: lock a car and give it an active owner
+      rec = w.parked.cars.find((r) => kerbside(r));
+      rec.locked = true;
+      const o = w.peds.find((p) => free(p.id) && p.archetype === 'adult' && !w.parked.cars.some((r) => r.owner === p.id)) ?? w.peds.find((p) => !p.reserved && !p.hidden && p.archetype === 'adult' && !w.parked.cars.some((r) => r.owner === p.id));
+      if (!o.active) { o.active = true; o.solid = true; o.body.setEnabled(true); }
+      rec.owner = o.id;
+      rec.ownerLocal = false;
     }
-    const owner = w.peds[v.owner];
-    const ch = Math.cos(v.heading), sh = Math.sin(v.heading);
+    const owner = w.peds[rec.owner];
+    const ch = Math.cos(rec.heading), sh = Math.sin(rec.heading);
     const kx = -ch, kz = sh; // towards the kerb (the car's right side)
-    const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+    const fx = Math.sin(rec.heading), fz = Math.cos(rec.heading);
     // four people on the pavement nearby (elderly and posh/friendly adults are the likeliest to call)
     const rank = (p) => (p.archetype === 'elderly' ? 0 : p.npc.personality === 'posh' || p.npc.personality === 'friendly' ? 1 : 2);
-    const wit = w.peds.filter((p) => p.active && p !== owner && p.followId < 0 && !p.reserved && ['elderly', 'adult', 'parent', 'delivery'].includes(p.archetype))
-      .sort((a, b) => rank(a) - rank(b)).slice(0, 4);
+    // (people out and about first; at a quiet hour someone off-stage is brought out: the crowd follows the map's density)
+    const wit = w.peds.filter((p) => p !== owner && p.followId < 0 && !p.reserved && !p.hidden && p.state !== 'down' && ['elderly', 'adult', 'parent', 'delivery'].includes(p.archetype))
+      .sort((a, b) => (b.active - a.active) || rank(a) - rank(b)).slice(0, 4);
+    for (const p of wit) if (!p.active) { p.active = true; p.solid = true; p.body.setEnabled(true); }
     [-11, -6, 7, 12].forEach((off, i) => {
       const p = wit[i];
-      p.pos.set(v.px + kx * 3.0 + fx * off, window.__mh.gy(v.px + kx * 3.0 + fx * off, v.pz + kz * 3.0 + fz * off) + 0.02, v.pz + kz * 3.0 + fz * off);
+      p.pos.set(rec.x + kx * 3.0 + fx * off, window.__mh.gy(rec.x + kx * 3.0 + fx * off, rec.z + kz * 3.0 + fz * off) + 0.02, rec.z + kz * 3.0 + fz * off);
       p.state = 'idle'; p.timer = 40; p.route = [];
     });
-    owner.pos.set(v.px + kx * 3.0 - fx * 23, window.__mh.gy(v.px + kx * 3.0 - fx * 23, v.pz + kz * 3.0 - fz * 23) + 0.02, v.pz + kz * 3.0 - fz * 23);
+    owner.pos.set(rec.x + kx * 3.0 - fx * 23, window.__mh.gy(rec.x + kx * 3.0 - fx * 23, rec.z + kz * 3.0 - fz * 23) + 0.02, rec.z + kz * 3.0 - fz * 23);
     owner.state = 'idle'; owner.timer = 40; owner.route = [];
-    window.__mh.put(w.player.body, v.px + kx * 1.95, v.pz + kz * 1.95, 1.2);
+    window.__mh.put(w.player.body, rec.x + kx * 1.95, rec.z + kz * 1.95, 1.2);
     w.player.facing = Math.atan2(-kx, -kz);
     run(0.4);
+    const v = rec.v;
     window.__B = { car: v.id, owner: owner.id, wit: wit.map((p) => p.id), calls0: window.__ocWitness.callsStarted, done0: window.__ocWitness.callsCompleted, stars0: w.police.stars };
-    return { car: `${v.type} #${v.id}`, owner: `${owner.npc.name} (${owner.npc.personality})`, witnesses: wit.map((p) => `${p.archetype}/${p.npc.personality}`), prompt: w.player.prompt.replace(/<[^>]+>/g, ''), starsBefore: w.police.stars };
-  });
+    return { car: `${v.type} #${v.id}`, street: rec.street, cls: rec.cls, owner: `${owner.npc.name} (${owner.npc.personality})`, witnesses: wit.map((p) => `${p.archetype}/${p.npc.personality}`), prompt: w.player.prompt.replace(/<[^>]+>/g, ''), starsBefore: w.police.stars };
+  }, opts);
   // press E and watch the smash play out
   const B1 = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
@@ -1482,7 +1500,7 @@ export async function theft(page, S) {
     const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh, fx = Math.sin(v.heading), fz = Math.cos(v.heading);
     return { px: v.px + kx * 3.4 - fx * 3.6, py: 2.0, pz: v.pz + kz * 3.4 - fz * 3.6, lx: v.px + kx * 0.9 + fx * 0.4, ly: 1.05, lz: v.pz + kz * 0.9 + fz * 0.4 };
   });
-  await frozenShot(page, 'screenshots/23-theft-smash.png', cam1);
+  if (opts.shots) await frozenShot(page, 'screenshots/23-theft-smash.png', cam1);
   const B2 = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
     let k = 0;
@@ -1502,7 +1520,7 @@ export async function theft(page, S) {
     // down the pavement: the owner running up in front, the callers, then the car
     return { px: v.px + kx * 5.5 - fx * 27, py: 3.4, pz: v.pz + kz * 5.5 - fz * 27, lx: v.px + kx * 1.5 + fx * 2, ly: 1.0, lz: v.pz + kz * 1.5 + fz * 2 };
   });
-  await frozenShot(page, 'screenshots/23-theft-alarm.png', cam2);
+  if (opts.shots) await frozenShot(page, 'screenshots/23-theft-alarm.png', cam2);
   const B3 = await page.evaluate(() => {
     const w = window.__oc, run = window.__ocRun; const v = w.vehicles[window.__B.car];
     const owner = w.peds[window.__B.owner];
@@ -1599,14 +1617,22 @@ export async function mapcheck(page, S) {
     // ---- 1) drive ----
     const hit = { edge: -1, s: 0, x: 0, y: 0, z: 0, heading: 0, dist: 0 };
     const car = w.traffic.find((t) => t.phase === 'lane') ?? w.traffic[0];
-    let prev = car.edge, streak = 0, best = 0, jumps = 0, maxOff = 0, uTurns = 0;
+    car.keep = true; // followed round the whole map: never moved nearer the player
+    let prev = car.edge, streak = 0, best = 0, jumps = 0, maxOff = 0, uTurns = 0, laneChanges = 0;
     const visited = new Set([prev]), path = [];
     const simStart = w.time;
     while (streak < 30 && w.time - simStart < 900) {
       window.__ocRun(0.1, 30);
-      if (car.phase === 'lane' && car.stunT <= 0) maxOff = Math.max(maxOff, M.projectOnLane(E[car.edge], car.px, car.pz, hit).dist);
+      if (car.phase === 'lane' && car.stunT <= 0) {
+        // off its lane beyond the sideways offset of a lane change it is making (car.latOff)
+        const h = M.projectOnLane(E[car.edge], car.px, car.pz, hit);
+        const lat = (car.px - h.x) * -Math.cos(h.heading) + (car.pz - h.z) * Math.sin(h.heading);
+        maxOff = Math.max(maxOff, Math.abs(lat - (car.latOff ?? 0)));
+      }
       if (car.edge === prev) continue;
-      const from = E[prev], legal = N[from.to].out.includes(car.edge);
+      const from = E[prev];
+      if (from.left === car.edge || from.right === car.edge) { laneChanges++; visited.add(car.edge); prev = car.edge; continue; } // a lane change, not a choice
+      const legal = N[from.to].out.includes(car.edge);
       if (legal) {
         streak++;
         if (car.edge === from.twin && !N[from.to].deadEnd) uTurns++;
@@ -1616,7 +1642,8 @@ export async function mapcheck(page, S) {
       visited.add(car.edge);
       prev = car.edge;
     }
-    const drive = { choices: best, jumps, uTurnsNotAtDeadEnds: uTurns, maxOffLaneM: +maxOff.toFixed(2), simSeconds: Math.round(w.time - simStart), lanesVisited: visited.size, route: path.slice(0, 12).join(' > ') };
+    car.keep = false;
+    const drive = { choices: best, jumps, laneChanges, uTurnsNotAtDeadEnds: uTurns, maxOffLaneM: +maxOff.toFixed(2), simSeconds: Math.round(w.time - simStart), lanesVisited: visited.size, route: path.slice(0, 12).join(' > ') };
     // ---- 2) walks ----
     const router = M.walkRouter(), W = c.walk.nodes;
     let ok = 0, fail = 0, badLink = 0, hops = 0, metres = 0;
@@ -1720,9 +1747,10 @@ export async function geoplay(page, S) {
     const ring = E.filter((e) => e.roundabout);
     if (!ring.length) return { skipped: 'no roundabout on this map' };
     const lp = { x: 0, y: 0, z: 0, heading: 0 };
-    // six traffic cars onto the ring (as traffic.placeOnEdge does)
+    // six traffic cars onto the ring
     w.traffic.slice(0, 6).forEach((car, k) => {
       const e = ring[(k * 5) % ring.length];
+      if (window.__ocTraffic) { window.__ocTraffic.placeOnEdge(car, e.id, 2); car.speed = 4; return; }
       car.edge = e.id; car.next = -1; car.phase = 'lane'; car.s = Math.min(e.len - e.trimEnd - 1, e.trimStart + 2);
       window.__ocMap.laneSample(e, car.s, lp);
       car.heading = lp.heading; car.lastSetHeading = NaN; car.speed = 4; car.stunT = 0; car.stuckT = 0;
@@ -2393,4 +2421,563 @@ export async function physf4(page) {
   }
   await page.evaluate(() => { const w = window.__oc; w.cam.override = null; if (w.physDebug.on) { w.input.pressed.add('F4'); window.__ocFrames(1, true); } });
   return { shots, pass: shots.every((s) => s.edges > 0) };
+}
+
+// Gate drive on the real graph (MAP=georgetown node scripts/shot.mjs x geodrive): your car drives Key Bridge -> M St
+// east -> Pennsylvania Ave -> once round Washington Circle -> K St west to the waterfront, steered by a simple
+// autopilot that only presses W/A/S/D/Space (no teleports after the start), stopping at red lights, waiting at stop
+// signs, yielding on entering the circle and keeping its distance; traffic runs at the preset's density meanwhile.
+// Measures the route and every AI car (window.__oc.trafficSim.stats with the audit on, plus an independent check of
+// each car's lane-to-lane moves), CPU per frame and the traffic / police profiler sections. Screenshots
+// 28-traffic-{keybridge,mst,signals,circle}.png.
+export async function geodrive(page, S) {
+  await S.start(page);
+  const out = {};
+  out.route = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, E = c.roads.edges, N = c.roads.nodes, J = w.junctions, T = window.__ocTraffic;
+    const router = window.__ocMap.roadRouter();
+    const lStart = (e) => Math.min(e.trimStart, e.len * 0.5), lStop = (e) => Math.max(lStart(e), e.len - e.trimEnd);
+    const namesAt = (n) => new Set([...n.in, ...n.out].map((i) => E[i].name));
+    const nodeWith = (a, b) => N.find((n) => !n.roundabout && namesAt(n).has(a) && namesAt(n).has(b));
+    const traffic = (e) => J.edgeRank[e.id] >= 0;
+    const kb = E.find((e) => e.bridge && /Key Bridge/.test(e.name ?? '') && e.pts[e.pts.length - 1] < e.pts[2] && J.edgeRank[e.id] === 0);
+    if (!kb) return { error: 'no Key Bridge (run with MAP=georgetown)' };
+    const route = [kb.id];
+    const go = (node) => {
+      const at = E[route[route.length - 1]].to;
+      if (at === node) return true;
+      const n = router.path(at, node);
+      if (n <= 0) return false;
+      for (let i = 0; i < n; i++) route.push(router.edges[i]);
+      return true;
+    };
+    const wps = [nodeWith('M St NW', 'Wisconsin Ave NW'), nodeWith('M St NW', 'Pennsylvania Ave NW'), nodeWith('Pennsylvania Ave NW', '24th St NW')];
+    for (const n of wps) if (!n || !go(n.id)) return { error: `no route to ${n ? n.id : '?'}`, route };
+    // into the circle from Pennsylvania Ave (the entry nearest the end of the route so far)
+    const here = N[E[route[route.length - 1]].to];
+    const entry = N.filter((n) => n.roundabout && namesAt(n).has('Pennsylvania Ave NW')).sort((a, b) => Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z))[0];
+    if (!entry || !go(entry.id)) return { error: 'no way into the circle', route };
+    // once round (outer lane) and on to the K St exit on the west side
+    const kExit = N.filter((n) => n.roundabout && namesAt(n).has('K St NW')).sort((a, b) => a.x - b.x)[0];
+    let at = entry.id, ringSteps = 0;
+    for (let k = 0; k < 20; k++) {
+      const e = E.find((q) => q.roundabout && q.from === at && J.edgeRank[q.id] === 0);
+      route.push(e.id); ringSteps++; at = e.to;
+      if (ringSteps >= 8 && at === kExit.id) break;
+    }
+    const kOut = N[kExit.id].out.map((i) => E[i]).find((e) => !e.roundabout && e.name === 'K St NW' && traffic(e));
+    if (!kOut) return { error: 'no K St exit', route };
+    route.push(kOut.id);
+    const tj = nodeWith('K St NW', 'Thomas Jefferson St NW');
+    if (!go(tj.id)) return { error: 'no route to the waterfront', route };
+    const last = N[tj.id].out.map((i) => E[i]).find((e) => e.name === 'K St NW' && traffic(e) && N[e.to].x < N[tj.id].x);
+    route.push(last.id);
+    // lanes (lane discipline): on each road the lane furthest from the kerb that may make the move onto the next road
+    // (clear of kerbside clutter, as most drivers going straight on), the outer lane round the circle and into it;
+    // the car enters each road in the lane its move leads into and changes lanes along the road where they differ
+    const groupOf = (id) => J.edgeGroup[id];
+    const enter = [route[0]], chosen = [];
+    for (let i = 0; i < route.length; i++) {
+      const e = E[route[i]];
+      const nextG = i < route.length - 1 ? groupOf(route[i + 1]) : -1;
+      const outer = e.roundabout || (i < route.length - 1 && E[route[i + 1]].roundabout && !e.roundabout);
+      let hi = e; while (hi.left >= 0) hi = E[hi.left];
+      let pick = -1, pickOut = -1;
+      for (let l = hi; l && pick < 0; l = l.right >= 0 ? E[l.right] : null) {
+        if (!traffic(l)) continue;
+        if (nextG < 0) { pick = l.id; break; }
+        const m0 = J.edgeM0[l.id], mn = J.edgeMN[l.id];
+        for (let m = m0; m < m0 + mn; m++) {
+          if (!J.mvOk[m] || groupOf(J.mvOut[m]) !== nextG) continue;
+          if (outer && J.edgeRank[J.mvOut[m]] !== 0) continue; // the circle: its outer lane
+          pick = l.id; pickOut = J.mvOut[m]; break;
+        }
+      }
+      if (pick < 0) { pick = route[i]; pickOut = i < route.length - 1 ? route[i + 1] : -1; }
+      chosen.push(pick);
+      if (i < route.length - 1) enter.push(pickOut);
+    }
+    // the path: lane centre lines from start to stop line (easing across where the entry lane is not the chosen one),
+    // junction curves between
+    const P = [], edgeOf = [], stopIdx = [];
+    const lp = { x: 0, y: 0, z: 0, heading: 0 }, lq = { x: 0, y: 0, z: 0, heading: 0 };
+    chosen.forEach((id, k) => {
+      const e = E[id], a = E[enter[k]];
+      const s0 = k === 0 ? e.len * 0.3 : lStart(e), s1 = k === chosen.length - 1 ? Math.min(lStop(e), lStart(e) + 45) : lStop(e);
+      const sB = Math.max(s0 + 4, s1 - 22), sA = Math.max(s0, sB - 30);
+      for (let s = s0; s <= s1 + 0.01; s = s >= s1 ? s1 + 1 : Math.min(s1, s + 2)) {
+        window.__ocMap.laneSample(e, s, lp);
+        if (a.id !== e.id && s < sB) {
+          window.__ocMap.laneSample(a, Math.min(s, a.len), lq);
+          const t = s <= sA ? 0 : (s - sA) / (sB - sA), u = t * t * (3 - 2 * t);
+          lp.x = lq.x + (lp.x - lq.x) * u; lp.z = lq.z + (lp.z - lq.z) * u;
+        }
+        P.push(lp.x, lp.y, lp.z); edgeOf.push(k);
+      }
+      stopIdx.push(edgeOf.length - 1);
+      if (k < chosen.length - 1) {
+        const cv = T.turnCurve(id, enter[k + 1]);
+        for (let j = 1; j < cv.length / 2 - 1; j++) { P.push(cv[j * 2], NaN, cv[j * 2 + 1]); edgeOf.push(k); }
+      }
+    });
+    route.splice(0, route.length, ...chosen);
+    const n = P.length / 3, cum = new Float64Array(n);
+    for (let i = 1; i < n; i++) cum[i] = cum[i - 1] + Math.hypot(P[i * 3] - P[i * 3 - 3], P[i * 3 + 2] - P[i * 3 - 1]);
+    window.__gd = { route, P, edgeOf, stopIdx, cum, n, idx: 0, maxDev: 0, t0: 0, frames: 0, cpu: [], slow: [], seen: {}, sec: {}, stopT: 0, stoppedAt: -1, playerRedRuns: 0, stuckT: 0, illegal: 0, illegalWhere: '', moves: 0, last: new Map(), hp0: 0 };
+    const names = []; for (const id of route) { const nm = E[id].name ?? E[id].roadId; if (names[names.length - 1] !== nm) names.push(nm); }
+    return { edges: route.length, metres: Math.round(cum[n - 1]), roads: names.join(' > '), ringLanes: ringSteps, lanes: route.map((id, k) => `${E[id].name}#${id}L${E[id].lane}${enter[k] !== id ? `(from L${E[enter[k]].lane})` : ''}`).join(' ') };
+  });
+  if (out.route.error) return out;
+  // put your car at the start (the one teleport): on Key Bridge's northbound kerb lane, 30% along, at rest
+  out.start = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun, G = window.__gd, E = w.city.roads.edges;
+    let v = w.player.vehicle;
+    if (!v) {
+      v = w.vehicles.find((q) => q.owned) ?? w.vehicles[0];
+      window.__mh.put(w.player.body, v.px - Math.cos(v.heading) * 2.2, v.pz + Math.sin(v.heading) * 2.2, 1.2);
+      run(0.2); w.input.pressed.add('KeyE'); run(0.2);
+    }
+    v = w.player.vehicle;
+    const x = G.P[0], y = G.P[1], z = G.P[2], h = Math.atan2(G.P[3] - x, G.P[5] - z);
+    v.body.setTranslation({ x, y: y + 0.9, z }, true);
+    v.body.setRotation({ x: 0, y: Math.sin(h / 2), z: 0, w: Math.cos(h / 2) }, true);
+    v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0);
+    w.cam.yaw = h + Math.PI;
+    w.dayNight.hour = 13.5;
+    run(1.5); // traffic gathers round the new spot
+    w.trafficSim.measure = true; window.__ocTraffic.resetStats();
+    G.t0 = w.time; G.hp0 = v.health; G.hpLast = v.health; G.dmg = [];
+    for (const car of w.traffic) G.last.set(car, [car.edge, car.respawns]);
+    // the autopilot: one 60 Hz frame per step, keys only
+    const J = w.junctions, CTL = { SIGNALS: 1, STOP: 2, PRIORITY: 3, ALLWAY: 4, RING: 5 };
+    const SEC = ['traffic', 'police-drive', 'police', 'traffic-ctl', 'physics', 'peds'];
+    const secIdx = SEC.map((n) => w.prof.names.indexOf(n));
+    const keys = ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'Space'];
+    window.__gdStep = (maxFrames, until) => {
+      const N = w.city.roads.nodes;
+      for (let f = 0; f < maxFrames; f++) {
+        const v = w.player.vehicle;
+        if (!v) return { status: 'out of car' };
+        const px = v.px, pz = v.pz;
+        // progress along the path
+        let best = G.idx, bd = Infinity;
+        for (let i = G.idx; i < Math.min(G.n, G.idx + 50); i++) { const d = Math.hypot(G.P[i * 3] - px, G.P[i * 3 + 2] - pz); if (d < bd) { bd = d; best = i; } }
+        G.idx = best;
+        if (bd > G.maxDev) { G.maxDev = bd; G.maxDevAt = `${E[G.route[G.edgeOf[best]]].name} (${Math.round(px)}, ${Math.round(pz)})`; }
+        if (G.idx >= G.n - 3) { for (const key of keys) w.input.keys.delete(key); return { status: 'done' }; }
+        const k = G.edgeOf[G.idx], eid = G.route[k], e = E[eid];
+        // steering: pure pursuit on a point Ld ahead
+        const sp = Math.max(0, v.speed);
+        const Ld = 6 + 0.45 * sp;
+        let li = G.idx; while (li < G.n - 1 && G.cum[li] - G.cum[G.idx] < Ld) li++;
+        const tx = G.P[li * 3], tz = G.P[li * 3 + 2];
+        const bearing = Math.atan2(tx - px, tz - pz);
+        const alpha = Math.atan2(Math.sin(bearing - v.heading), Math.cos(bearing - v.heading));
+        const wb = v.spec.wheelZFront - v.spec.wheelZRear;
+        const want = Math.atan((2 * wb * Math.sin(alpha)) / Ld);
+        // speed: road speed, curves ahead, red lights, stop signs, the circle, cars and people ahead
+        let target = Math.min(e.speed, 14);
+        for (let i = G.idx + 1; i < G.n - 4 && G.cum[i] - G.cum[G.idx] < 60; i++) {
+          const a0 = Math.atan2(G.P[i * 3] - G.P[i * 3 - 3], G.P[i * 3 + 2] - G.P[i * 3 - 1]);
+          let j = i; while (j < G.n - 1 && G.cum[j] - G.cum[i] < 8) j++;
+          const a1 = Math.atan2(G.P[j * 3] - G.P[j * 3 - 3], G.P[j * 3 + 2] - G.P[j * 3 - 1]);
+          const bend = Math.abs(Math.atan2(Math.sin(a1 - a0), Math.cos(a1 - a0)));
+          if (bend < 0.05) continue;
+          const vc = Math.sqrt(3.2 * Math.max(4, (G.cum[j] - G.cum[i]) / bend));
+          target = Math.min(target, Math.sqrt(vc * vc + 2 * 3 * (G.cum[i] - G.cum[G.idx])));
+        }
+        const dStop = G.cum[G.stopIdx[k]] - G.cum[G.idx];
+        const c = J.nodes[e.to];
+        let hold = false;
+        if (k < G.route.length - 1 && dStop < 70 && dStop > -0.5) { // (once over the line, carry on: holding in the box blocked the ring)
+          if (c.kind === CTL.SIGNALS) {
+            const L = J.light[eid];
+            if (L === 2 || (L === 1 && dStop > (sp * sp) / 8 + 3)) hold = true;
+          } else if (c.kind === CTL.STOP || c.kind === CTL.ALLWAY || (c.kind === CTL.PRIORITY && c.apRank[J.edgeAp[eid]] < c.majorRank)) {
+            if (G.stoppedAt !== e.to) hold = true;
+          } else if (c.kind === CTL.RING && !e.roundabout) {
+            for (const o of w.traffic) { const d = window.__ocTraffic.ringDist(o, e.to); if (d < 34 && (d < 10 || d / Math.max(o.speed, 0.5) < 3.6)) hold = true; }
+          }
+        }
+        // the next lane is too short to stop on (K St off Washington Circle, 2 m before a signal): stop for that
+        // signal from here, as the AI cars do (they go round the ring again instead)
+        if (!hold && k + 1 < G.route.length - 1 && J.shortLane[G.route[k + 1]] && J.nodes[E[G.route[k + 1]].to].kind === CTL.SIGNALS && J.light[G.route[k + 1]] !== 0) {
+          const d2 = G.cum[G.stopIdx[k + 1]] - G.cum[G.idx];
+          if (d2 < 70) { hold = true; target = Math.min(target, Math.sqrt(2 * 3 * Math.max(0, d2 - 3))); }
+        }
+        if (hold) target = Math.min(target, Math.sqrt(2 * 3 * Math.max(0, dStop - 3)));
+        G.why = hold ? `hold at node ${e.to} (kind ${c.kind}) dStop ${dStop.toFixed(1)}` : '';
+        // stop signs: a full second at the line, then the junction box must be clear
+        if (hold && G.stoppedAt !== e.to && (c.kind === CTL.STOP || c.kind === CTL.ALLWAY || c.kind === CTL.PRIORITY) && dStop < 6 && sp < 0.4) {
+          G.stopT += 1 / 60;
+          const busy = w.traffic.some((o) => o.phase === 'turn' && !o.respawnWanted && E[o.edge].to === e.to && (o.speed > 0.5 || Math.hypot(o.px - px, o.pz - pz) < 15));
+          if (G.stopT > 1 && !busy) { G.stoppedAt = e.to; G.stopT = 0; }
+        }
+        // anything ahead in our way
+        const fx = Math.sin(v.heading), fz = Math.cos(v.heading);
+        const ahead = (ox, oy, oz, half, what, latMax = 2.4) => { const rx = ox - px, rz = oz - pz, al = rx * fx + rz * fz, lat = Math.abs(rx * fz - rz * fx); if (al > 0 && al < 45 && lat < latMax && Math.abs(oy - v.py) < 3) { const t = Math.max(0, (al - half - 5) * 0.7); if (t < target) { target = t; G.why = `${what} ${al.toFixed(1)} m ahead`; } } };
+        for (const o of w.traffic) ahead(o.px, o.py, o.pz, o.halfL, `car ${o.id} (${o.phase}, hold ${o.hold})`);
+        for (const o of w.police.cars) ahead(o.px, o.py, o.pz, o.halfL, 'police');
+        // people: in the road only (AI traffic's band); a wider one stopped us for someone on the Key Bridge pavement
+        for (const p of w.peds) if (p.active && !p.hidden && p.state !== 'down') ahead(p.pos.x, p.pos.y, p.pos.z, 0.5, `person ${p.id} (${p.state})`, 1.7);
+        // keys
+        for (const key of keys) w.input.keys.delete(key);
+        if (want > v.steer + 0.01) w.input.keys.add('KeyA');
+        else if (want < v.steer - 0.01) w.input.keys.add('KeyD');
+        if (target < 0.3 && Math.abs(v.speed) < 1.5) w.input.keys.add('Space');
+        else if (v.speed < target - 0.3) w.input.keys.add('KeyW');
+        else if (v.speed > target + 0.8 && v.speed > 1.2) w.input.keys.add('KeyS');
+        // our own red-light crossings
+        if (G.lastK !== undefined && G.lastK !== k && J.nodes[E[G.route[G.lastK]].to].kind === CTL.SIGNALS && J.light[G.route[G.lastK]] === 2) G.playerRedRuns++;
+        G.lastK = k;
+        // one frame
+        const fr = window.__ocFrames(1, false)[0];
+        G.frames++;
+        G.cpu.push(fr.cpu);
+        if (fr.cpu > 33 && G.slow.length < 12) G.slow.push(`${fr.cpu.toFixed(0)} ms: ${fr.top}`);
+        for (let s = 0; s < SEC.length; s++) G.sec[SEC[s]] = (G.sec[SEC[s]] ?? 0) + w.prof.cur[secIdx[s]];
+        // independent check of every AI car's moves: lane -> next lane out of its junction, or a neighbour lane
+        for (const car of w.traffic) {
+          const l = G.last.get(car);
+          if (!l) { G.last.set(car, [car.edge, car.respawns]); continue; }
+          if (l[0] !== car.edge) {
+            if (l[1] === car.respawns) {
+              const a = E[l[0]];
+              G.moves++;
+              if (!N[a.to].out.includes(car.edge) && a.left !== car.edge && a.right !== car.edge) { G.illegal++; G.illegalWhere = `car ${car.id} ${a.name}#${a.id} -> ${E[car.edge].name}#${car.edge}`; }
+            }
+            l[0] = car.edge;
+          }
+          l[1] = car.respawns;
+        }
+        if (v.health < G.hpLast - 0.5 && G.dmg.length < 8) {
+          // what hit us (or what we hit): the nearest AI car
+          let near = null, nd = Infinity;
+          for (const o of w.traffic.concat(w.police.cars)) { const d = Math.hypot(o.px - px, o.pz - pz); if (d < nd) { nd = d; near = o; } }
+          G.dmg.push(`t ${(w.time - G.t0).toFixed(1)} -${(G.hpLast - v.health).toFixed(0)} hp at (${Math.round(px)}, ${Math.round(pz)}) on ${e.name} v ${(sp * 3.6).toFixed(0)} km/h; nearest ${near ? `${near.kind} ${near.id} ${near.phase} ${E[near.edge].name}#${near.edge} ${nd.toFixed(1)} m` : '-'}; ${G.why}`);
+        }
+        G.hpLast = v.health;
+        if (sp < 0.3) G.stuckT += 1 / 60; else G.stuckT = 0;
+        if (G.stuckT > 60) return { status: 'stuck', at: [Math.round(px), Math.round(pz)], edge: e.name, why: G.why, target: +target.toFixed(2), keys: [...w.input.keys].join(' '), speed: +v.speed.toFixed(2), steer: +v.steer.toFixed(2) };
+        if (until) { const cp = until(G, v, e, k); if (cp && !G.seen[cp]) { G.seen[cp] = 1; return { status: 'checkpoint', name: cp }; } }
+      }
+      return { status: 'running' };
+    };
+    return { x: Math.round(x), y: +y.toFixed(1), z: Math.round(z), heading: +h.toFixed(2), inCar: !!w.player.vehicle };
+  });
+  const step = (n, until) => page.evaluate(([n, u]) => window.__gdStep(n, u ? new Function('G', 'v', 'e', 'k', u) : null), [n, until ?? null]);
+  const pos = () => page.evaluate(() => { const v = window.__oc.player.vehicle, G = window.__gd; return { t: +(window.__oc.time - G.t0).toFixed(1), x: Math.round(v.px), y: +v.py.toFixed(1), z: Math.round(v.pz), kmh: Math.round(v.speed * 3.6), road: window.__oc.city.roads.edges[G.route[G.edgeOf[G.idx]]].name, donePct: +(G.cum[G.idx] / G.cum[G.n - 1] * 100).toFixed(1) }; });
+  out.progress = [];
+  // Key Bridge: a few seconds in, on the deck
+  let r = await step(60 * 6);
+  out.progress.push({ ...(await pos()), status: r.status });
+  await frozenShot(page, 'screenshots/28-traffic-keybridge.png', null);
+  // the rest, with three checkpoints for screenshots on the way: M St past Wisconsin Ave, standing at a red light, on the circle
+  const until = [
+    "if (/M St/.test(e.name || '') && v.px > -100) return 'mst';",
+    "const J = window.__oc.junctions; if (J.nodes[e.to].kind === 1 && J.light[e.id] === 2 && v.speed < 0.3 && G.cum[G.stopIdx[k]] - G.cum[G.idx] < 12) return 'signals';",
+    // the circle: on the ring with at least 4 AI cars round it (else on the last ring lane before the exit)
+    "const E = window.__oc.city.roads.edges; if (k > 0 && E[G.route[k]].roundabout && G.cum[G.idx] - G.cum[G.stopIdx[k - 1]] > 10) { const ring = window.__oc.city.roads.nodes.filter((n) => n.roundabout); const cx = ring.reduce((s, n) => s + n.x, 0) / ring.length, cz = ring.reduce((s, n) => s + n.z, 0) / ring.length; const near = window.__oc.traffic.filter((o) => Math.hypot(o.px - cx, o.pz - cz) < 75).length; if (near >= 4 || !E[G.route[k + 1]].roundabout) return 'circle'; }",
+    'return null;',
+  ].join('\n');
+  for (let k = 0; k < 60 && r.status !== 'done' && r.status !== 'stuck' && r.status !== 'out of car'; k++) {
+    r = await step(60 * 30, until);
+    if (r.status === 'checkpoint') {
+      out.progress.push({ ...(await pos()), status: r.name });
+      if (r.name === 'mst') await frozenShot(page, 'screenshots/28-traffic-mst.png', null);
+      if (r.name === 'signals') {
+        const cam = await page.evaluate(() => { const v = window.__oc.player.vehicle, h = v.heading; return { px: v.px - Math.sin(h) * 9 + Math.cos(h) * 3, py: 6, pz: v.pz - Math.cos(h) * 9 - Math.sin(h) * 3, lx: v.px + Math.sin(h) * 28, ly: 3.5, lz: v.pz + Math.cos(h) * 28 }; });
+        await frozenShot(page, 'screenshots/28-traffic-signals.png', cam);
+      }
+      if (r.name === 'circle') {
+        const cam = await page.evaluate(() => { const c = window.__oc.city, ring = c.roads.nodes.filter((n) => n.roundabout); const cx = ring.reduce((s, n) => s + n.x, 0) / ring.length, cz = ring.reduce((s, n) => s + n.z, 0) / ring.length; return { px: cx - 10, py: 60, pz: cz + 95, lx: cx, ly: 0, lz: cz }; });
+        await frozenShot(page, 'screenshots/28-traffic-circle.png', cam);
+      }
+    } else if (k % 3 === 0) out.progress.push({ ...(await pos()), status: r.status });
+  }
+  out.progress.push({ ...(await pos()), status: r.status, why: r.at ? `${r.edge} at ${r.at}: ${r.why} target ${r.target} keys ${r.keys} v ${r.speed} steer ${r.steer}` : undefined });
+  out.result = await page.evaluate((status) => {
+    const w = window.__oc, G = window.__gd, st = w.trafficSim.stats, v = w.player.vehicle;
+    const cpu = [...G.cpu].sort((a, b) => a - b);
+    const q = (p) => +cpu[Math.min(cpu.length - 1, Math.floor(cpu.length * p))].toFixed(2);
+    const per = (n) => +(G.sec[n] / G.frames).toFixed(3);
+    for (const k of ['KeyW', 'KeyS', 'KeyA', 'KeyD', 'Space']) w.input.keys.delete(k);
+    w.trafficSim.measure = false;
+    return {
+      completed: status === 'done', status, routeSeconds: +(w.time - G.t0).toFixed(1), routeMetres: Math.round(G.cum[G.n - 1]), maxOffPathM: +G.maxDev.toFixed(2), maxOffPathAt: G.maxDevAt,
+      playerDamage: Math.round(G.hp0 - (v ? v.health : 0)), damageEvents: G.dmg, playerRedRuns: G.playerRedRuns,
+      ai: {
+        cars: w.traffic.length, wrongWayMoves: st.wrongWay, lastWrongWay: st.lastWrongWay, illegalLaneMoves: G.illegal, illegalWhere: G.illegalWhere, laneMovesChecked: G.moves,
+        redLightRuns: st.redRuns, signalCrossings: st.signalCrossings, lastRedRun: st.lastRedRun,
+        ringEntries: st.ringEntries, ringEntriesNotYielding: st.yieldFails, lastYieldFail: st.lastYieldFail, ringStops: st.ringStops, ringGoRound: st.ringGoRound,
+        stuckOver20s: st.stuck, stuckOver20sAtRed: st.stuckAtRed, stuckWhere: st.stuckWhere, longestStillS: +st.stillMax.toFixed(1),
+        maxOffLaneM: +st.offLaneMax.toFixed(2), offLaneWhere: st.offLaneWhere, carStepsOver2m: st.offLaneOver2, offLaneEvents: st.offLaneEvents,
+        wrongLevel: st.wrongLevel, lastWrongLevel: st.lastWrongLevel, aiCollisions: st.aiContacts, lastContact: st.lastContact,
+        laneChanges: st.laneChanges, laneChangeAborts: st.laneChangeAborts, recycled: st.recycled, respawned: st.respawned, leftMap: st.leftMap, clearedHeld: st.clearedHeld,
+        contactWhere: st.contactWhere,
+      },
+      cpu: { frames: G.frames, medianMs: q(0.5), p99Ms: q(0.99), maxMs: q(1), over33ms: cpu.filter((x) => x > 33).length, slowFrames: G.slow, perFrameMs: { traffic: per('traffic'), policeDrive: per('police-drive'), police: per('police'), trafficCtl: per('traffic-ctl'), physics: per('physics'), peds: per('peds') } },
+      f3SpikesWindow: w.prof.spikes(w.time),
+      near: status === 'done' ? undefined : w.traffic.filter((o) => Math.hypot(o.px - v.px, o.pz - v.pz) < 60).map((o) => { const E = w.city.roads.edges, e = E[o.edge]; return `${o.id} ${o.phase} hold${o.hold} ${e.name}#${o.edge}->${o.next >= 0 ? E[o.next].name + '#' + o.next : -1} node${e.to} s${o.s.toFixed(1)}/${(e.len - e.trimEnd).toFixed(1)} v${o.speed.toFixed(1)} rw${o.respawnWanted ? 1 : 0} stuck${o.stuckT.toFixed(0)} (${o.px.toFixed(0)},${o.pz.toFixed(0)})`; }),
+    };
+  }, r.status);
+  return out;
+}
+// Life on the streets (MAP=georgetown node scripts/shot.mjs x geolife): crowd density from the map. For each check the
+// game clock is held at an hour, the player stands on a pavement, the crowd settles for `settle` game seconds, then the
+// active people inside the same-size window (WINDOW m round the spot) are counted, with the F3 numbers (the density
+// target, the real-world head count it comes from, the active count) and the computed people per metre there.
+const WINDOW = 60;
+async function crowdAt(page, place, hour, settle = 40) {
+  return page.evaluate(([place, hour, settle, R]) => {
+    const w = window.__oc, c = w.city, run = window.__ocRun;
+    const p = typeof place === 'string' ? window.__mh.place(place) : place;
+    const n = c.walk.nodes[c.nearestWalk(p.x, p.z, p.y ?? NaN)];
+    if (w.player.vehicle) { w.input.pressed.add('KeyE'); run(0.3); }
+    w.player.body.setTranslation({ x: n.x, y: n.y + 1.2, z: n.z }, true);
+    w.dayNight.hour = hour;
+    const c0 = { added: w.pedDensity.added, removed: w.pedDensity.removed, relocated: w.pedDensity.relocated };
+    for (let t = 0; t < settle; t += 5) { w.dayNight.hour = hour; run(5); }
+    w.dayNight.hour = hour;
+    window.__ocDensity.update();
+    const pd = w.pedDensity;
+    const inWin = w.peds.filter((q) => q.active && !q.hidden && Math.hypot(q.pos.x - n.x, q.pos.z - n.z) < R);
+    const arch = {};
+    for (const q of inWin) arch[q.archetype] = (arch[q.archetype] || 0) + 1;
+    const dens = window.__ocDensity.around(n.x, n.z, R);
+    return {
+      place: typeof place === 'string' ? place : `${Math.round(n.x)},${Math.round(n.z)}`, at: [Math.round(n.x), Math.round(n.z)], street: n.street, hour,
+      inWindow: inWin.length, arch, f3: { target: pd.target, real: Math.round(pd.real), active: pd.active, near: pd.near, budget: w.settings.pedBudget },
+      flow: { added: pd.added - c0.added, removed: pd.removed - c0.removed, relocated: pd.relocated - c0.relocated }, rings: [30, 60, 90, 140, 300, 1e9].map((r, i, a) => w.peds.filter((q) => q.active && Math.hypot(q.pos.x - n.x, q.pos.z - n.z) < r && Math.hypot(q.pos.x - n.x, q.pos.z - n.z) >= (i ? a[i - 1] : 0)).length), states: w.peds.filter((q) => q.active).reduce((o, q) => (o[q.state] = (o[q.state] || 0) + 1, o), {}),
+      perMetre: +dens.perMetre.toFixed(4), metresPerPerson: dens.perMetre ? Math.round(1 / dens.perMetre) : null, pavementM: Math.round(dens.metres), shopsMax: dens.shops,
+    };
+  }, [place, hour, settle, WINDOW]);
+}
+
+export async function geolife(page, S) {
+  await S.start(page);
+  const out = {};
+  // ---- 0) seeded items as placed at load (before any car or person moves them): none inside a building, in the
+  // water, or at the edge of a deck (a drop of more than 0.5 m within 0.6 m) ----
+  out.items = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, S = w.itemsState;
+    let inBlocked = 0, inWater = 0, onEdge = 0, n = 0;
+    const bad = [];
+    for (const it of S.items) {
+      if (!it.inWorld) continue;
+      n++;
+      const y = c.heightAt(it.px, it.pz, it.py);
+      const blocked = c.isBlocked(it.px, it.pz), water = c.isWater(it.px, it.pz) && y < c.waterLevelAt(it.px, it.pz) + 0.3;
+      let edge = false;
+      for (const [ox, oz] of [[0.6, 0], [-0.6, 0], [0, 0.6], [0, -0.6]]) if (Math.abs(c.heightAt(it.px + ox, it.pz + oz, y + 0.5) - y) > 0.5) edge = true;
+      if (blocked) inBlocked++;
+      if (water) inWater++;
+      if (edge) onEdge++;
+      if ((blocked || water || edge) && bad.length < 8) bad.push(`${it.type}@${Math.round(it.px)},${Math.round(it.pz)}`);
+    }
+    const byType = {};
+    for (const it of S.items) if (it.inWorld) byType[it.type] = (byType[it.type] ?? 0) + 1;
+    return { items: n, byType, skippedAtLoad: S.skipped, inBlocked, inWater, nearDrop: onEdge, bad };
+  });
+  // ---- 1) crowds: M St at lunch vs 29th St at lunch; M St at night; the waterfront in the evening; the towpath early ----
+  out.mstLunch = await crowdAt(page, 'M St at Wisconsin Ave', 12.5);
+  await lifeShot(page, 'screenshots/29-life-mst-lunch.png', 'M St at Wisconsin Ave', false);
+  await lifeShot(page, 'screenshots/29-life-f3.png', 'M St at Wisconsin Ave', true);
+  out.st29Lunch = await crowdAt(page, '29th St between N and P', 12.5);
+  await lifeShot(page, 'screenshots/29-life-29th.png', '29th St between N and P', false);
+  out.mstNight = await crowdAt(page, 'M St at Wisconsin Ave', 2.5);
+  out.waterfrontEvening = await crowdAt(page, 'waterfront', 19.5);
+  const tow = await page.evaluate(() => {
+    const W = window.__oc.city.walk.nodes;
+    let best = null;
+    for (const n of W) if (n.kind === 'towpath' && (!best || Math.hypot(n.x + 200, n.z - 230) < Math.hypot(best.x + 200, best.z - 230))) best = n;
+    return best ? { x: best.x, z: best.z, y: best.y } : null;
+  });
+  if (tow) {
+    out.towpathMorning = await crowdAt(page, tow, 7.5, 60);
+    await lifeShot(page, 'screenshots/29-life-towpath.png', tow, false);
+  }
+  const share = (r) => { const t = Object.values(r.arch).reduce((a, b) => a + b, 0); return t ? +(((r.arch.jogger ?? 0) + (r.arch.dogwalker ?? 0)) / t).toFixed(2) : null; };
+  out.dogsAndJoggersShare = { mstLunch: share(out.mstLunch), st29Lunch: share(out.st29Lunch), towpathMorning: tow ? share(out.towpathMorning) : null, waterfrontEvening: share(out.waterfrontEvening) };
+  out.ratioLunch = out.st29Lunch.inWindow ? +(out.mstLunch.inWindow / out.st29Lunch.inWindow).toFixed(1) : null;
+  out.ratioTargetLunch = +(out.mstLunch.f3.target / Math.max(1, out.st29Lunch.f3.target)).toFixed(1);
+
+  // ---- 2) parked cars: counts by street class, and driving into one at speed (its stand-in is there in time) ----
+  out.parked = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, P = w.parked, run = window.__ocRun;
+    const kerbM = {}, cars = {};
+    for (const s of c.parkingSpots) if (s.cls !== 'lot') kerbM[s.cls] = (kerbM[s.cls] ?? 0) + (s.span ?? 13);
+    for (const r of P.cars) if (r.cls !== 'lot') cars[r.cls] = (cars[r.cls] ?? 0) + 1;
+    const per100 = {};
+    for (const k of Object.keys(kerbM)) per100[k] = +((cars[k] ?? 0) / kerbM[k] * 100).toFixed(1);
+    const street = (name) => { let m = 0, n = 0; for (const s of c.parkingSpots) if (s.street === name) m += s.span ?? 13; for (const r of P.cars) if (r.street === name) n++; return m ? +(n / m * 100).toFixed(1) : null; };
+    const lots = {};
+    for (const s of c.parkingSpots) if (s.cls === 'lot') { lots[s.lot] ??= { bays: 0, cars: 0, at: [Math.round(s.x), Math.round(s.z)], waterfront: P.stats.waterfrontLots.includes(s.lot) }; lots[s.lot].bays++; }
+    for (const r of P.cars) if (r.cls === 'lot' && lots[r.lot]) lots[r.lot].cars++;
+    // drive into a parked car on M St from 40 m back along its parking lane at ~50 km/h
+    const target = P.cars.find((r) => r.street === 'M St NW' && !r.v && !P.cars.some((o) => o !== r && o.street === r.street && Math.hypot(o.x - r.x, o.z - r.z) < 45 && ((o.x - r.x) * Math.sin(r.heading) + (o.z - r.z) * Math.cos(r.heading)) < 0));
+    let crash = null;
+    const mine = w.vehicles[0];
+    if (target && mine) {
+      if (w.player.vehicle) { w.input.pressed.add('KeyE'); run(0.3); }
+      const fx = Math.sin(target.heading), fz = Math.cos(target.heading);
+      const sx = target.x - fx * 40, sz = target.z - fz * 40;
+      const t0 = mine.body.translation();
+      window.__mh.put(w.player.body, t0.x + Math.cos(mine.heading) * 2.4, t0.z - Math.sin(mine.heading) * 2.4, 1.2);
+      run(0.3); w.input.pressed.add('KeyE'); run(0.2);
+      const q = { x: 0, y: Math.sin(target.heading / 2), z: 0, w: Math.cos(target.heading / 2) };
+      mine.body.setTranslation({ x: sx, y: target.y + 1.0, z: sz }, true); mine.body.setRotation(q, true);
+      mine.body.setLinvel({ x: fx * 14, y: 0, z: fz * 14 }, true); mine.body.setAngvel({ x: 0, y: 0, z: 0 }, true); mine.prevVel.set(fx * 14, 0, fz * 14);
+      const standInAt = [];
+      w.input.keys.add('KeyW');
+      for (let k = 0; k < 40; k++) { run(0.1); if (target.v && !standInAt.length) standInAt.push(+(Math.hypot(mine.px - target.x, mine.pz - target.z)).toFixed(1)); }
+      w.input.keys.delete('KeyW');
+      run(1);
+      const v = target.v;
+      crash = {
+        inCar: w.player.vehicle === mine, standInWhenCarWasM: standInAt[0] ?? null, standIn: v ? `${v.type} #${v.id}` : null,
+        pushedM: v ? +Math.hypot(v.px - target.pos[0], v.pz - target.pos[2]).toFixed(2) : 0, dented: v ? +v.dmg.dentTotal.toFixed(2) : 0, ownMeshes: v ? v.mesh.visible : null,
+        myDamage: Math.round(mine.maxHealth - mine.health),
+      };
+      mine.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.5); w.input.pressed.add('KeyE'); run(0.3);
+    }
+    return { total: P.stats.cars, kerb: P.stats.kerb, lot: P.stats.lot, byClass: P.stats.byClass, per100mKerbByClass: per100, mSt: street('M St NW'), wisconsin: street('Wisconsin Ave NW'), nSt: street('N St NW'), prospect: street('Prospect St NW'), st29: street('29th St NW'), lots, crash, pool: P.stats.pool, poolGrown: P.stats.poolGrown, vehicles: w.vehicles.length };
+  });
+
+  // ---- 3) three taxi fares between real places ----
+  out.taxi = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    w.dayNight.hour = 14;
+    const taxi = w.jobs.get('taxi');
+    const v = w.vehicles[0];
+    const t = v.body.translation();
+    window.__mh.put(w.player.body, t.x + Math.cos(v.heading) * 2.4, t.z - Math.sin(v.heading) * 2.4, 1.2);
+    run(0.3); w.input.pressed.add('KeyE'); run(0.1);
+    const res = { inCar: w.player.vehicle === v, fares: [] };
+    const tp = (x, z) => { window.__mh.put(v.body, x, z, 1.0); v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); v.body.setAngvel({ x: 0, y: 0, z: 0 }, true); v.prevVel.set(0, 0, 0); };
+    for (let k = 0; k < 3; k++) {
+      let guard = 0;
+      while (taxi.phase !== 'waiting' && guard++ < 100) run(0.2);
+      const startCash = w.cash;
+      const pk = taxi.pickupName;
+      tp(taxi.pickup.x, taxi.pickup.y); run(2.5);
+      const boarded = taxi.phase;
+      const hud = w.jobs.statusText().replace(/<[^>]+>/g, '');
+      const d = taxi.dest;
+      run(Math.max(5, (taxi.tripDist ?? 300) / 20));
+      if (d) tp(d.curbX, d.curbZ);
+      run(1.5);
+      res.fares.push({ pickup: pk, boarded, dest: d ? `${d.name} [${d.kind}${d.cat ? ` ${d.cat}` : ''}]` : null, address: taxi.destAddress?.() ?? null, hud, paid: w.cash - startCash });
+    }
+    res.completed = taxi.completed;
+    if (w.player.vehicle) { w.input.pressed.add('KeyE'); run(0.3); }
+    return res;
+  });
+
+  // ---- 4) thefts: unseen on a quiet residential street; a locked car on M St in front of people ----
+  out.theft = await theftRun(page, { quiet: 'residential', busy: 'M St NW', shots: false });
+
+  // ---- 5) a dealership: the showrooms, buying a car, the minimap ----
+  out.dealer = await page.evaluate(() => {
+    const w = window.__oc, run = window.__ocRun;
+    w.dayNight.hour = 13;
+    if (w.player.vehicle) { w.player.vehicle.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.3); w.input.pressed.add('KeyE'); run(0.3); }
+    w.police.heat = 0; w.police.stars = 0; w.police.seen = false; // the theft's stars: a clean slate for shopping
+    run(1);
+    const job = w.jobs.get('dealership');
+    const sites = job.sites.map((s) => ({ name: s.name, poi: `${w.city.pois[s.poiId].kind}${w.city.pois[s.poiId].cat ? ` ${w.city.pois[s.poiId].cat}` : ''}`, street: w.city.pois[s.poiId].street, showroom: s.showroom, at: [Math.round(s.x), Math.round(s.z)], cars: s.slots.filter((q) => q.car).map((q) => `${q.type} $${q.car.forSale.price}`) }));
+    const site = job.sites[0];
+    const slot = site.slots.find((s) => s.car);
+    const v = slot.car;
+    const ch = Math.cos(v.heading), sh = Math.sin(v.heading), kx = -ch, kz = sh;
+    window.__mh.put(w.player.body, v.px + kx * 2.0, v.pz + kz * 2.0, 1.2);
+    w.player.facing = Math.atan2(-kx, -kz);
+    w.cash = 5000; w.hud.shownCash = 5000;
+    run(0.4);
+    const prompt = w.player.prompt.replace(/<[^>]+>/g, ' ');
+    const player = { inCar: !!w.player.vehicle, dead: w.player.dead, knockT: w.player.knockT, toCar: +Math.hypot(w.player.mesh.position.x - v.px, w.player.mesh.position.z - v.pz).toFixed(1) };
+    const vehicles0 = w.vehicles.length;
+    w.input.pressed.add('KeyE'); run(0.2);
+    const bought = { owned: v.owned, forSale: !!v.forSale, paid: 5000 - w.cash };
+    window.__ocFrames(3, true);
+    const minimap = { ownedCars: window.__ocMinimap.ownedCars, dealerships: window.__ocMinimap.dealerships };
+    // drive it off the showroom (the bought car keeps the slot until it leaves); the slot restocks later out of the
+    // parked-car pool, so the car list does not grow
+    w.input.pressed.add('KeyE'); run(0.3);
+    const drove = { inCar: w.player.vehicle === v, from: [v.px, v.pz] };
+    w.input.keys.add('KeyW'); run(1.6); w.input.keys.delete('KeyW'); run(2);
+    drove.metres = Math.round(Math.hypot(v.px - drove.from[0], v.pz - drove.from[1]));
+    if (w.player.vehicle) { v.body.setLinvel({ x: 0, y: 0, z: 0 }, true); run(0.4); w.input.pressed.add('KeyE'); run(0.3); }
+    if (Math.hypot(v.px - slot.x, v.pz - slot.z) < 6) { window.__mh.put(v.body, slot.x + Math.sin(slot.heading) * 25, slot.z + Math.cos(slot.heading) * 25, 1); run(0.5); } // in case it got stuck
+    const slotIdx = site.slots.indexOf(slot);
+    slot.soldAt = w.time - 10000;
+    window.__mh.put(w.player.body, site.x + 300, site.z, 1.2); run(1.2);
+    const restocked = !!site.slots[slotIdx].car;
+    window.__mh.put(w.player.body, v.px + kx * 2.0, v.pz + kz * 2.0, 1.2); run(0.4);
+    // picture: from across the showroom row
+    const sx = (site.slots[0].x + site.slots[site.slots.length - 1].x) / 2, sz = (site.slots[0].z + site.slots[site.slots.length - 1].z) / 2;
+    const fx = Math.sin(site.slots[0].heading), fz = Math.cos(site.slots[0].heading);
+    window.__Dcam = { px: sx + fx * 16 + kx * 3, py: 5, pz: sz + fz * 16 + kz * 3, lx: sx, ly: 1.2, lz: sz };
+    return { sites, car: `${v.type} #${v.id}`, player, prompt, bought, minimap, drove, restocked, vehiclesBefore: vehicles0, vehiclesAfter: w.vehicles.length, pool: w.parked.stats.pool };
+  });
+  await frozenShot(page, 'screenshots/29-life-dealer.png', await page.evaluate(() => window.__Dcam));
+
+  return out;
+}
+
+/** Camera above and behind a place on the pavement, looking along its street (F3 overlay on if `f3`). */
+async function lifeShot(page, path, place, f3) {
+  const cam = await page.evaluate(([place, f3]) => {
+    const w = window.__oc, c = w.city;
+    const p = typeof place === 'string' ? window.__mh.place(place) : place;
+    const n = c.walk.nodes[c.nearestWalk(p.x, p.z, p.y ?? NaN)];
+    // along the street (a named place: its lane's direction, from above the kerb), else along a walk link
+    let dx = 1, dz = 0, ox = p.x, oz = p.z;
+    if (typeof place === 'string' && p.edge >= 0) { dx = Math.sin(p.heading); dz = Math.cos(p.heading); ox = p.x - Math.cos(p.heading) * 4; oz = p.z + Math.sin(p.heading) * 4; }
+    else if (n.nbrs.length) { const m = c.walk.nodes[n.nbrs[0]]; const l = Math.hypot(m.x - n.x, m.z - n.z) || 1; dx = (m.x - n.x) / l; dz = (m.z - n.z) / l; ox = n.x; oz = n.z; }
+    w.debugVisible = f3;
+    return { px: ox - dx * 14, py: 4.5, pz: oz - dz * 14, lx: ox + dx * 30, ly: 1.0, lz: oz + dz * 30 };
+  }, [place, f3]);
+  await frozenShot(page, path, cam);
+  await page.evaluate(() => { window.__oc.debugVisible = false; });
+}
+
+// Parked cars (any map: MAP=<id> node scripts/shot.mjs x parkcheck): how many by street class, cars per 100 m of kerb on
+// M St, a residential street and in the car parks; then walking and driving along a street: the drivable stand-ins
+// near you, the pool, draw calls, and E on the nearest parked car.
+export async function parkcheck(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, P = w.parked, run = window.__ocRun;
+    const st = P.stats;
+    // cars per 100 m of kerb along named streets (kerb length = parking spots x their span)
+    const perStreet = {};
+    for (const s of c.parkingSpots) {
+      if (s.cls === 'lot') continue;
+      const k = s.street ?? '?';
+      perStreet[k] ??= { kerbM: 0, cars: 0, cls: s.cls };
+      perStreet[k].kerbM += s.span ?? 13;
+    }
+    for (const r of P.cars) if (r.cls !== 'lot') { const k = r.street ?? '?'; if (perStreet[k]) perStreet[k].cars++; }
+    const per100 = Object.entries(perStreet).filter(([, v]) => v.kerbM > 150).map(([k, v]) => [k, v.cls, Math.round(v.kerbM), +(v.cars / v.kerbM * 100).toFixed(1)]).sort((a, b) => b[3] - a[3]);
+    const lots = {};
+    for (const s of c.parkingSpots) if (s.cls === 'lot') { lots[s.lot] ??= { bays: 0, cars: 0, x: Math.round(s.x), z: Math.round(s.z) }; lots[s.lot].bays++; }
+    for (const r of P.cars) if (r.cls === 'lot' && lots[r.lot]) lots[r.lot].cars++;
+    // walk to M St, see stand-ins and draw calls
+    const spot = window.__mh.place('M St at Wisconsin Ave');
+    const n = c.walk.nodes[c.nearestWalk(spot.x, spot.z, spot.y)];
+    w.player.body.setTranslation({ x: n.x, y: n.y + 1.2, z: n.z }, true);
+    run(1);
+    const f = window.__ocFrames(3, true);
+    const atMst = { live: w.vehicles.filter((v) => v.pooled && !v.idle).length, pool: P.stats.pool, drawn: P.stats.drawn, calls: w.renderer.info.render.calls, tris: w.renderer.info.render.triangles, vehicles: w.vehicles.length };
+    // the nearest parked car has a drivable stand-in; E works on it
+    let best = null, bd = 1e9;
+    for (const r of P.cars) { const d = Math.hypot(r.x - n.x, r.z - n.z); if (d < bd) { bd = d; best = r; } }
+    const ch = Math.cos(best.heading), sh = Math.sin(best.heading);
+    w.player.body.setTranslation({ x: best.x - ch * 2.0, y: best.y + 1.4, z: best.z + sh * 2.0 }, true);
+    run(0.5);
+    const v = best.v;
+    const prompt = w.player.prompt.replace(/<[^>]+>/g, '');
+    return { stats: { cars: st.cars, kerb: st.kerb, lot: st.lot, byClass: st.byClass, poolGrown: st.poolGrown }, per100: per100.slice(0, 14), lots, atMst, nearest: { dist: Math.round(bd), street: best.street, standIn: v ? `${v.type} #${v.id}` : null, prompt, locked: best.locked, owner: best.owner, local: best.ownerLocal } };
+  });
 }
