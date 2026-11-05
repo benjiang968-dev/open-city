@@ -817,10 +817,10 @@ const RAW = {
     envRefreshDegrees: 1.5, // recapture the sky when the sun has moved this far...
     envRefreshMinSeconds: 1.5, // ...but at most this often (real seconds)
     envIntensityDay: 1.0, // scene.environmentIntensity by day (sky light on PBR materials)
-    envIntensityNight: 0.35, // at night (the night sky is dark anyway; this keeps a little moonlit fill)
+    envIntensityNight: 0.16, // at night (the night sky is dark anyway; this keeps a little moonlit fill)
     skyDiffuseDay: 0.42, // share of the sky light that reaches diffuse surfaces by day (reflections keep it all): sets how
     // bright the shade is next to sunlight (about 1:4 on a clear day)
-    skyDiffuseNight: 1.0,
+    skyDiffuseNight: 0.7,
     skyDiffuseSaturation: 0.55, // colour saturation of that sky fill (1 = the sky's own blue; lower stands in for the warm
     // light bounced off sunlit streets and walls, which the sky capture does not hold)
     nightSkyZenith: [0.006, 0.008, 0.018], // linear radiance of the night sky overhead...
