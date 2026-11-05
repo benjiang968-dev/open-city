@@ -13,8 +13,43 @@ const DENSE = 4; // m between profile samples along an edge
 const SMOOTH = 14; // m half window for smoothing terrain along an edge
 const GORE_RADIUS = 1; // m kerb radius where two arms meet at a sharp angle (merges)
 const MIN_TRIM = 1.2; // m every arm keeps clear of a junction centre
+const PRUNE_PASSES = 6; // tunnel approaches pruned at most this many road pieces deep
 /** Ways left out of the render (and to be removed from the graph). See the report: the K St underpass. */
 export const OMITTED_ROADS = new Set(['K St NW#tunnel']);
+/**
+ * Real (imported) data: tunnels and roads below ground level (the K St underpass beneath Washington Circle and its
+ * ramps) are left out of the render and the graph; the world has no tunnel geometry yet. Knowledge-based data keeps
+ * its own list (OMITTED_ROADS).
+ */
+function omittedRoad(doc: GeoDoc, r: GeoRoad): boolean {
+  if (doc.meta.synthetic) return OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`);
+  return r.tunnel === 1 || r.layer < 0;
+}
+const omitCache = new WeakMap<GeoDoc, Set<GeoRoad>>();
+/**
+ * The roads left out of the world (see omittedRoad) plus, in real data, the approaches that would dead-end at an
+ * omitted tunnel: a road whose end only an omitted road continued is pruned, and so on back to the junction where
+ * the approach leaves the street (at most PRUNE_PASSES roads deep).
+ */
+export function omittedRoads(doc: GeoDoc): Set<GeoRoad> {
+  const hit = omitCache.get(doc);
+  if (hit) return hit;
+  const out = new Set(doc.roads.filter((r) => omittedRoad(doc, r)));
+  omitCache.set(doc, out);
+  if (doc.meta.synthetic) return out;
+  const key = (p: Pt) => `${p[0]},${p[1]}`;
+  for (let pass = 0; pass < PRUNE_PASSES; pass++) {
+    const kept = new Map<string, number>(), gone = new Set<string>();
+    for (const r of doc.roads) {
+      if (out.has(r)) { for (const p of r.pts) gone.add(key(p)); continue; }
+      r.pts.forEach((p, i) => kept.set(key(p), (kept.get(key(p)) ?? 0) + (i === 0 || i === r.pts.length - 1 ? 1 : 2)));
+    }
+    const prune = doc.roads.filter((r) => !out.has(r) && [r.pts[0], r.pts[r.pts.length - 1]].some((p) => gone.has(key(p)) && kept.get(key(p)) === 1));
+    if (!prune.length) break;
+    for (const r of prune) out.add(r);
+  }
+  return out;
+}
 /** The Whitehurst Freeway's last stretch is moved north so it runs beside (not on top of) the K St bridge. */
 const FREEWAY_SHIFT = { x0: 110, x1: 250, x2: 392, dz: -15.6 };
 
@@ -46,6 +81,8 @@ export interface Arm {
   /** sidewalk on the arm's n side (toward the next arm, increasing angle) and m side */
   swN: boolean;
   swM: boolean;
+  /** A stop sign on this approach only (data 'stop_arm'): it gives way to the junction's other arms. */
+  stop?: boolean;
 }
 export interface Lane {
   dir: 1 | -1; // 1: travels along the edge's pts order
@@ -82,11 +119,19 @@ export interface REdge {
   /** Per section segment and side (-1 left, +1 right): 1 if the paved frontage strip continues to the building line. */
   fillL: Uint8Array | null;
   fillR: Uint8Array | null;
+  /**
+   * Per section segment (sections(e, 0, L)): 1 where this at-grade road is not the raster's surface (it
+   * passes over or under another road there: a grade separation the data does not mark as a bridge). Those stretches
+   * are queried through the deck index instead.
+   */
+  overlay: Uint8Array | null;
 }
 
 export interface RoadNet {
   nodes: RNode[];
   edges: REdge[];
+  /** the knowledge-based map (true) or imported real data (false) */
+  synthetic: boolean;
   /** Height of an edge's surface at arc length s. */
   profAt(e: REdge, s: number): number;
   /** Point and direction at arc length s. */
@@ -104,7 +149,9 @@ export interface ClearanceProbe {
 export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => number): RoadNet {
   const key = (x: number, z: number) => `${x},${z}`;
   // ---- which vertices are nodes
-  const roads = doc.roads.filter((r) => !OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`));
+  const synthetic = !!doc.meta.synthetic;
+  const omitted = omittedRoads(doc);
+  const roads = doc.roads.filter((r) => !omitted.has(r));
   const count = new Map<string, number>();
   const isEnd = new Set<string>();
   for (const r of roads) {
@@ -129,14 +176,24 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
   };
   const isNode = (p: Pt) => { const k = key(p[0], p[1]); return isEnd.has(k) || (count.get(k) ?? 0) > 1; };
 
-  // ---- roundabout: snap to a true circle
-  const ring = roads.find((r) => r.junction === 'roundabout');
-  let ringC: { x: number; z: number; r: number } | null = null;
-  if (ring) {
-    const P = ring.pts.slice(0, -1);
-    const cx = P.reduce((s, p) => s + p[0], 0) / P.length, cz = P.reduce((s, p) => s + p[1], 0) / P.length;
+  // ---- roundabouts (Washington Circle; real data may hold more than one): snap each ring to a true circle
+  const ringOf = new Map<GeoRoad, { x: number; z: number; r: number; sense: number }>();
+  for (const ring of roads) {
+    if (ring.junction !== 'roundabout') continue;
+    const closed = ring.pts.length > 3 && ring.pts[0][0] === ring.pts[ring.pts.length - 1][0] && ring.pts[0][1] === ring.pts[ring.pts.length - 1][1];
+    const P = closed ? ring.pts.slice(0, -1) : ring.pts;
+    // centre by arc length (the data's vertices bunch where the spokes join)
+    let cx = 0, cz = 0, W = 0;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      cx += ((a[0] + b[0]) / 2) * l; cz += ((a[1] + b[1]) / 2) * l; W += l;
+    }
+    cx /= W || 1; cz /= W || 1;
     const r = P.reduce((s, p) => s + Math.hypot(p[0] - cx, p[1] - cz), 0) / P.length;
-    ringC = { x: cx, z: cz, r };
+    // which way the ring runs: +1 when atan2(z - cz, x - cx) grows along it (shoelace sign in x, z)
+    let area = 0;
+    for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; area += a[0] * b[1] - b[0] * a[1]; }
+    ringOf.set(ring, { x: cx, z: cz, r, sense: area >= 0 ? 1 : -1 });
   }
 
   // ---- edges
@@ -154,15 +211,14 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const a = getNode(raw[0]), b = getNode(raw[raw.length - 1]);
     let pts: Pt[];
     const roundabout = r.junction === 'roundabout';
+    const ringC = ringOf.get(r);
     if (roundabout && ringC) {
       // resample along the circle between the end angles (direction of travel follows the data)
       const a0 = Math.atan2(raw[0][1] - ringC.z, raw[0][0] - ringC.x);
       let a1 = Math.atan2(raw[raw.length - 1][1] - ringC.z, raw[raw.length - 1][0] - ringC.x);
-      const mid = Math.atan2(raw[1][1] - ringC.z, raw[1][0] - ringC.x);
-      // pick the sweep direction that passes the second point
+      // sweep the way the whole ring runs (a piece with only its two end points has no second point to tell)
       const norm = (v: number) => { while (v < 0) v += Math.PI * 2; while (v >= Math.PI * 2) v -= Math.PI * 2; return v; };
-      const ccw = norm(mid - a0) < norm(a1 - a0);
-      let sweep = ccw ? norm(a1 - a0) : -norm(a0 - a1);
+      let sweep = ringC.sense > 0 ? norm(a1 - a0) : -norm(a0 - a1);
       if (Math.abs(sweep) < 1e-6) sweep = Math.PI * 2;
       a1 = a0 + sweep;
       const n = Math.max(2, Math.ceil((Math.abs(sweep) * ringC.r) / 3));
@@ -175,15 +231,17 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
       b.x = pts[n][0]; b.z = pts[n][1];
       a.roundabout = b.roundabout = true;
     } else pts = raw.map((p) => [p[0], p[1]] as Pt);
-    const freeway = r.highway === 'trunk' && r.layer >= 2;
-    if (freeway) pts = shiftFreeway(pts);
+    // elevated freeway: the spec's Whitehurst Freeway (trunk, layer 2); in real data any motorway / trunk deck
+    const freeway = synthetic ? r.highway === 'trunk' && r.layer >= 2 : /^(motorway|trunk)/.test(r.highway) && (r.bridge === 1 || r.layer > 0);
+    if (freeway && synthetic) pts = shiftFreeway(pts);
     pts = densify(pts, DENSE);
     const lanesN = Math.max(1, r.lanes ?? 2);
-    let width = lanesN * G.laneWidth;
+    // kerb-to-kerb width: the data's (imported maps carry a width estimate per road), else lanes x lane width
+    let width = r.width ? Math.max(G.minRoadWidth, r.width) : lanesN * G.laneWidth;
     let fwd = 0, bwd = 0;
     if (r.oneway === 1) fwd = lanesN;
     else if (r.oneway === -1) bwd = lanesN;
-    else if (lanesN === 1) { fwd = bwd = 1; width = Math.max(width, G.minTwoWayWidth); }
+    else if (lanesN === 1) { fwd = bwd = 1; if (!r.width) width = Math.max(width, G.minTwoWayWidth); }
     else { fwd = Math.ceil(lanesN / 2); bwd = lanesN - fwd; }
     const hw = width / 2;
     const lw = width / (fwd + bwd);
@@ -196,7 +254,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const e: REdge = {
       id: edges.length, road: r, name: r.name ?? '', a, b, pts, cum, L: cum[cum.length - 1], hw, lanes, fwd, bwd,
       layer: r.layer, deck: r.bridge === 1 || r.layer > 0, freeway, roundabout, prof: new Float32Array(pts.length),
-      trimA: 0, trimB: 0, swL: sw, swR: sw, cuts: [], noSw: [], surface: r.surface ?? 'asphalt', cls: r.highway, fillL: null, fillR: null,
+      trimA: 0, trimB: 0, swL: sw, swR: sw, cuts: [], noSw: [], surface: r.surface ?? 'asphalt', cls: r.highway, fillL: null, fillR: null, overlay: null,
     };
     edges.push(e);
   }
@@ -233,7 +291,10 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     };
     for (const e of edges) {
       if (!e.swL && !e.swR) continue;
-      const dataHw = Math.max(1, e.road.lanes ?? 2) * G.laneWidth / 2;
+      // the data's sidewalk lines run along the middle of the sidewalk: the knowledge-based map draws them 1.5 m
+      // from the kerb; real (imported) data anywhere from about 1 to 5 m beyond the kerb
+      const dataHw = e.road.width ? e.hw : Math.max(1, e.road.lanes ?? 2) * G.laneWidth / 2;
+      const offs = doc.meta.synthetic ? [1.5] : [1, 2, 3, 4, 5];
       let hitL = 0, hitR = 0, tot = 0;
       for (let k = 1; k < e.pts.length - 1; k++) {
         const p = e.pts[k];
@@ -242,10 +303,9 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
         let ux = q[0] - p[0], uz = q[1] - p[1];
         const L = Math.hypot(ux, uz) || 1; ux /= L; uz /= L;
         const rx = -uz, rz = ux;
-        const o = dataHw + 1.5;
         tot++;
-        if (near(p[0] - rx * o, p[1] - rz * o, 1.6)) hitL++;
-        if (near(p[0] + rx * o, p[1] + rz * o, 1.6)) hitR++;
+        if (offs.some((d) => near(p[0] - rx * (dataHw + d), p[1] - rz * (dataHw + d), doc.meta.synthetic ? 1.6 : 0.8))) hitL++;
+        if (offs.some((d) => near(p[0] + rx * (dataHw + d), p[1] + rz * (dataHw + d), doc.meta.synthetic ? 1.6 : 0.8))) hitR++;
       }
       if (tot >= 2) { e.swL = hitL / tot > 0.3; e.swR = hitR / tot > 0.3; }
     }
@@ -274,6 +334,21 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     if (!n) continue;
     if (p[2] === 'signals') n.signals = true; else n.stop = true;
   }
+  // a stop sign on one approach (where it was mapped): the nearest junction's arm in its direction
+  for (const p of doc.props) {
+    if (p[2] !== 'stop_arm') continue;
+    let best: RNode | null = null, bd = G.stopArmSnap;
+    for (const n of nodes) {
+      if (n.arms.length < 3) continue;
+      const d = Math.hypot(n.x - p[0], n.z - p[1]);
+      if (d < bd) { bd = d; best = n; }
+    }
+    if (!best || best.signals || best.stop || bd < 0.5) continue;
+    const dx = (p[0] - best.x) / bd, dz = (p[1] - best.z) / bd;
+    let arm: Arm | null = null, dot = -2;
+    for (const A of best.arms) { const d = A.ux * dx + A.uz * dz; if (d > dot) { dot = d; arm = A; } }
+    if (arm) arm.stop = true;
+  }
 
   // ---- junction geometry
   for (const n of nodes) junction(n);
@@ -282,7 +357,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const m = arms.length;
     if (m === 1) { arms[0].trim = 0; return; }
     const req = new Float64Array(m).fill(m >= 3 ? MIN_TRIM : 0.3);
-    type Corner = { kind: 'in' | 'out' | 'straight'; s: number; t: number; d: number; R: number; X?: [number, number] };
+    type Corner = { kind: 'in' | 'out' | 'straight'; s: number; t: number; d: number; R: number; X?: [number, number]; sharp?: boolean };
     const corners: Corner[] = [];
     for (let k = 0; k < m; k++) {
       const A = arms[k], Bm = arms[(k + 1) % m];
@@ -301,9 +376,9 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
       const s = (rx * -Bm.uz - rz * -Bm.ux) / det;
       const t = (A.ux * rz - A.uz * rx) / det;
       if (delta < Math.PI) {
-        const R = delta < 0.6 ? GORE_RADIUS : G.cornerRadius;
+        const R = delta < 0.6 ? GORE_RADIUS : cornerRadiusFor(A.edge, Bm.edge, synthetic);
         const d = Math.min(30, R / Math.tan(delta / 2));
-        corners.push({ kind: 'in', s, t, d, R, X: [P0x + A.ux * s, P0z + A.uz * s] });
+        corners.push({ kind: 'in', s, t, d, R, X: [P0x + A.ux * s, P0z + A.uz * s], sharp: delta < 0.6 });
         req[k] = Math.max(req[k], Math.max(0, s) + d);
         req[(k + 1) % m] = Math.max(req[(k + 1) % m], Math.max(0, t) + d);
       } else corners.push({ kind: 'out', s, t, d: 0, R: 0, X: [P0x + A.ux * s, P0z + A.uz * s] });
@@ -316,7 +391,10 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     for (let k = 0; k < m; k++) {
       const A = arms[k], e = A.edge;
       const other = A.atStart ? e.trimB : e.trimA;
-      let tr = req[k];
+      // real data: two arms meeting at a sharp angle (a slip road peeling off, a bridge splitting into ramps) asked
+      // for a 25-30 m plateau whose outline the junction fan could not cover (a hole in the Key Bridge deck); the arms
+      // overlap there instead (their surfaces agree: conformOverlaps / the deck plateaus)
+      let tr = synthetic ? req[k] : Math.min(req[k], G.maxJunctionTrim);
       const maxT = Math.max(0.3, e.L - other - 2) * (e.a === e.b ? 0.5 : 1);
       tr = Math.min(tr, maxT * (other > 0 ? 1 : 0.6));
       A.trim = tr;
@@ -347,8 +425,15 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
         if (sA < A.trim - 0.01) path.push(T0x, T0z);
         // a true circular arc when both tangent points sit where the circle touches; else a curve via X
         const exact = c.s >= 0 && c.t >= 0 && Math.abs(sA - (c.s + c.d)) < 0.01 && Math.abs(sB - (c.t + c.d)) < 0.01;
+        // real data, a sharp merge (under 35 degrees) whose kerbs cross beyond the capped trims (L St into Pennsylvania
+        // Ave): a curve via the crossing bulged the flat plateau 20 m out over both arms while they still climb to it, a
+        // 0.3-0.4 m ridge across the lanes (a car at 50 km/h crashed into it). The outline stops at the trims; beyond them
+        // the arms overlap (at wider angles they part: the curve stays, or the chord left holes)
+        const beyond = !synthetic && !exact && !!c.sharp && (Math.max(0, c.s) + c.d > A.trim + 0.01 || Math.max(0, c.t) + c.d > Bm.trim + 0.01);
         const segs = 8;
-        if (exact) {
+        if (beyond) {
+          // straight from one tangent point to the other
+        } else if (exact) {
           const Ox = T0x + anx * c.R, Oz = T0z + anz * c.R;
           let a0 = Math.atan2(T0z - Oz, T0x - Ox), a1 = Math.atan2(T1z - Oz, T1x - Ox);
           let sw = a1 - a0;
@@ -406,9 +491,9 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     return out;
   }
 
-  // ---- where the shifted freeway runs beside the K St bridge, that bridge loses its north sidewalk
+  // ---- where the shifted freeway runs beside the K St bridge, that bridge loses its north sidewalk (spec data only)
   for (const e of edges) {
-    if (!e.deck || e.freeway || !e.name.startsWith('K St')) continue;
+    if (!synthetic || !e.deck || e.freeway || !e.name.startsWith('K St')) continue;
     const fw = edges.find((f) => f.freeway);
     if (!fw) continue;
     const side = -1; // north = left of an eastward edge
@@ -452,7 +537,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     }
     n.h = s / c;
   }
-  const net: RoadNet = { nodes, edges, profAt, pointAt: (e, s, o) => { const q = pointAtS(e, s); o.x = q.x; o.z = q.z; o.ux = q.ux; o.uz = q.uz; }, project: projectEdge };
+  const net: RoadNet = { nodes, edges, synthetic, profAt, pointAt: (e, s, o) => { const q = pointAtS(e, s); o.x = q.x; o.z = q.z; o.ux = q.ux; o.uz = q.uz; }, project: projectEdge };
   return net;
 
   function profAt(e: REdge, s: number): number {
@@ -464,6 +549,16 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const t = (s - c[lo]) / (c[hi] - c[lo] || 1);
     return e.prof[lo] + (e.prof[hi] - e.prof[lo]) * t;
   }
+}
+
+/** Kerb radius at a street corner: the spec map uses one radius; real data has driveways, alleys and tight corners. */
+function cornerRadiusFor(a: REdge, b: REdge, synthetic: boolean): number {
+  if (synthetic) return G.cornerRadius;
+  const minor = (e: REdge) => e.cls === 'service' || e.cls === 'road' || e.cls === 'living_street';
+  const local = (e: REdge) => e.cls === 'residential' || e.cls === 'unclassified';
+  if (minor(a) || minor(b)) return G.cornerRadiusService;
+  if (local(a) || local(b)) return G.cornerRadiusLocal;
+  return G.cornerRadius;
 }
 
 function shiftFreeway(pts: Pt[]): Pt[] {
@@ -554,8 +649,82 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       const wA = s <= tA ? 1 : cosFall((s - tA) / lamA);
       const wB = s >= e.L - tB ? 1 : cosFall((e.L - tB - s) / lamB);
       e.prof[k] = S[k] + corrA * wA + corrB * wB;
+      // leave each flat plateau with zero grade and ease into the street's grade (a vertical curve) instead of
+      // kinking at the junction's edge
+      if (!net.synthetic) {
+        const ease = Math.min(G.plateauEase, free * 0.3);
+        e.prof[k] = e.a.h + (e.prof[k] - e.a.h) * smoothStep((s - tA) / ease);
+        e.prof[k] = e.b.h + (e.prof[k] - e.b.h) * smoothStep((e.L - tB - s) / ease);
+      }
     }
   };
+  // real data: node heights come from the terrain around each junction, and two junctions a few metres apart on a
+  // steep bank (or beside a bridge abutment the DEM half keeps) could differ by metres: a short street piece between
+  // them became a 40 % ramp. Relax: where an at-grade edge's free length cannot take the height difference at the
+  // class's grade limit, both ends move toward each other (iterated; long edges are untouched).
+  const lim = (e: REdge) => (e.cls === 'service' ? G.relaxGradeService : /^(primary|secondary|trunk|motorway)/.test(e.cls) ? G.relaxGradeMain : G.relaxGrade);
+  const insideDeck = (n: RNode) => n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
+  if (!net.synthetic) {
+    for (let it = 0; it < 60; it++) {
+      let worst = 0;
+      for (const e of atGrade) {
+        if (e.a === e.b || insideDeck(e.a) || insideDeck(e.b)) continue;
+        const free = Math.max(1, e.L - e.trimA - e.trimB);
+        const ex = Math.abs(e.a.h - e.b.h) - lim(e) * free;
+        if (ex <= 0.01) continue;
+        worst = Math.max(worst, ex);
+        const d = (ex / 2) * Math.sign(e.a.h - e.b.h) * 0.8;
+        e.a.h -= d; e.b.h += d;
+      }
+      if (worst < 0.02) break;
+    }
+  }
+  // nodes inside a bridge (every arm a deck: real data splits a bridge where ramps join or its level changes) do not
+  // stand on the ground: the terrain under them is a river, a street below, or a DEM with the deck half removed (a
+  // 12 m mound at the Key Bridge abutment). Their heights are interpolated between the bridge's ends on land (a
+  // Laplacian over the deck graph, weighted by length; ends at the map edge or dead ends float with their neighbour),
+  // then the deck profiles raise them where they must clear what passes beneath.
+  {
+    const inside = nodes.filter((n) => n.arms.length >= 1 && n.arms.every((a) => a.edge.deck) && n.arms.some((a) => a.edge.a !== a.edge.b));
+    if (inside.length) {
+      const free = new Set(inside);
+      const hasAnchor = new Set<RNode>();
+      // a group of inside nodes with no land node at all keeps its terrain heights
+      const seen = new Set<RNode>();
+      for (const s of inside) {
+        if (seen.has(s)) continue;
+        const comp: RNode[] = [];
+        const st = [s];
+        seen.add(s);
+        let anchored = false;
+        while (st.length) {
+          const n = st.pop()!;
+          comp.push(n);
+          for (const a of n.arms) {
+            const m = a.edge.a === n ? a.edge.b : a.edge.a;
+            if (!free.has(m)) { anchored = true; continue; }
+            if (!seen.has(m)) { seen.add(m); st.push(m); }
+          }
+        }
+        if (anchored) for (const n of comp) hasAnchor.add(n);
+      }
+      for (let it = 0; it < 400; it++) {
+        let change = 0;
+        for (const n of inside) {
+          if (!hasAnchor.has(n)) continue;
+          let s = 0, w = 0;
+          for (const a of n.arms) {
+            const m = a.edge.a === n ? a.edge.b : a.edge.a;
+            if (m === n) continue;
+            const ww = 1 / Math.max(1, a.edge.L);
+            s += m.h * ww; w += ww;
+          }
+          if (w > 0) { const v = s / w; change = Math.max(change, Math.abs(v - n.h)); n.h = v; }
+        }
+        if (change < 0.005) break;
+      }
+    }
+  }
   // pass 1: at-grade
   const ground = new Map<REdge, Float32Array>();
   for (const e of atGrade) { const S = groundProfile(e); ground.set(e, S); shape(e, S); }
@@ -565,8 +734,10 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
   }
   // bridge approaches: an at-grade edge leaving a raised deck end may not be steeper than maxGrade, so its other end
   // is raised too (a few hops at most). Without this the street ramped off the M St bridge over Rock Creek at 20 %
-  // with a crest that launches cars. Nodes that carry a deck keep their own height.
-  for (let hop = 0; hop < 4; hop++) {
+  // with a crest that launches cars. Nodes that carry a deck keep their own height. Real (imported) data: no hops: its
+  // bridge ends sit on real embankments, and in an interchange the hops lifted the Rock Creek valley roads by 11 m
+  // through a ramp up to the K St bridge.
+  for (let hop = 0; hop < (net.synthetic ? 4 : 0); hop++) {
     let changed = false;
     for (const e of atGrade) {
       for (const [R, O] of [[e.a, e.b], [e.b, e.a]] as [RNode, RNode][]) {
@@ -581,8 +752,54 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
   for (const e of atGrade) if (e.a.raised || e.b.raised) shape(e, ground.get(e)!);
   // decks again (their ends may have moved if a later deck raised a shared node)
   for (const e of decks) deckProfile(e);
+  if (!net.synthetic) {
+    // a deck processed early can end with its plateau at a node height a later deck raised: one more pass with the
+    // node heights frozen makes every plateau match its junction (moving nodes again ratchets decks upward)
+    for (const e of decks) deckProfile(e, false);
+    // a deck end raised for clearance next to a ground junction (K St's bridge over the Rock Creek parkway ends 6 m
+    // from 27th St's junction): the short piece between them became a wall. The ground junction rises toward the deck
+    // end until the piece is within its grade limit, each node at most G.approachMaxLift above its own height (a
+    // bounded cascade: the next pieces relax the same way). Deck ends keep their heights.
+    const h0 = new Map<RNode, number>();
+    for (const n of nodes) h0.set(n, n.h);
+    for (let it = 0; it < 40; it++) {
+      let moved = false;
+      for (const e of atGrade) {
+        if (e.a === e.b || insideDeck(e.a) || insideDeck(e.b)) continue;
+        const free = Math.max(1, e.L - e.trimA - e.trimB);
+        const ex = Math.abs(e.a.h - e.b.h) - lim(e) * free;
+        if (ex <= 0.02) continue;
+        const lo = e.a.h < e.b.h ? e.a : e.b, hi = lo === e.a ? e.b : e.a;
+        if (!hi.raised || lo.arms.some((a) => a.edge.deck)) continue;
+        const room = h0.get(lo)! + G.approachMaxLift - lo.h;
+        if (room <= 0.02) continue;
+        lo.h += Math.min(ex, room);
+        lo.raised = true;
+        moved = true;
+      }
+      if (!moved) break;
+    }
+    // a bridge abutment in a dip: where a street runs straight onto a deck (two arms, one of them the deck) and the
+    // abutment node sits on the valley side below both the street's next junction and the deck's far end, the street
+    // sagged into a V there (K St onto its bridge over the Rock Creek parkway: 10.5 m between 12.4 m and 12.0 m, a car
+    // at 60 km/h took off and crashed). The node rises to the line between them (bounded like the approach lift).
+    let sagFilled = false;
+    for (const n of nodes) {
+      if (n.arms.length !== 2) continue;
+      const [p, q] = n.arms.map((a) => a.edge);
+      if (p.deck === q.deck || p.a === p.b || q.a === q.b) continue;
+      const fp = p.a === n ? p.b : p.a, fq = q.a === n ? q.b : q.a;
+      if (p.L + q.L > G.sagFillSpan || fp.h < n.h + 0.3 || fq.h < n.h + 0.3) continue;
+      const line = (fp.h * q.L + fq.h * p.L) / (p.L + q.L);
+      n.h = Math.min(line, n.h + G.approachMaxLift);
+      n.raised = true;
+      sagFilled = true;
+    }
+    for (const e of atGrade) if (e.a.raised || e.b.raised) shape(e, ground.get(e)!);
+    if (sagFilled) for (const e of decks) deckProfile(e, false);
+  }
 
-  function deckProfile(e: REdge) {
+  function deckProfile(e: REdge, moveNodes = true) {
     const n = e.pts.length, c = e.cum;
     const req = new Float32Array(n).fill(-Infinity);
     for (let k = 0; k < n; k++) {
@@ -601,11 +818,11 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
     }
     const hA0 = freeA ? Math.max(e.b.h, sampleArr(env, c, e.trimA)) : e.a.h;
     const hB0 = freeB ? Math.max(e.a.h, sampleArr(env, c, e.L - e.trimB)) : e.b.h;
-    if (freeA) e.a.h = hA0;
-    if (freeB) e.b.h = hB0;
+    if (freeA && moveNodes) e.a.h = hA0;
+    if (freeB && moveNodes) e.b.h = hB0;
     const needA = sampleArr(env, c, e.trimA), needB = sampleArr(env, c, e.L - e.trimB);
-    if (!freeA && needA > e.a.h + 0.05) { e.a.h = needA; e.a.raised = true; }
-    if (!freeB && needB > e.b.h + 0.05) { e.b.h = needB; e.b.raised = true; }
+    if (moveNodes && !freeA && needA > e.a.h + 0.05) { e.a.h = needA; e.a.raised = true; }
+    if (moveNodes && !freeB && needB > e.b.h + 0.05) { e.b.h = needB; e.b.raised = true; }
     for (let k = 0; k < n; k++) {
       const s = c[k];
       const u = clamp((s - e.trimA) / Math.max(0.1, e.L - e.trimA - e.trimB), 0, 1);
@@ -614,16 +831,173 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
     }
     // ease the kinks (vertical curves), keep plateaus exact
     const sm = smoothArr(e.prof, c, 12);
+    const free = e.L - e.trimA - e.trimB, ease = Math.min(G.plateauEase, free * 0.3);
     for (let k = 0; k < n; k++) {
       const s = c[k];
       if (s <= e.trimA + 0.01 || s >= e.L - e.trimB - 0.01) continue;
-      e.prof[k] = Math.max(sm[k], req[k] === -Infinity ? -Infinity : req[k] - 0.15);
+      let v = sm[k];
+      if (!net.synthetic) {
+        v = e.a.h + (v - e.a.h) * smoothStep((s - e.trimA) / ease);
+        v = e.b.h + (v - e.b.h) * smoothStep((e.L - e.trimB - s) / ease);
+      }
+      e.prof[k] = Math.max(v, req[k] === -Infinity ? -Infinity : req[k] - 0.15);
     }
   }
+  conformOverlaps(net);
+  if (!net.synthetic) conformToPlateaus(net);
   // roundabout and other loops: nothing special (nodes carry heights)
   void nodes;
 }
 
+/** Rank for overlaps: the bigger road keeps its profile, the smaller one conforms to it. */
+const CONFORM_RANK: Record<string, number> = { motorway: 7, trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, residential: 2, living_street: 1, road: 1, service: 0 };
+const rankOf = (e: REdge) => (e.roundabout ? 8 : CONFORM_RANK[e.cls.replace('_link', '')] ?? 1) - (e.cls.endsWith('_link') ? 0.5 : 0);
+
+/**
+ * Real data puts at-grade carriageways on top of each other without a shared node: a slip road or a parking aisle
+ * alongside a street, a driveway reaching into it, two roads that cross without a mapped junction, the two halves of
+ * a dual carriageway that touch. Each followed its own smoothed terrain, so their surfaces disagree by up to a metre
+ * where they overlap (a step a car hits). Where the smaller road's centre line runs on the bigger road's carriageway
+ * and the two are within G.gradeSeparation of each other, the smaller road takes the bigger road's height, blended in
+ * over G.conformBlend metres. Bigger differences are real grade separations (left as they are: the world keeps both
+ * surfaces, see roadMesh / the deck index).
+ */
+function conformOverlaps(net: RoadNet) {
+  const { edges } = net;
+  const atGrade = edges.filter((e) => !e.deck);
+  const cell = 24;
+  const grid = new Map<number, REdge[]>();
+  const gk = (i: number, j: number) => (i + 2000) * 4000 + (j + 2000);
+  for (const e of atGrade) {
+    const seen = new Set<number>();
+    for (const p of e.pts) {
+      const r = e.hw + 2;
+      for (let i = Math.floor((p[0] - r) / cell); i <= Math.floor((p[0] + r) / cell); i++)
+        for (let j = Math.floor((p[1] - r) / cell); j <= Math.floor((p[1] + r) / cell); j++) {
+          const k = gk(i, j);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          (grid.get(k) ?? grid.set(k, []).get(k)!).push(e);
+        }
+    }
+  }
+  const order = atGrade.slice().sort((a, b) => rankOf(a) - rankOf(b) || a.id - b.id);
+  for (const A of order) {
+    const n = A.pts.length, c = A.cum;
+    const target = new Float32Array(n).fill(NaN);
+    let any = false;
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      const p = A.pts[k];
+      const list = grid.get(gk(Math.floor(p[0] / cell), Math.floor(p[1] / cell)));
+      if (!list) continue;
+      let best = NaN, bestRank = -Infinity;
+      for (const B of list) {
+        if (B === A || rankOf(B) < rankOf(A) || (rankOf(B) === rankOf(A) && B.id < A.id)) continue;
+        const pr = projectEdge(B, p[0], p[1]);
+        if (pr.d > B.hw - 0.2) continue;
+        if (pr.s <= B.trimA || pr.s >= B.L - B.trimB) continue; // on B's junction plateau: the junction joins them
+        const hB = net.profAt(B, pr.s);
+        if (Math.abs(hB - A.prof[k]) > G.gradeSeparation) continue;
+        if (rankOf(B) > bestRank) { bestRank = rankOf(B); best = hB; }
+      }
+      if (!Number.isNaN(best)) { target[k] = best; any = true; }
+    }
+    if (!any) continue;
+    // nearest target sample within the blend distance, weighted by a cosine fall-off
+    const out = Float32Array.from(A.prof);
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      let bestD = Infinity, hv = 0;
+      for (let q = 0; q < n; q++) {
+        if (Number.isNaN(target[q])) continue;
+        const d = Math.abs(c[q] - s);
+        if (d < bestD) { bestD = d; hv = target[q]; }
+      }
+      if (bestD > G.conformBlend) continue;
+      // fade out toward the flat junction plateaus too (the road must still leave each plateau at its height)
+      const ease = Math.max(1, Math.min(G.plateauEase, (A.L - A.trimA - A.trimB) * 0.3));
+      const w = (0.5 + 0.5 * Math.cos((Math.PI * bestD) / G.conformBlend)) * plateauFade(A, s, ease);
+      out[k] = A.prof[k] + (hv - A.prof[k]) * w;
+    }
+    A.prof = out;
+  }
+}
+
+/**
+ * A road whose carriageway runs over another junction's flat plateau (not one of its own ends): Washington Circle's
+ * arc past the Pennsylvania Ave / K St junction west of the ring, a slip road past a junction it does not join. The
+ * plateau is flat at its node's height and the road followed its own smoothed terrain, so the two surfaces met in a
+ * 0.36 m step across the carriageway. Within G.gradeSeparation the road takes the plateau's height where its centre
+ * or either kerb is inside the plateau outline, blended in over G.conformBlend metres (as conformOverlaps).
+ */
+function conformToPlateaus(net: RoadNet) {
+  const cell = 40;
+  const grid = new Map<number, RNode[]>();
+  const gk = (i: number, j: number) => (i + 2000) * 4000 + (j + 2000);
+  for (const n of net.nodes) {
+    if (n.outline.length < 6 || n.raised || n.arms.some((a) => a.edge.deck)) continue;
+    let r = 0;
+    for (let i = 0; i < n.outline.length; i += 2) r = Math.max(r, Math.hypot(n.outline[i] - n.x, n.outline[i + 1] - n.z));
+    for (let i = Math.floor((n.x - r) / cell); i <= Math.floor((n.x + r) / cell); i++)
+      for (let j = Math.floor((n.z - r) / cell); j <= Math.floor((n.z + r) / cell); j++) (grid.get(gk(i, j)) ?? grid.set(gk(i, j), []).get(gk(i, j))!).push(n);
+  }
+  const inOutline = (x: number, z: number, O: number[]) => {
+    let ins = false;
+    for (let i = 0, j = O.length - 2; i < O.length; j = i, i += 2) {
+      const xi = O[i], zi = O[i + 1], xj = O[j], zj = O[j + 1];
+      if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) ins = !ins;
+    }
+    return ins;
+  };
+  for (const A of net.edges) {
+    if (A.deck) continue;
+    const n = A.pts.length, c = A.cum;
+    const target = new Float32Array(n).fill(NaN);
+    let any = false;
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      const p = A.pts[k];
+      const list = grid.get(gk(Math.floor(p[0] / cell), Math.floor(p[1] / cell)));
+      if (!list) continue;
+      const q = pointAtS(A, s);
+      const kx = -q.uz * A.hw, kz = q.ux * A.hw; // to a kerb
+      for (const N of list) {
+        if (N === A.a || N === A.b || Math.abs(N.h - A.prof[k]) > G.gradeSeparation) continue;
+        if (inOutline(p[0], p[1], N.outline) || inOutline(p[0] + kx, p[1] + kz, N.outline) || inOutline(p[0] - kx, p[1] - kz, N.outline)) { target[k] = N.h; any = true; break; }
+      }
+    }
+    if (!any) continue;
+    const out = Float32Array.from(A.prof);
+    const ease = Math.max(1, Math.min(G.plateauEase, (A.L - A.trimA - A.trimB) * 0.3));
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      let bestD = Infinity, hv = 0;
+      for (let q = 0; q < n; q++) {
+        if (Number.isNaN(target[q])) continue;
+        const d = Math.abs(c[q] - s);
+        if (d < bestD) { bestD = d; hv = target[q]; }
+      }
+      if (bestD > G.conformBlend) continue;
+      const w = (0.5 + 0.5 * Math.cos((Math.PI * bestD) / G.conformBlend)) * plateauFade(A, s, ease);
+      out[k] = A.prof[k] + (hv - A.prof[k]) * w;
+    }
+    A.prof = out;
+  }
+}
+
+/** 0 on an edge's junction plateaus, easing to 1 over `ease` metres beyond them. */
+export function plateauFade(e: REdge, s: number, ease: number): number {
+  return smoothStep((s - e.trimA) / ease) * smoothStep((e.L - e.trimB - s) / ease);
+}
+function smoothStep(t: number) {
+  const c = clamp(t, 0, 1);
+  return c * c * (3 - 2 * c);
+}
 function cosFall(t: number) {
   return t >= 1 ? 0 : 0.5 + 0.5 * Math.cos(Math.PI * clamp(t, 0, 1));
 }

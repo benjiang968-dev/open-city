@@ -69,6 +69,7 @@
 // ---------------------------------------------------------------------------------------------------------------
 import type * as THREE from 'three';
 import { TUNING } from '../../tuning';
+import type { SolidRecorder, SolidTags } from '../objects/solidKinds';
 
 const M = TUNING.map;
 
@@ -119,6 +120,8 @@ export interface LaneEdge {
   /** Same-direction neighbour lanes on this segment (lane + 1 = further from the kerb / lane - 1), -1 if none. */
   left: number;
   right: number;
+  /** A stop sign at this lane's end on its approach only (a side street at a main road): it stops, then gives way. */
+  stopSign?: boolean;
   /** Cars park along this lane's kerb (see the contract): traffic avoids it when another lane goes the same way. */
   parking: boolean;
 }
@@ -281,6 +284,10 @@ export interface CityMap {
   update(time: number, camera: THREE.Camera): void;
   /** Optional: the pause menu's graphics quality (draw distance, detail, trees). Called at boot and on every change. */
   setQuality?(q: 'low' | 'medium' | 'high'): void;
+  /** Collider handle -> solid kind of every static collider the map made (the physics audit and the F4 view). */
+  solidTags: SolidTags;
+  /** Physics audit mode only (?physaudit=1): every drawn box, cylinder and wall with its solid kind; else null. */
+  solidRecorder: SolidRecorder | null;
 }
 
 // =============================================================================================== lane geometry

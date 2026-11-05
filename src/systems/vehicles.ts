@@ -352,6 +352,9 @@ export function detectCrashes(w: World): void {
 export const wreckMaterial = (() => {
   const m = carMaterial.clone();
   m.color.setRGB(0.35, 0.33, 0.32);
+  m.clearcoat = 0; // burnt paint is dull
+  m.roughness = 0.9;
+  m.metalness = 0.1;
   return m;
 })();
 

@@ -251,43 +251,65 @@ function drawTile(i: number, p: Pen) {
   }
 }
 
-/** Build the texture array (RGBA, sRGB colour, repeat wrapping, mipmaps). */
 /**
- * Build the texture arrays: colour + tint mask (RGBA, sRGB, alpha 255 = tinted wall) and a separate glass mask (R8)
- * so filtering never turns a wall/frame mix into "glass". Both repeat and are mipmapped.
+ * Build the texture arrays at 2x the drawing size (TILE_PX): colour + tint mask (RGBA, sRGB, alpha 255 = the building's
+ * wall surface shows through) and an aux array (RGBA, linear): R = glass mask (so filtering never turns a wall/frame mix
+ * into "glass"), G/B = normal x/y from a relief derived from the masks (glass set back, frames proud of the glass), A =
+ * occlusion inside window openings (darker under the lintel). Both repeat and are mipmapped.
  */
-export function makeFacadeTexture(): { tex: THREE.DataArrayTexture; glass: THREE.DataArrayTexture } {
-  const data = new Uint8Array(S * S * 4 * COUNT);
-  const gl = new Uint8Array(S * S * COUNT);
+export const TILE_PX = S * 2;
+export function makeFacadeTexture(): { tex: THREE.DataArrayTexture; aux: THREE.DataArrayTexture } {
+  const P = TILE_PX;
+  const data = new Uint8Array(P * P * 4 * COUNT);
+  const aux = new Uint8Array(P * P * 4 * COUNT);
   const cc = document.createElement('canvas');
   const cm = document.createElement('canvas');
-  cc.width = cm.width = S;
-  cc.height = cm.height = S;
+  cc.width = cm.width = P;
+  cc.height = cm.height = P;
   const c = cc.getContext('2d', { willReadFrequently: true })!;
   const m = cm.getContext('2d', { willReadFrequently: true })!;
+  const h = new Float32Array(P * P), wall = new Float32Array(P * P), tmp = new Float32Array(P * P);
+  const PX_M = 0.012; // metres per pixel (a bay is 2.5-4.5 m, a storey 3.2 m)
   for (let i = 0; i < COUNT; i++) {
-    c.clearRect(0, 0, S, S);
-    m.clearRect(0, 0, S, S);
+    for (const ctx of [c, m]) { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, P, P); ctx.setTransform(P / S, 0, 0, P / S, 0, 0); }
     drawTile(i, { c, m });
-    const col = c.getImageData(0, 0, S, S).data;
-    const msk = m.getImageData(0, 0, S, S).data;
-    const base = i * S * S * 4;
-    for (let y = 0; y < S; y++) {
-      const src = (S - 1 - y) * S * 4; // flip: row 0 of the texture is the bottom of the storey
-      const dst = base + y * S * 4;
-      const gdst = i * S * S + y * S;
-      for (let x = 0; x < S * 4; x += 4) {
-        const mv = msk[src + x];
-        data[dst + x] = col[src + x];
-        data[dst + x + 1] = col[src + x + 1];
-        data[dst + x + 2] = col[src + x + 2];
-        data[dst + x + 3] = mv > 200 ? 255 : 0;
-        gl[gdst + x / 4] = mv >= 60 && mv <= 200 ? 255 : 0;
+    const col = c.getImageData(0, 0, P, P).data;
+    const msk = m.getImageData(0, 0, P, P).data;
+    const base = i * P * P * 4;
+    for (let y = 0; y < P; y++) {
+      const src = (P - 1 - y) * P * 4; // flip: row 0 of the texture is the bottom of the storey
+      for (let x = 0; x < P; x++) {
+        const mv = msk[src + x * 4];
+        const o = base + (y * P + x) * 4;
+        data[o] = col[src + x * 4];
+        data[o + 1] = col[src + x * 4 + 1];
+        data[o + 2] = col[src + x * 4 + 2];
+        data[o + 3] = mv > 200 ? 255 : 0;
+        const isGlass = mv >= 60 && mv <= 200;
+        aux[o] = isGlass ? 255 : 0;
+        h[y * P + x] = mv > 200 ? 0 : isGlass ? -0.08 : -0.03;
+        wall[y * P + x] = mv > 200 ? 1 : 0;
       }
     }
+    blur(h, tmp, P, 1); blur(h, tmp, P, 1);
+    blur(wall, tmp, P, 5); blur(wall, tmp, P, 5);
+    for (let y = 0; y < P; y++)
+      for (let x = 0; x < P; x++) {
+        const at = (xx: number, yy: number) => h[((yy + P) % P) * P + ((xx + P) % P)];
+        const dx = (at(x + 1, y) - at(x - 1, y)) / (2 * PX_M), dy = (at(x, y + 1) - at(x, y - 1)) / (2 * PX_M);
+        const L = Math.hypot(dx, dy, 1);
+        const o = base + (y * P + x) * 4;
+        aux[o + 1] = Math.round((-dx / L * 0.5 + 0.5) * 255);
+        aux[o + 2] = Math.round((-dy / L * 0.5 + 0.5) * 255);
+        const self = data[o + 3] > 0 ? 1 : 0;
+        const above = wall[Math.min(P - 1, y + 7) * P + x];
+        const ao = self ? 1 : (1 - 0.4 * wall[y * P + x]) * (1 - 0.3 * above);
+        aux[o + 3] = Math.round(Math.max(0, Math.min(1, ao)) * 255);
+      }
   }
   const setup = (t: THREE.DataArrayTexture) => {
     t.type = THREE.UnsignedByteType;
+    t.format = THREE.RGBAFormat;
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
     t.magFilter = THREE.LinearFilter;
     t.minFilter = THREE.LinearMipmapLinearFilter;
@@ -295,12 +317,27 @@ export function makeFacadeTexture(): { tex: THREE.DataArrayTexture; glass: THREE
     t.anisotropy = 4;
     t.needsUpdate = true;
   };
-  const tex = new THREE.DataArrayTexture(data, S, S, COUNT);
-  tex.format = THREE.RGBAFormat;
+  const tex = new THREE.DataArrayTexture(data, P, P, COUNT);
   tex.colorSpace = THREE.SRGBColorSpace;
   setup(tex);
-  const glass = new THREE.DataArrayTexture(gl, S, S, COUNT);
-  glass.format = THREE.RedFormat;
-  setup(glass);
-  return { tex, glass };
+  const auxTex = new THREE.DataArrayTexture(aux, P, P, COUNT);
+  setup(auxTex);
+  return { tex, aux: auxTex };
+}
+
+/** Separable box blur in place (wrapping), radius r px. */
+function blur(a: Float32Array, tmp: Float32Array, P: number, r: number) {
+  const k = 1 / (2 * r + 1);
+  for (let y = 0; y < P; y++)
+    for (let x = 0; x < P; x++) {
+      let s = 0;
+      for (let d = -r; d <= r; d++) s += a[y * P + ((x + d + P) % P)];
+      tmp[y * P + x] = s * k;
+    }
+  for (let y = 0; y < P; y++)
+    for (let x = 0; x < P; x++) {
+      let s = 0;
+      for (let d = -r; d <= r; d++) s += tmp[((y + d + P) % P) * P + x];
+      a[y * P + x] = s * k;
+    }
 }

@@ -349,7 +349,6 @@ Format: date · what changed · what to test · known issues.
       - **Low bridges:** the camera goes inside the deck of the low canal bridges when you walk under them.
     - **Merge note:** merging `m3-geo-art-review` conflicts in `georgetownWorld.ts` (keep both `droppedBuildings` and `audit`; that branch already adds its street-clipped drops to the same set) and in DEVLOG.md.
 
-
 - **M3 traffic and police on Georgetown's road graph (step C1, branch `m3-geo-traffic`, on top of `m3-geo-citymap`):** traffic now follows junction rules, keeps to its lanes, changes lane before a turn and follows the player around; police dispatch and search on the directed graph. Both maps (`?map=grid` keeps its scenarios passing).
   - **Junction control (`src/systems/junctions.ts`, new), built once per map from the CityMap:**
     - **Moves and lane discipline:** every lane-to-lane move through every node, typed straight / right / left / U-turn. Right turns go kerbside lane to kerbside lane, left turns inside lane to inside lane, straight on keeps to the lane that carries on. Parking lanes on multi-lane roads are not traffic lanes. This also stops cars cutting across lanes inside junctions.
@@ -706,3 +705,469 @@ Format: date · what changed · what to test · known issues.
     - **Drawn-only parked cars still have no physics:** a thrown item or a car that isn't yours further than 26 m away passes through them. In 3.5 minutes of probing that was 1 traffic car stuck on Q St, more than 1 km from the player.
     - **Frames over 33 ms** can't be judged here: the machine ran at a load of 18–26 on 4 cores, and both builds had them (`crashspikes` on the grid: 13 frames over 33 ms, the worst 205 ms in `sync`).
     - The towpath ahead of you is still often empty when you stand on it: most of the people counted there are on M St and K St, which are inside the 90 m.
+
+## 2026-11-05: Stage 1 (fix the foundation)
+
+- **S1.5 Research (branch `s1-research`, documents only, no game code):** three write-ups in `docs/research/`, with sources and the date each was read.
+  - **`google-3d-tiles.md`:**
+    - **Gameplay: no.** The Maps Platform ToS (Aug 26, 2026) forbids:
+      - scraping, pre-fetching and caching (3.2.3 a, b)
+      - creating content from the tiles, including collision, heights or footprints (3.2.3 c, plus the Map Tiles policy's hybrid-3D rule)
+      - using them "with or near a non-Google Map" (3.2.3 e), which our minimap and OSM-based city are
+    - **Data:** the tiles are one photogrammetry skin with baked lighting, so no buildings, doors or collision meaning.
+    - **Optional viewer:** only on a separate page, only with the owner's own billing account (non-EEA; EEA projects created after 8 July 2025 get 403), and only with:
+      - a referrer- and API-restricted key with hard quota caps
+      - the Google logo and live tile attribution
+      - a terms and privacy notice
+    - **Cost:** Enterprise SKU, 1,000 root requests a month free, then about $6 per 1,000, so about $54 a month at 10,000 viewer opens.
+  - **`map-data.md`:** Overture `2026-10-21.0` over raw OSM, which is unreachable here.
+    - **Licences per theme:**
+      - transportation, buildings and base are ODbL
+      - places are CDLA-Permissive-2.0, plus Apache-2.0 (Foursquare) and CC0 records
+      - addresses are per source
+    - **Licence obligations:** `georgetown.json` is an ODbL derivative database, so we publish it, or the importer plus the release id, with notices. Places go in a separate CDLA file with categories only.
+    - **Schema:** field-by-field mapping to the generator's needs, read from the real Parquet footers of the release.
+    - **Georgetown fill rates** (measured by range-reading only the matching row groups):
+      - transportation: 2,898 segments; one-way on 327 of 1,000 drivable segments; speed limits on 33%; width on 0.1%; no lanes field
+      - steps, sidewalks, crosswalks: 235 steps, 442 sidewalks, 267 crosswalks
+      - base infrastructure: 848 crossings, 102 signals, 117 stop signs
+      - buildings: 4,720, with heights on 39% (USGS lidar and Microsoft), 140 footprints under Esri CC BY 4.0, 0 entrances
+      - places: 3,822, of which 336 rely on Foursquare/Apache-2.0
+    - **Terrain Tiles:** USGS NED/3DEP 1/9″ DC 2008 at z15 (3.7 m/px; z16 is 404), Terrarium encoding, bare earth with bridges removed, river surface about 0–0.2 m.
+    - **Strings:** ready-to-paste pause menu, README and `DATA-LICENSE.md` text.
+  - **`textures-and-assets.md`:**
+    - **CC0 sources:** ambientCG and Poly Haven need no attribution (Poly Haven's API ToS asks for a credit only when its live API is used inside an app); TextureCan, 3DTextures.me, Kenney; per-model care for Poly Pizza and Sketchfab. (ShareTextures removed by the fact-check below.)
+    - **Procedural PBR:** techniques for our `WebGLRenderer` (TSL noise and triplanar exist in r187 but need `WebGPURenderer`).
+    - **Compression:** three r187 already ships the Basis transcoder and `KTX2Loader`, which picks BC7 on desktop. `ktx2-encoder` (npm, WASM, MIT) encodes at build time; glTF-Transform's `etc1s`/`uastc` need KTX-Software.
+    - **Network:** the exact hosts the owner would allow, under Network access → Custom with the default list kept.
+  - **How to test:** read the three files; every number is reproducible from the commands and URLs they cite.
+  - **Known issues:**
+    - `developers.google.com`, `mapsplatform.google.com`, `docs.overturemaps.org`, `osmfoundation.org`, `openstreetmap.org`, `opendatacommons.org`, `cdla.dev` and every texture site are blocked from this environment. Google's Map Tiles policies and prices, the OSMF attribution and produced-work guidelines, and the texture sites' licence pages were read only as web-search extracts (marked in the docs); licence texts were read from SPDX copies.
+    - Google prices and quotas must be checked in the Cloud console before any spending.
+    - Nothing was measured against the live Google service (no key).
+    - The README's current "Map data © OpenStreetMap contributors" line describes data that is still synthetic.
+- **S1.5 Research fact-check (same branch, documents only):** a second reader re-checked every legal, licence, price and attribution claim in `docs/research/*.md` against primary sources where reachable (Google terms re-downloaded from cloud.google.com; SPDX licence texts; Overture docs, joerd and AWS registry files from GitHub; npm registry; three's own files; the Claude Code docs) and by fresh web searches where the host is blocked. Corrections are marked "fact-check" in the docs.
+  - **Google viewer:** downgraded from "legally possible" to "legally doubtful". A page with only Google tiles is hard to square with ToS 3.2.3 (d) (product "must contain substantial, independent value and features beyond the Google products") and the Customer Application definition, while our own map on it breaks 3.2.3 (e); example (iii) of 3.2.3 (e) also covers linking, so "a link from the pause menu is fine" was withdrawn. Added the binding attribution clause 3.2.2 (b) and the clauses that make the policy pages binding (ToS 4.2, SST A.1). Prices ($6.00 per 1,000 after 1,000 free, Enterprise SKU) and the EEA 8 July 2025 cut-off are confirmed again by search extracts only.
+  - **Map data:** the 140 Esri Community Maps footprints are CC BY 4.0; putting them in the ODbL `georgetown.json` needs a waiver of CC BY §2(a)(5)(B) that, as far as I can find, Esri gave to OpenStreetMap and its users only (unconfirmed). Recommendation now: drop them or keep them in a separate CC BY file. Attribution strings rewritten: ODbL 4.3 hyperlinks, CC BY licence link and "modified" note, AllThePlaces is CC0 (not CDLA), Mapzen added (joerd lists it as required for the hosted tiles). 3DEP 1/9″ starts at z11, not z10. Licence counts in the clipped Georgetown data recounted and confirmed.
+  - **Textures:** ShareTextures now states a "Custom CC0 ... with specific restrictions" licence, so it is marked avoid. Shipping three's Basis transcoder means shipping its Apache-2.0 licence text with it. Network-settings steps now follow the current Claude Code page.
+  - **How to test:** read the "fact-check" notes in the three documents; the commands are in the fact-check report (re-download of the five Google terms pages, SPDX texts, `sources[]` recount with pyarrow on the clipped Parquet files, HEAD on three terrain tiles).
+  - **Known issues:** the Map Tiles policy, price and quota pages, Esri's waiver post, the Foursquare NOTICE page, the OSMF guidelines and the texture sites are still read only as search extracts; none of the Google statements was tested against the live service.
+
+### Stairs and universal collisions (Stage 1 item 1, branch `s1-physics`)
+
+- **The bug.** The owner could walk through stairs. The house stoops (about 2,600 on Georgetown, 2 to 13 steps each) were drawn with no collider at all. The canal steps ran up into the sidewalks of the streets they climb to, so their top half was buried under the pavement, and the canal's retaining wall stood across them: they could not be climbed. Many other solid things had no collider either: benches, bus shelters (except the back panel), gravestones, most trees (only those within 9 m of a road), lock gates, moored boats, arcade and portico columns, the metro canopy, the stair middle hand rail and the canal coping. The statue plinth had one box over all its tiers (an invisible wall round the 0.5 m first tier). On the grid: benches, street-sign posts, taxi-rank posts and boats.
+- **Solid kinds registry** (`src/systems/objects/solidKinds.ts`): every prop and structure kind declares its Stage 2 class (static / dynamic / interactive), its collider shape (trimesh, box, cylinder, hull, ramp, boxes, own body, none), whether it must stop the player, an audit tolerance and its F4 colour. The instanced props' colliders are data there too (`PROP_COLLIDERS`: lamp base and pole, bench legs + slats + back, the six parts of a bus shelter, gravestone, signal pole, stop post, tree trunk, the grid's bench and posts). They are placed with `PhysChunks.placeProp`. Every static collider is tagged with its kind (`CityMap.solidTags`). Stair ramps, stair walls, parapets, decks and arches are separate per-chunk trimeshes by kind. Stage 2 can give a kind its own body (a bin, a chair) without touching the generators. Nothing of pickup, inventory or interiors is built.
+- **Physics audit** (`src/systems/physicsAudit.ts`, scenario `physaudit`, run with `QUERY=physaudit=1`): with `?physaudit=1` the map records every box, cylinder and wall it draws, with its kind. The audit then compares the drawing with Rapier and prints each mismatch with coordinates:
+  - horizontal rays at every drawn solid face, every instanced prop's own triangles and every facade (MISSING / SHORT / LONG);
+  - vertical rays at 3,000 random points, inside every solid part and along every stair, against the drawn triangles (UNSOLID: drawn within reach above the physics floor; UNDRAWN: a physics floor with nothing drawn);
+  - per stair, the drawn-vs-ramp height and the largest jump in the physics surface.
+
+  | | before (f13af69) | after |
+  |---|---|---|
+  | Georgetown side-probe mismatches (solid kinds) | 26,965 | 3 (stair risers 0.13–0.17 m set back) |
+  | Georgetown floor mismatches | 3,714 | 8 (metro canopy 5, a bench edge 1, stair flights 2) |
+  | grid side-probe mismatches | 329 (292 street-sign posts, 36 benches, 1 tree) | 2 (two trees, 0.10 m) |
+  | grid floor mismatches | 45 (benches) | 0 |
+  | stairs: largest physics step between samples 0.1 m apart | up to 3.06 m | 0.066 m |
+  | stairs: ramp vs drawn tread | −0.17 to +0.6 m | −0.115 to +0.113 m |
+
+- **Colliders added or fixed (Georgetown):**
+  - stoops: one convex ramp each (flat landing, then down through the middle of every tread, a half-riser lip at the foot) and a thin slab for each iron rail;
+  - every tree trunk; lamps (base and pole); benches; bus shelters; gravestones; signal poles to their full 6.3 m;
+  - lock gate leaves, balance beams and posts; moored boats; the round fountains' pedestals;
+  - Washington Harbour's arcade columns and setback tiers; the mansion portico's platform and columns; the smokestack's tapered stack;
+  - the steel freeway columns as boxes (the round collider stuck out 0.17 m); the statue plinth as its four tiers; the cemetery railing per 2.4 m bay, following the slope; the gate leaves;
+  - the metro canopy as thin glass slabs (its ends stay open); the canal coping's top and outer face; deck edges; the stone arches' undersides and spandrels, abutments and cutwaters;
+  - the stair walls as solid slabs; the Exorcist Steps' middle hand rail;
+  - benches on the boardwalk now stand on it (they were drawn on the ground under it).
+- **Stairs:**
+  - the ramp runs half a riser above the risers' feet (tread error ±0.09 m, was 0 to −0.17 m);
+  - landings and the flat top are drawn (they were holes);
+  - a stair's footprint is cut out of the terrain, sidewalks, junction corners and canal aprons (render and physics). The canal retaining walls stop either side, and the side walls stand a balustrade (0.9 m) above the ground outside;
+  - stair ends are cut back out of carriageways. A stair too short for its rise gets a longer foot (`geo.stairMaxSlope` 0.84, `geo.stairMaxExtend` 3.5 m, never into water);
+  - footbridge ends land on the canal bank (the north end hung 0.8 m above it).
+- **Grid:** benches, street-sign posts, taxi-rank posts (moved a metre along the kerb, off the rank's spot where the player starts) and moored boats.
+- **Character controller:** its numbers moved to `TUNING.player`:
+  - `ccOffset`;
+  - `autostepHeight` 0.45;
+  - `autostepMinWidth` 0.2 (was 0.25);
+  - `snapToGround` 0.45 (was 0.4);
+  - `maxSlopeDeg` 52 (was 50);
+  - `minSlopeSlideDeg` 52 (new: standing on a 32–40° stair no longer creeps);
+  - `groundedVy`.
+- **F4 collision view** (`src/systems/physicsDebug.ts`): wireframes of the colliders within 22 m of the player, coloured by kind, bright in front of geometry and faint behind it, rebuilt 4 times a second. When it's off, nothing is built or added to the scene. The help line and the pause-menu controls mention it. Its numbers are `TUNING.debug.phys*`.
+- **Test:** `npm run build`, then:
+  - `QUERY=physaudit=1 MAP=georgetown node scripts/shot.mjs x physaudit` (and `MAP=grid`);
+  - `MAP=georgetown node scripts/shot.mjs 31-physics-stairs stairs`: every stair up and down with held keys, a footbridge, stoops of 2, 3, 5, 7 and 10 steps (and sideways into the rail), a kerb, the statue plinth (jump twice), a bench (jump onto the seat), Key Bridge and the freeway deck, and into one of every solid prop kind;
+  - `SAMPLES=3000 MAP=georgetown node scripts/shot.mjs x fallthrough` (and `SAMPLES=2000 MAP=grid`);
+  - `MAP=georgetown node scripts/shot.mjs x physf4`: the `31-physics-f4-*` screenshots;
+  - in the game: press F4 and walk up a stoop, the Exorcist Steps (Prospect St at 36th St) or the canal steps from the towpath.
+- **Results (final build):**
+  - `physaudit`: the table above.
+  - `stairs` on Georgetown: pass, no failures.
+    - All 8 built stairs were walked up and down holding W. The Exorcist Steps (8.56 m rise) took 6.7 s up and 4.7 s down. The six canal steps (3.65–3.72 m rise) took 2.75–3.0 s up and 1.6–1.7 s down. The short path stair has a 0.15 m rise.
+    - The feet never went below the collider surface.
+    - Standing 3 s mid-flight: 0.010 m creep, 0.015 m jitter.
+    - Stoops of 2/3/5/7/10 steps: the landing is reached in 0.32–1.35 s, and walking sideways into the rail stops the player.
+    - The footbridge was crossed, and the kerb walked up and down.
+    - Statue plinth: each tier stops the player, and two jumps reach the top (1.04 m each).
+    - Bench: one jump lands on the seat.
+    - Key Bridge: 32.7 m along the sidewalk at a constant height. Whitehurst Freeway deck: 33.7 m, no sinking.
+    - Props: lock gate, railing, column, monument, wall, lamp, tree, bench, signal pole, sign post, bus shelter and gravestone stop the player 0.04–0.08 m from their collider. Fountain, boat, building and tower are skipped, because the scenario finds no clear straight approach to one; the audit covers them.
+  - `stairs` on the grid (props only): pass. Bench, railing, kiosk, column, lamp, tree and sign post stop the player at 0.04 m. Building, fountain, boat and container are skipped.
+  - `fallthrough` on Georgetown (3,000 drops, 1,898 on land): fails its own criteria.
+    - 1,876 within 5 cm of `map.heightAt`; 0 below the surface; 0 inside a building; 0 not settled.
+    - 1 on a parked car, and 3 resting on a ledge's edge.
+    - 15 (0.8 %) where `map.heightAt` is 5–19 cm off the collider. The limit is 0.2 %.
+    - 3 hovering (the limit is 0): (699.7, −467.2) 0.26 m up on a steep slope; (681.1, −333.2) and (568.2, −319.7) 2.0 m above the floor with nothing found under the capsule. These two are not explained yet.
+  - `fallthrough` on the grid (2,000 drops, 823 on land): 815 ok, 5 on piers, 2 on cars. It fails on 1 drop that sank 5.3 cm into the big ground box at (37.8, −384).
+  - `physf4`: 4 screenshots, wireframes in each.
+  - `world walk drive handling crashspikes gate2 mapcheck theft`:
+    - Grid, on the final build: all exit 0 with a clean console. Walk 4.8 m (as on the base). Crashspikes: 0 frames over 33 ms.
+    - Georgetown, on the 766cd44 build (the later commits change only the grid generator and the scenario scripts): all exit 0 with a clean console.
+    - Georgetown crashspikes: 11 frames over 33 ms, worst 150 ms (physics, the wreck test). The base build spikes the same way (worst 148 ms, physics).
+- **Performance against the base (f13af69).** Georgetown, 4x CPU throttle, after a 600-frame warm-up, 3 interleaved base/new runs. Medians, with the range in brackets:
+
+  | | base | s1-physics |
+  |---|---|---|
+  | colliders | 10,779 | 24,180 |
+  | boot to first frame | 19.0 s | 21.4 s |
+  | Rapier step alone | 7.2 ms (4.7–8.7) | 7.6 ms (7.4–8.4) |
+  | frame CPU on foot | 11.9 ms (11.3–14.6) | 13.1 ms (12.8–15.2) |
+  | physics section on foot | 7.7 ms (7.2–9.5) | 10.2 ms (7.7–11.0) |
+  | frame CPU in a car | 12.5 ms | 9.2 ms |
+  | garbage per frame | 68.9 KB | 66.2 KB |
+  | draw calls / triangles in view | ~640 / 1.0 M | same |
+
+  - With F4 on, one rebuild every 0.25 s costs 0.4–20 ms (at 4x throttle). With F4 off it costs nothing.
+  - Grid (runs without the warm-up): colliders 1,836 → 1,972; step 2.0 → 2.1 ms; frame on foot 9.6 → 10.0 ms.
+  - An earlier experiment that removed the prop colliders at runtime made no measurable difference to the step. The on-foot physics section is up to 2.5 ms slower at 4x throttle (about 0.6 ms unthrottled), but the base and new ranges overlap, so it is not proven either way.
+- **Known issues:**
+  - Three of the eleven stairs in the (knowledge-based) data run along carriageways for their whole length (by Rock Creek and under the freeway) and are no longer built: (495.3, 119.4), (664.2, −330.5) and (724.8, −479.2). Their walk links remain. One more is cut to 5 m with a 0.15 m rise.
+  - Every tree is solid now, so trees the data puts on footpaths (Dumbarton St, Potomac St) block the player there.
+  - `map.heightAt` is 5–19 cm off the collider at 0.8 % of the fallthrough points, all within 2.5 m of a band edge (kerbs, sidewalk skirts: the 1 m raster smooths the 0.15 m step). People placed by `heightAt` float or sink that much there. On the Whitehurst Freeway deck, the map's walk height is 0.3 m above the collider.
+  - Over the top 3 m of the canal steps by Wisconsin Ave, `map.heightAt(x, z, top)` returns the bridge sidewalk (10.15) above the stair (9.25–9.95). The bridge footprint in the map query overlaps the stair.
+  - Two unexplained fallthrough hovers (above), and the grid's 5.3 cm sink.
+  - The canal steps climb at up to 40°, steeper than real steps, because the data gives them little room between the towpath and the street.
+  - The footbridges still can't be entered from the north: their north end is on the canal's north bank, behind the retaining wall (known since the C0 review).
+  - Stairwell walls are plain boxes. Where a stair runs below a sidewalk, they read as a tall wall along the pavement.
+  - The audit leaves:
+    - 3 stair risers 0.13–0.17 m behind their drawn face;
+    - the metro canopy's curved glass against its slabs (up to 0.4 m);
+    - one bench-edge sample;
+    - two stair-flight samples.
+  - The capsule rests up to 0.16 m above a slope, and on ledge edges with its centre over a lower floor. This is inherent to a capsule.
+  - The `stairs` scenario does not walk into a fountain, boat, building or tower (no clear approach found). The audit's side probes cover them.
+  - Boot to first frame on Georgetown is 2.4 s longer at 4x throttle (about 0.6 s unthrottled): the extra colliders and the stairwell clipping.
+  - Crashspikes on Georgetown spikes up to 150 ms in physics in both the base and this branch. `gate2` and `handling` on Georgetown don't reach their test conditions in the base either.
+
+### Review of item 1 (stairs and collisions), independent check and fixes (branch `s1-physics`)
+
+- **Merge.** main (8192ea1: traffic and police on the lane graph, life on the streets) is merged into `s1-physics`. The conflicts in `main.ts`, `world.ts`, `scenarios.mjs` and this file keep both sides.
+- **The owner's walk-through stairs** were the house stoops (no collider at all before this branch) and the canal steps (buried under the sidewalks, the canal wall across them). Checked on the merged build: 186 of 189 stoops sampled across Georgetown (every 13th of 2,606) are walked up to the landing and back down with W held. The 3 flagged ones are the test's own start position (put against a kerb face or beside a tree), and one stoop whose foot sits in a frontage strip 0.35 m below the sidewalk on a steep street (that was there before; on the base the strip is 0.4–0.5 m lower). All 8 stairs and the 5 stoop heights in `stairs` pass.
+- **`map.heightAt` is now the collider surface** (new `src/systems/map/surfaceIndex.ts`). The ground, kerbs, sidewalks, lots, canal aprons and stair ramps are trimesh colliders; their triangles are kept when the trimeshes are built (`PhysChunks.keepTriangles`) and indexed in 4 m buckets. `heightAt` takes the highest one there (with a height, the highest at most `map.levelStep` above it), and the raster only where no triangle covers the point (inside buildings, open water). Deck carriageways, their kerbs and sidewalks, deck junctions and the footbridges are now `deck` colliders (they were `ground`, so the ground under a bridge would have read as the bridge), and the walk surface reads the deck triangles (with the analytic deck profiles where a deck runs off the map edge past its last triangle) and the boardwalk piers. No allocation per query.
+  - 200,000 random points: heightAt was more than 5 cm off the collider at 1.6 % of the walkable ground (up to 1.3 m by the canal); now 0 of 128,303 points differ by more than 2 cm.
+  - Every bridge lane every 2 m (24,163 points across Key Bridge, the freeway and the street bridges): 61 % were more than 5 cm off (Key Bridge a kerb high, the freeway up to 0.5 m); now 0.
+- **Grid sink.** The grid's ground was one 1 km cuboid. Rapier's shape casts are about 9 cm wrong on a shape that size, and the character sank 5 cm into the ground standing still at a third of the spots tried (not only at the one fallthrough found). The ground and sea floor are now 120 m tiles, one per static body: 0 of 81 spots sink.
+- **Fallthrough's 2 m "hovers"** were the test dropping the capsule inside a bridge deck and a bridge pier (it dropped from 2 m above the terrain under them). It now drops 2 m above whatever covers the spot (`raised`), waits until the player has actually stopped moving (a capsule that lands on a steep bank slides for a few frames: the 0.26 m hover), resets knock-back and keys between drops, and finds a capsule resting on a step's or ledge's edge from the floor under its whole round bottom, skin gap included. `FALL_SEED=<n>` picks another set of points. The criteria are unchanged.
+- **Street trees and lamps.** The synthesized data (`meta.synthetic`) put 137 trees right on the sidewalks' walk links (81 on Dumbarton St, 42 on Potomac St): its sidewalk lines and the generator's road widths differ. A synthesized tree or lamp on a sidewalk now stands in the furnishing strip (`TUNING.geo.streetTreeKerbOffset` 0.7 m, `streetLampKerbOffset` 0.45 m from the kerb) at the same distance along the street. A moved tree is dropped at a junction corner, a driveway, within 7 m of a crossing or 2 m of a lamp or another tree (4,810 trees, was 5,227). Real data is left as it is. Trees within a capsule's reach of a walk link: 137 → 9, all beside diagonal links to corners and crossings; nowhere is a walkway blocked across (no spot without a free 0.7 m gap).
+- **Footbridges from the north.** Both canal footbridges ended on the narrow north bank under the retaining wall (2.7 m and 0.7 m below the land behind it). The north end now runs on just over the wall's coping and, where the land beyond is lower, a short ramp (at most 0.3 rise per metre) takes it down. Walked with W held from both ends of both footbridges: all four get across.
+- **Holes to the safety floor.**
+  - Every canal step's foot had a 5 cm slit down to the safety floor: the stairwell ran on 5 cm past the ramp. The builder's last change (uncommitted when they stopped) fixes it: the stairwell stops exactly where the ramp stops, and at a bend both run on past the joint. A 0.1 m scan of every stair: 0 slits (was 11–128 points per stair).
+  - The 0.3–1 m gaps between neighbouring houses had no floor at all (the raster marks them as building, and the terrain under buildings was dropped). The terrain under buildings is now kept, at natural height capped to the band surfaces next to it, not dipped. 400,000 random points: 68 holes, 23 where a dropped player fell in; now 3 holes, 1 fall. This costs 49,000 ground triangles (render +3 %, ground trimesh +18 %).
+- **Canal steps "up to 40°"**: measured on the collider, every canal step climbs at 31.8° (the drawn treads 32°). 40° is `geo.stairMaxSlope`'s limit, which the current data never reaches. Nothing to fix.
+- **Audit leftovers.** The two "stair flight" floor samples were the towpath under the foot of two canal steps: a drawn face within the upper floor's own tolerance under it now belongs to it. The three stair risers are by design (the ramp runs half a riser above the risers' feet, so a riser face is up to 0.085 / 0.62 = 0.137 m from it): the stair tolerance is 0.14 m. The one-step "stair" left after cutting a data stair back out of a carriageway (0.15 m rise) is a plain path now (`geo.stairMinRise` 0.3 m). Grid tree colliders match the five-sided trunk (0.19 × scale; two probes were 0.10 m out).
+- **Seeded items.** With `heightAt` exact, the item placement's 0.35 m edge probe stopped seeing ledges 0.4–0.6 m away (the raster had smoothed them into it): 23 Georgetown items lay beside a drop of more than 0.5 m (`geolife`'s check). A second probe (`TUNING.items.dropProbe` 0.6 m, `maxDrop` 0.5 m) rules those spots out: 0 now, as on main.
+- **Also tried and checked:** drove the player's car with W held into a building, lamp, bench, signal pole, sign post, bus shelter, railing, wall and column at 34–45 km/h: it stops with its bumper at the collider every time, nothing is passed through. Dropped the player from 40 m at 300 random spots per map: none falls through or ends below the map surface; 7 come to rest with no floor under the capsule's axis, and rerun one by one, 6 of those rest on a building (a roof edge next to the wall they fell along) and 1 on the ground. F4 has no cost when off (one key check).
+- **Test:** `npm run build`, then (each also with `MAP=grid`):
+  - `SAMPLES=3000 MAP=georgetown node scripts/shot.mjs x fallthrough`, and `SAMPLES=10000 FALL_SEED=4242` for another set of points;
+  - `QUERY=physaudit=1 MAP=georgetown node scripts/shot.mjs x physaudit`;
+  - `MAP=georgetown node scripts/shot.mjs 31-physics-stairs stairs` and `... x physf4`;
+  - in the game: walk onto either canal footbridge from the north side (33rd St, by the old warehouses); walk Dumbarton St's sidewalk (the trees stand by the kerb); press F4 on a bridge (decks are their own colour now).
+- **Results (final build):**
+  - `fallthrough`: pass on both maps. Georgetown, 3,000 drops: 1,898 landed, 0 below the surface, 0 where `heightAt` is off the collider (was 15), 0 hovering (was 3), 0 inside a building, 0 not settled; 6 drops raised over a deck or pier. With 10,000 drops on another seed: 6,397 landed, all of those 0 as well, 5 resting on a step's edge. Grid, 2,000 drops: 823 landed, 0 below (was 1); 6,000 on another seed: 2,357 landed, 0 below.
+  - `physaudit`: grid 0 probe and 0 floor mismatches (pass). Georgetown 0 probe mismatches, 6 floor samples: the metro canopy's curved glass against its slabs (5) and a sample between a bench's slats (1).
+  - `stairs`: pass on both maps (all 8 stairs, now 7 after the one-step one became a path; the stoops; footbridge 17.2 m long now; kerb; plinth; bench; Key Bridge and the freeway deck, where the map's walk height now matches the deck: 0.3 m above it before).
+  - `mapcheck` on both maps: pass (0 height mismatches). (Two intermediate versions of the deck fallback failed it on Georgetown, Key Bridge's lanes 14.7 m off at the map edge, or put 399 bridge-end points a kerb off; the final rule passes both checks.)
+  - `world walk drive handling crashspikes gate2 mapcheck theft taxi police witness life` on both maps, and `geodrive geolife` on Georgetown: all exit 0 with a clean console. Grid walk 4.8 m as before. `crashspikes` can't be judged here (other sessions kept the 4-core machine at a load of 16 to 20): grid 11 frames over 33 ms, worst 463 ms in a random section; the merged base had 8, worst 1,376 ms.
+- **Performance.** Georgetown, 4x CPU throttle, 600-frame warm-up, 4 interleaved rounds of main (8192ea1), the builder's work merged (239573a) and this review (d5cc9a9). Medians (range); the machine was loaded by other sessions throughout, so small differences are noise:
+
+  | | main | builder's work | review |
+  |---|---|---|---|
+  | colliders | 10,778 | 24,179 | 23,772 |
+  | ground triangles (physics) | 287 k | 296 k | 345 k |
+  | triangles drawn (whole map) / in view | 1.557 M / 1.005 M | 1.556 M / 1.004 M | 1.593 M / 1.004 M |
+  | draw calls in view | 151 | 150 | 150 |
+  | boot to first frame | 19.0 s (18.0–19.5) | 19.8 s (17.1–21.3) | 21.0 s (17.4–21.4) |
+  | Rapier step alone | 3.2 ms | 2.9 ms | 3.1 ms (0.9–5.5) |
+  | physics section on foot | 3.1 ms (1.8–3.6) | 3.8 ms (3.1–7.7) | 3.8 ms (3.1–5.3) |
+  | physics section in a car | 3.9 ms (3.1–4.8) | 4.0 ms (2.5–5.5) | 5.2 ms (3.2–5.5) |
+  | frame CPU on foot | 5.3 ms | 5.0 ms | 6.1 ms (1.8–7.5) |
+  | garbage per frame | 82 KB | 81 KB | 72 KB |
+  | JS heap after boot | 147 MB | 165 MB | 187 MB (191 MB before the index was slimmed) |
+
+  - Grid, 3 rounds: colliders 1,806 → 2,050; step 1.1 → 1.1 ms; physics on foot 3.5 (2.1–4.1) → 2.2 ms (2.2–2.3); frame on foot 5.2 → 4.1 ms.
+  - The surface index costs about 22 MB of heap (its triangles and bucket lists) and nothing measurable per frame (a query is a few dozen edge tests in one 4 m bucket). The in-car physics section may be about 1 ms higher at 4x (about 0.3 ms real) since the ground trimesh grew by 17 %, but the ranges overlap.
+- **Known issues (left):**
+  - A 20 m slot to the safety floor where the canal meets Rock Creek ((359..378, 266..267), and a narrow one along the creek at x 375–378): the corridor's end and the creek don't meet. A player who walks in falls and is put back on the pavement by the safety check. Two more single holes in 400,000 points.
+  - On steep streets the strip between a house and the sidewalk can lie up to 0.45 m below the sidewalk (0.4–0.5 m on the base too); a stoop's foot then sits in that strip, a step down from the pavement.
+  - 9 street trees stand within a person's reach of a walk link (the diagonal links to corners and crossings); none blocks a walkway.
+  - The metro canopy's curved glass is 0.1–0.4 m off its collider slabs (out of reach from the ground).
+  - The terrain under buildings is drawn (49 k triangles, mostly hidden inside the buildings).
+  - The `stairs` scenario still skips the fountain, boat, building and tower (no clear approach); the audit covers them, and the car was driven into a building.
+
+### Real 1:1 map data, roads and terrain (Stage 1 items 2 and 3, branch `s1-realdata`)
+
+- **Real 1:1 Georgetown from open data (Stage 1 items 2 and 3, branch `s1-realdata`):** `src/data/georgetown.json` is now real data: OpenStreetMap via Overture Maps (release 2026-10-21.0) and USGS 3DEP terrain, in the same `open-city-osm-1` format and frame as before (origin 38.9065, -77.061, x east, z south), so old and new positions compare 1:1. The default map is still the grid (`?map=georgetown` picks it).
+  - **Importer:** `npm run import-overture` (`scripts/importOverture.mjs`, plain Node) reads the cache in `data/overture/` (gitignored). When the cache is missing it runs `scripts/fetchOverture.py` (pyarrow + shapely, `OVERTURE_PYTHON`), which reads only the parquet row groups whose bbox column meets the download box, and the terrarium tiles (z15, 3.7 m per pixel). Deterministic: two runs differ only in `generatedAt`.
+  - **Crop:** -77.0726, 38.8986 to -77.0483, 38.9157: 2108 m x 1898 m, from the Key Bridge landing and the Georgetown University campus to 22nd St NW past Washington Circle, and from the Potomac to north of R St. Kalorama beyond the Rock Creek valley and the Virginia shore (with Roosevelt Island) are dropped and become woodland, so streets end at the woods or the river there. The west, north-west, east and south-east edges still cut the street grid (no natural edge there; `docs/m3-suspicious-areas.md`, "Crop edges").
+  - **Three files, three licences:** `georgetown.json` (2.28 MB, ODbL: roads, paths, buildings, water, parks, car parks, street furniture, terrain), `georgetown-places.json` (140 KB, CDLA-Permissive-2.0: 1,623 place categories and positions) and `georgetown-buildings-ccby.json` (19 KB, CC BY 4.0: the 129 footprints whose geometry comes from Esri Community Maps; a CC BY 4.0 footprint inside an ODbL database would need a waiver we cannot rely on). `loadGeoDoc` (`geoDoc.ts`) loads and merges them. Places with an Apache-2.0 (Foursquare) source (708 in the download box) are dropped, and the importer stops on any source licence it does not know. 2.44 MB in all (the target was under 3 MB).
+  - **Attribution** (pause menu, README, `src/data/georgetown.LICENSE.md`): "Real map data: © OpenStreetMap contributors via Overture Maps Foundation (release 2026-10-21.0), ODbL 1.0; places © Overture Maps Foundation, CDLA-Permissive-2.0; some building footprints © Esri Community Maps contributors, CC BY 4.0; building heights include USGS 3DEP lidar and Microsoft ML Buildings; elevation: USGS 3DEP via AWS Terrain Tiles."
+  - **Contents:** roads 1,071 pieces (80 km), footways 2,024 (sidewalks, crossings, 120 steps, paths, the towpath, plazas), 4,713 buildings, 1,623 places, 30 water areas, 179 parks, 107 car parks (2,736 spaces), 65 bridge entries, 8,534 props.
+  - **Roads:** Overture segments split at every linear-referenced rule (bridge, tunnel, level, subclass, surface, speed, access); connector vertices kept so graphs match by coordinates; one-way from access restrictions, max speed from speed limits; USPS-abbreviated names ("M St NW"). Overture has no lane counts: width is measured from the mapped sidewalk lines either side for 425 pieces (`est: 2`), else a class estimate (`est: 1`). Washington Circle is found as a loop of same-name pieces and written as one closed one-way counter-clockwise roundabout (Overture keeps no junction tag). Service roads are cut where they enter a building (39 cut, 18 dropped) and 85 alleys are narrowed to the gap between buildings.
+  - **Signals and stop signs (real):** 83 signalled junctions. Overture keeps `highway=stop` but not `stop=all` or the direction, so a stop sign mapped on the junction vertex is an all-way stop (89: P St at 26th-31st, K St under the Whitehurst Freeway) and one mapped on an approach (25, `stop_arm`) stops only that approach, which then gives way (O St at Wisconsin Ave, 35th St at M St, 23rd St at O St). Before, every stop sign was an all-way stop, so M St and Wisconsin Ave traffic stopped at alleys.
+  - **Buildings:** heights from Overture (1,915, OSM or USGS lidar), building parts (1), floor counts (49), the median of same-kind neighbours (855) or class defaults (2,172; houses 10 m). 96 % of rowhouses are 2-4 storeys. A footprint 60 % or more inside a larger one is dropped (13).
+  - **Places:** categories only, mapped from the Overture taxonomy to the OSM `key=value` categories of `poiNames.ts`; confidence 0.55 or more, offices 0.8 or more and at most 2 per building; no names or brands.
+  - **Water:** the Potomac, the C&O Canal (one centre line, the four lock chambers from the data, pound levels from the terrain: 11.0, 8.6, 4.0, 1.4, 0 m) and Rock Creek (water level per vertex from the terrain).
+  - **Terrain:** 5 m grid from the DEM, relative to the river surface (0.13 m NAVD88): -2 (river bed) to 64.5 m.
+  - **Props:** real signals, stop signs, lamps, benches, bins, bus stops, hydrants, bike racks and trees; synthesized ones flagged with a 4th element `1` (street trees every 12 m on shopping streets, lamps every 30 m, benches, bins, hydrants, woodland and park trees), never within a set distance of a real feature.
+  - **Fallbacks:** `npm run gen-georgetown` (the knowledge-based map) and `?map=grid` still work.
+- **World generator on real topology** (`roadNet`, `roadMesh`, `georgetownWorld`, `georgetownMap`, `lots`):
+  - Widths from the data; sidewalks detected 1-5 m beyond the kerb; kerb radii 2 m at driveways and alleys, 4.5 m at residential corners; junction plateaus capped at 12 m at sharp merges.
+  - **Profiles:** junction heights relaxed until a piece's free length takes the height difference at 10 % (main roads), 15 % or 20 % (service); roads leave each flat plateau with zero grade and ease into the street's grade over 10 m; a smaller road on a bigger one's carriageway within 2.5 m of its height takes the bigger road's height; car-park aisles take the lot's plane. New today: a road whose carriageway runs over another junction's plateau takes that plateau's height (a 0.36 m step across Washington Circle's arc at the Pennsylvania Ave / K St junction), a bridge deck no longer has to clear its own street one short piece beyond its end (`geo.deckJoinHop`; K St's bridge over the Rock Creek parkway stood 6 m above the junction 6 m away), and a ground junction beside a raised deck end rises up to 3 m to meet it (`geo.approachMaxLift`).
+  - **Decks:** junctions inside a bridge take heights interpolated along it, not the DEM; their surfaces are in the deck index; a final deck pass with frozen node heights makes every plateau match its junction; the ground under every deck is cut below it.
+  - **Tunnels** (the K St underpass, the Potomac Freeway portal) are left out and their approach ramps pruned. New today: lane directions that cannot reach a map-edge exit get no lanes (the pruned approaches ended in a node nothing leaves, and traffic circled there).
+  - **Map:** driveways, parking aisles and alleys are drivable surfaces, not routes. New today: lanes lie on the collider surface (`roadSurfaceAt` nearest the lane's height; lanes on their own profile floated or sank up to 2.5 m where carriageways overlap), car-park bays where a footway or kerb sets the surface are left out (`geo.stallSurfaceTol`), synthesized crossings take the walk surface's height.
+- **Traffic, police and life on the real map** (after merging main 8192ea1 into the branch):
+  - **Signals:** a car held before a lane too short to stop on now calls the signal at that lane's end (cars queued at the Key Bridge north end for a green the M St detector never asked for: geodrive and the AI were stuck for ever).
+  - **Turn curves:** the corner point must lie before the exit lane's start (a ring exit diverging at 5 degrees hooked back past the K St lane start), and an exit lane that starts up to `traffic.overlapStartMax` behind the stop line (inside of a bend through a node with tiny plateaus) is joined with no curve. Curves ending against their exit lane fell from 168 to 61 of 3,887 moves (the rest are U-turn bulges).
+  - **A car tests follow** (`keep`) that reaches a one-way road off the map starts again elsewhere (it waited at the edge for ever, so mapcheck counted 1 choice).
+  - **geodrive** adapted to real data: the Washington Circle entry and the K St exit are picked by an arm coming in / going out (each carriageway meets the ring at its own node).
+- **Road audit and drive test** (limits in `TUNING.geo.roadLimits`): `roadaudit` casts rays at the colliders along every lane (centre and wheel tracks every 0.5 m), across every junction and along every walk link; `roaddrive` drives the player's car physically along every major street measuring the cabin's vertical acceleration and wheel airtime. Results: limits still exceeded in places, but every metric improved on the handed-over branch and the walls the gate drive hit are gone. Medians: grade 1.8 %, grade change 0.001/m, kink 0, cross-slope 0.
+
+      | metric | over the limit before (handed over) | over the limit now | p99 now | max now |
+      |---|---|---|---|---|
+      | grade | 5,454 of 291,901 samples (1.9 %) | 5,285 of 286,826 (1.8 %) | 0.232 | 1.44 (was 1.53: K St at Rock Creek, now a service ramp at the Whitehurst west end) |
+      | grade change per m | 2,658 | 2,437 | 0.039 | 0.41 |
+      | kink (0.5 m) | 2,808 | 2,662 | 0.035 m | 2.97 m (a service road) |
+      | cross-slope | 2,288 | 2,168 | 0.123 | 1.0 |
+      | lane-to-surface gap | 4,799 | 3,947 | | |
+      | junction kinks | 260 of 7,608 paths | 248 of 7,558 | | 3.1 m |
+      | walk steps over 0.3 m | 1,549 of 14,702 links; 614 over 0.45 m | 1,558 of 14,741; 623 over 0.45 m | | 3.3 m |
+      | holes under a lane | 3 | 3 (Key Bridge south end at the map edge) | | |
+
+    - **roaddrive:** 48 major-street chains, 24.4 km. Worst cabin acceleration 32.4 m/s² (Canal Rd at the Whitehurst Freeway west end, -827, 158; it was 31.8 on Pennsylvania Ave at the Rock Creek bridge, now 9.6). K St at Rock Creek 19.2 (was 31.6), the Whitehurst east end 18.1 (was 29.8), the Key Bridge north approach 19.2 (unchanged). 12 of 48 runs stay inside both limits (was 11), 10 end in a collision (was 15), 2 airtime events over 0.08 s (was 4; the worst, 0.82 s, is a run that starts on the north map edge). M St 10.1 and 8.3 m/s² (two chains), Wisconsin Ave 8.7 and 7.4, 34th St 10.4 (was 11.6). Limit: 4.5 m/s², 0.08 s.
+- **Scale check (1:1):** lanes 3.3 m (3.4 m on primaries), residential streets 9.5 m kerb to kerb, sidewalks 3 m, kerbs 0.15 m, storeys 3.2 m (data median 3.6 m with the roof), rowhouses 2-4 storeys, doors 1.1 x 2.2 m, people 1.75-1.8 m, car colliders 5-10 % short of real cars, Washington Circle radius 59 m. The table and the only fixes it needed (road widths from the mapped sidewalks, alleys narrowed) are in `docs/m3-suspicious-areas.md`, part 0.
+- **Differences from the old map** and the data problems with coordinates and lat/lon: `docs/m3-suspicious-areas.md`, part 0. The largest moves: Key Bridge (old line 78 m off), R St (78 m), Dumbarton St (50 m), 37th St (48 m), Rock Creek (70 m); Washington Circle moved 38 m east; M St at Wisconsin Ave is 9.5 m higher (21.1 m).
+- **Test:** `npm run build`, then `MAP=georgetown node scripts/shot.mjs x <scenario>` (and `MAP=grid`). Final build (d497d4d) unless noted; every run below exited 0 with a clean console unless noted.
+    - **Georgetown, final build:**
+      - **geodrive:** completed Key Bridge > M St > Pennsylvania Ave > once round Washington Circle (counter-clockwise, outer lane, 12 ring pieces) > K St > the waterfront, 3,284 m in 347 s of game time, no damage, no red lights run by the test car. AI: 0 illegal lane moves (of 1,145), 0 failed yields (17 ring entries), 1 red-light run of 277 signal crossings (a car committed on amber at Canal Rd), 13 wrong-way moves (5 and 6 in the two runs before; mostly at K St near 24th St, 608, 429, where the lanes jump sideways at a width change and cars swerve, and cars pushed back after contacts), 14 AI-AI contacts.
+      - **mapcheck: pass.** 0 errors, 0 height mismatches, 93.5 % of lanes one-way-connected, 100 % walk connectivity, 30 lane choices, 0 jumps, 0 U-turns away from dead ends, 0.43 m off lane. (On the handed-over branch it failed: a car-park bay 0.5 m off the surface; then on this work's first build a crossing node 0.85 m off and a test car stuck at a one-way map exit.)
+      - **taxi:** 3 of 3 fares (Key Bridge and M St at Wisconsin Ave ranks).
+    - **Georgetown, earlier builds of today (same road surfaces):** geolife (M St at Wisconsin Ave at lunch 7 m of pavement per person, 29th St 48 m, M St at night 207 m; waterfront evening 10 m), parkcheck (1,516 parked cars, M St 11.2 per 100 m of kerb), theft (unlocked car stolen; locked one broken into, alarm, owner chases, witnesses call, 3 stars), dealership (3 dealers, a car bought and driven), world, walk, drive (see known issues), handling, crashspikes (0 frames over 33 ms), life, crowd, police (0 stars: nobody called it in, as on main's knowledge map), roadaudit, roaddrive. gate2 and witness crashed on the real map (no suitable person near the bottle yet); the scenarios now let the crowd fill in, and both pass (1 star, call completed).
+    - **Grid** (`MAP=grid`): world, walk, drive, handling, crashspikes (0 frames over 33 ms), gate2, mapcheck (pass: 30 choices, 0.27 m off lane, 100 % connected), theft, taxi (3 of 3), dealership, life, crowd, witness, police (2 stars, chase, escape): all exit 0 with a clean console; mapcheck, gate2, witness, police and drive again on the final build.
+    - **Fallback map** (`node scripts/georgetownFromSpec.mjs`, built to a scratch folder with this branch's generator): world and drive exit 0 with a clean console; mapcheck 0 errors and 0 height mismatches, 100 % connected; its drive passed on the second run (30 choices, 0.18 m off lane) and stopped at 14 choices on the first. Main's knowledge map passed mapcheck in the same session (30 choices, 1.21 m).
+- **Performance against main 8192ea1** (the knowledge-based Georgetown, `?map=georgetown`): 3 interleaved rounds per build and preset, page load and map build unthrottled, frames at 4x CPU throttle (240 frames on foot at the spawn, 240 driving). The machine ran at a load of 8-12 on 4 cores the whole time, so the CPU medians overlap and say little; the structural numbers are exact.
+
+    | | main, Low | real, Low | main, Medium | real, Medium |
+    |---|---|---|---|---|
+    | page load to the first frame | 10.8-22.6 s | 28.0-38.3 s | 14.8-25.8 s | 24.3-25.7 s |
+    | map build (`buildStats.totalMs`) | 3.5-6.0 s | 11.3-18.9 s | 4.7-7.2 s | 9.3-10.2 s |
+    | CPU per frame on foot (median) | 1.7-4.5 ms | 5.4-6.4 ms | 4.6-8.4 ms | 1.4-6.0 ms |
+    | CPU per frame driving (median) | 1.6-5.3 ms | 4.3-5.8 ms | 1.2-6.0 ms | 1.6-6.3 ms |
+    | draw calls at the spawn | 109-112 | 112-113 | 146-151 | 145-148 |
+    | triangles drawn at the spawn | 496k | 656k | 812k | 0.99-1.01M |
+    | triangles in the world | 1.56M | 2.43M | 1.56M | 2.43M |
+    | static colliders | 10,778 | 8,350 | 10,778 | 8,350 |
+    | geometry buffers | 74 MB | 121 MB | 74 MB | 121 MB |
+    | JS heap | 182-203 MB | 231-248 MB | 154-206 MB | 226-289 MB |
+
+    - **Map data:** 1.02 MB (179 KB gzipped) before, 2.56 MB in three files (583 KB gzipped) now.
+    - The real map costs about 5-7 s more to build at load (roads, raster and buildings: 4,713 real footprints instead of 3,986 boxes), a third more triangles drawn at Medium, and 50-90 MB more memory; it has fewer colliders. Garbage per frame read 0 or about 80 KB depending on when the collector ran, in both builds (not comparable).
+- **Screenshots:** `32-real-aerial`, `32-real-mst`, `32-real-keybridge`, `32-real-circle`, `32-real-canal`, `32-real-hills` (preview page, Medium, 13:00). The `28-traffic-*` and `29-life-*` screenshots still show the knowledge-based map (test runs on the real map were not kept).
+- **Known issues:**
+  - **Key Bridge north end and the Whitehurst Freeway west end:** the bridge end stood at 38 m (the real deck meets M St at about 21 m) with a 15 % ramp down to M St, and the freeway's west ramps fell 7 m in 8 m to M St and Canal Rd. *Fixed in the review below (a clearance ratchet between the freeway's own carriageways, not the data's layers).*
+  - **Road smoothness** is still over the limits in places (numbers above): service-road mouths, steep street pieces between flat plateaus, the Rock Creek / K St / Whitehurst / Potomac Freeway interchanges.
+  - **Tunnels:** the K St underpass and the Potomac Freeway portal are in the data but not rendered; the pruned approaches leave a sunken grass strip between the K St service lanes east of 24th St.
+  - **Edges:** the west, north-west, east and south-east crop edges cut the street grid.
+  - **Lanes:** lane counts are class estimates (Overture has none); two-way residential streets with one lane each way park on one kerb only.
+  - **Traffic on the real map:** geodrive's AI counters are not all zero: 5-13 wrong-way moves per drive (cars swerving where the lanes jump sideways at a width change, K St near 24th St, and cars pushed back after contacts) and 0-1 red-light runs (a car that committed on amber and crossed as it turned red, at Canal Rd or Pennsylvania Ave); failed yields and illegal lane moves were 0 in every run. AI cars bump into each other at the Whitehurst Freeway west end ramps. 39 lanes have no legal move out (two-way dead ends where cars turn round, and roads leaving the map).
+  - **Load time:** the real map takes 5-7 s longer to build than the knowledge-based one (numbers above).
+  - **Walking:** about 620 walk links have a step over 0.45 m (paths over retaining walls, the towpath at the lock steps, some crossings on hills).
+  - **Props:** bins, hydrants, bike racks, post boxes and the other new kinds are in the data, but the world draws only trees, lamps, benches, bus stops, signals and stop signs.
+  - **Buildings:** facades are drawn as `levels` x 3.2 m plus the ground floor, not at the data's lidar height; 2,172 heights are class defaults; thin real footprints show as tall narrow walls.
+  - **Stairs:** the 120 real steps go through the existing stair builder; they were not audited here (the physics branch owns stairs).
+  - **drive** on Georgetown: the parked car it takes drives straight for 3 s into the dead end of 34th St south of M St and loses most of its health (the scenario does not check that).
+- **Review of the real map (verify-realdata, on `s1-realdata`):** every claim above re-run on the builder's head (1e89980) and after the fixes below, plus new probes (one-ways against the raw Overture records, seed invariance, roadway obstacles, keyboard drives of every major street, traffic watches).
+  - **Checked and fine:** one-way directions match Overture's access restrictions on 1,054 of 1,064 pieces; the other 10 are the Rock Creek Parkway's rush-hour one-ways (`during` Mo-Fr 15:45-18:30), correctly two-way the rest of the day. Washington Circle is one closed ring driven counter-clockwise (signed area positive on a north-up map), centre 38.90255, -77.05008 (the real circle's centre), radius 59 m, 8 spokes (23rd St N and S, Pennsylvania Ave W and E, K St W and E, New Hampshire Ave NE and SW). Landmarks sit where they are in Georgetown: M St at Wisconsin Ave (-147, 155, 21 m), the canal between M St (z 134-170) and K St (z 430-445), the Whitehurst Freeway above K St, Rock Creek and its parkway at x 330-390, the waterfront park, the hill rising north (P St 32 m, R St 57 m, Book Hill 59 m). Seeds 1, 123 and 456 give identical colliders and road, walk and building graphs; only the shop-sign boards and awnings differ (their width follows the invented name). The licence split and the credit lines are present and consistent in the pause menu (screenshot checked), the README and `georgetown.LICENSE.md`. 36 data footprints reach into a carriageway; the world builder clips footprints off roads and sidewalks, and a scan of every traffic lane and turn path found no building on any lane but service roads.
+  - **Fixed:**
+    - **Key Bridge north end at 38 m:** not the data's layers but a clearance ratchet: the Whitehurst Freeway's two carriageways drop to layer 1 for 28 m under the bridge, 8 m apart, and each half's layer-2 deck cleared the other half's layer-1 piece, so both climbed to 37 m and the bridge, clearing them, to 38 m (35 % ramps). A deck no longer clears its own street's other carriageway (no named road crosses itself on another layer in the data). Key Bridge now 20 m over the river, 23.7 m at its north end, 21.5 m at M St; the freeway 16-17 m at its west end, falling to 9.9 m at 29th St (`georgetownWorld.ts` makeProbe).
+    - **Ridge across L St and Pennsylvania Ave** (622, 300): at a sharp merge the junction plateau's outline curved out 20 m beyond the arms' trims while the arms still climbed to it, a 0.39 m step across both roads (geodrive's car took 16 hp there, the keyboard drive crashed at 54 km/h). At sharp merges (under 35 degrees) the outline now stops at the trims (`roadNet.ts`).
+    - **K St sagging onto its bridge over the Rock Creek parkway** (466, 431): the abutment node sat at 10.5 m between 12.4 and 12.0 m, a V that launched cars at 60 km/h. An abutment lower than both the street's next junction and the deck's far end (within `TUNING.geo.sagFillSpan`) rises to the line between them, bounded by `approachMaxLift` (`roadNet.ts`).
+    - **Invisible walls of concave buildings:** a building collider that is not a box was the convex hull of its footprint, so 1,674 L- and U-shaped real footprints filled their notches (134,000 m2 of invisible wall over courtyards, driveways, alleys and pavements; one hull added 960 m2). Concave footprints are cut into convex pieces (triangulated, merged while convex, notches under `TUNING.geo.footprintNotchTol` = 0.3 m filled). Static colliders 7,787 -> 13,672.
+    - **Things standing in the road:** a church tower stood in Q St (the end of an irregular footprint's long axis lay outside it): towers now stay on the footprint and off the road; a bus shelter's end stood 2 m into Wisconsin Ave beside a driveway mouth: shelters are placed only where all four corners are off roads and buildings (`facades.ts`, `props.ts`).
+    - **Cars circling at the map edge:** a car on a one-way road leaving the map reached the end at turn speed with no next lane and drove round in circles on the spot for as long as the player watched (and mapcheck's followed car did so for the rest of its run: the builder's "mapcheck passes" was 1 of 3 runs). It now pulls up at the end (`traffic.ts`).
+    - **A real business name as a place:** park places included "Thompson's Boat Center" (a boathouse business) and a university's initials ("GW GroW Garden"), which the taxi and NPC chat use. Only public open-space names are used now (14 of 17).
+  - **Test** (`npm run build`, then `MAP=georgetown node scripts/shot.mjs x <scenario>`; numbers are the builder's head 1e89980 -> the reviewed head; the machine ran other agents' builds at load 12-15 on 4 cores, so CPU timings are noise):
+    - **roadaudit:** grade samples over the limit 5,285 -> 2,994 (worst 144 % -> 64 %, now the Q St bridge's east end at 803, -461), grade change 2,437 -> 1,080, kinks 2,662 -> 2,298, cross-slope 2,168 -> 1,993, lane-to-surface gaps 3,947 -> 1,875, junction kinks 248 -> 235 (worst 3.1 m, the bus shelter, -> 1.6 m on a service road), walk steps over 0.3 m 1,558 -> 1,525 (over 0.45 m 623 -> 589), holes 3 -> 3 (the Key Bridge's south end at the map edge and a pinhole on Pennsylvania Ave at 309, 160, both already there).
+    - **roaddrive:** 48 chains, 24.9 km: worst cabin acceleration 32.4 -> 21.0 m/s2 (K St at 242, 444, where the freeway's eastbound carriageway comes down onto it), samples over 4.5 m/s2 1,784 -> 1,379, runs inside both limits 9 -> 11, runs ending in a collision 10 -> 8. The Key Bridge (19.2), Canal Rd (32.4) and Whitehurst west end spikes are gone.
+    - **Keyboard drive** (new probe: every major-street chain driven with W/A/S/D only at 55 km/h, 70 on parkways, slower in curves, traffic removed; 50 chains, 24 km): runs ending in a crash 17 -> 13, airtime events over 0.08 s 4 -> 1, worst cabin acceleration 33.3 -> 14.1 m/s2 (leaving out the start beyond the north map edge, where the car falls), runs over 10 m/s2 15 -> 12.
+    - **geodrive:** builder's head: completed, 16 hp lost on the L St ridge, 5 AI wrong-way moves, 0 red runs. Reviewed head, two runs: completed with no damage, no red light by the test car, AI 0 illegal moves of 1,324, 1 red run of 316 (a car committed on amber at the Key Bridge / M St signal), 0 failed yields in 15 ring entries, 4 wrong-way moves; the second run got stuck on K St at 411, 438 (see known issues).
+    - **mapcheck:** 0 errors, 0 height mismatches, 93.5 % of lanes one-way-connected, 100 % walk connectivity, 20 of 20 walks, every place with a kerb point, in every run. Its drive part is flaky: on the builder's head it failed (the car circling at the Canal Rd exit); with this review's fixes it passed once (after the first three fixes, 0.19 m off lane) and failed twice (later builds, the reviewed head included: 3.0 m and 7.7 m off lane, after AI contacts and on the short lanes at the Key Bridge / M St junction; 30 choices reached in two of the three). The same drive run four times in one session on an intermediate build: 4.3, 76 (a re-placed car), 4.5 and 0.5 m.
+    - **taxi** 3 of 3 fares; **walk**, **world**, **drive** exit 0. The builder's head also ran roadaudit, roaddrive, world, walk, drive, handling, crashspikes, gate2, witness, police, theft, dealership, geolife, parkcheck, life and crowd on Georgetown: all exit 0 with a clean console.
+    - **Grid** (the reviewed code without the sag fix, which only runs on real data): world, walk, drive, handling, crashspikes, gate2, mapcheck (pass, 30 choices, 0.3 m), theft, taxi (3 of 3), dealership, life, crowd, witness, police (3 stars, chase): all exit 0 with a clean console.
+    - **Traffic watches** (new probe: you stand still, 5 game minutes at the preset's density): Washington Circle 55 ring entries, 0 failed yields, 0 red runs in 344 signal crossings, no contact on the ring (14 elsewhere, mostly where K St meets 27th St at 675, 430); M St at Wisconsin Ave (an intermediate build of this review, same traffic code) 149 signal crossings, 0 red runs, 5 contacts (two opposing left turns on Wisconsin Ave), one car stood 88 s at the junction's two nodes while its exit was blocked. On the builder's head the circle gave 45 entries, 0 failed yields, 0 red runs.
+    - **Seed invariance:** collider, road-graph, walk-graph and building hashes identical for seeds 1, 123 and 456 on both heads.
+    - **Performance** against the builder's head (3 interleaved rounds per preset, `?map=georgetown`): draw calls Low 112-114 -> 110-116, Medium 142-148 -> 140-145; triangles drawn 656k -> 655k (Low), 1.010M -> 1.009M (Medium); geometry 121.2 -> 121.3 MB; colliders 8,350 -> 14,233 (static 7,787 -> 13,670); map build at load 5.4-9.4 s -> 6.2-7.4 s (Low) and 6.0-9.8 s -> 7.0-7.6 s (Medium); page to first frame 13.8-24.1 s -> 18.7-19.1 s (Low); JS heap 238-241 -> 242-248 MB (Low). Frame CPU at 4x throttle on foot, median per run: Low 6.3-8.1 -> 9.3-11.4 ms, Medium 5.3-11.6 -> 8.7-9.6 ms; driving Low 4.3-5.6 -> 5.9-8.2 ms. A section breakdown on foot (2 alternating rounds, 4x): physics 5.4 / 5.9 ms on the builder's head, 9.9 / 5.8 ms reviewed (the 9.9 ms round was slow in every section, player and camera too); the extra colliders may cost a little physics time, but on this loaded machine it is not separable from noise. The pause menu shows the full credit line (screenshot checked).
+  - **Known issues after the review:**
+    - **K St westbound at 396-415, 437:** the Whitehurst Freeway's slip road onto K St (a primary_link) overlaps the inner lane and its surface stands 0.32 m above the lane where they part (0.2 m before this review); geodrive's car drove into it at 39 km/h and stuck there in one of two runs.
+    - **Whitehurst Freeway east end** (371-409, 425): it still climbs from 12.4 to 19.4 m in 38 m because it clears K St running alongside it (8 m apart) as if K St were beneath it; roaddrive's second-worst spike (17.7 m/s2).
+    - **mapcheck's drive** passes about one run in three on the real map (above); the graph, walk, height and place checks pass every time.
+    - **Map edges:** lanes run on past the invisible boundary walls; the Rock Creek Parkway chain that starts beyond the north wall (243, -1027) falls off the terrain, and a car driving out on Wisconsin Ave meets the wall in mid-street.
+    - **Colliders:** the convex pieces add 5,885 static colliders (13,672 in all); service roads mapped within a metre of a wall still graze it (about 30 short stretches, AI cars only).
+    - **The seed varies shop-sign widths and awning colours** (render only: no collider, graph or walk change).
+    - **Fallback map** (`georgetownFromSpec.mjs`) not re-run in this review; the collider, tower, shelter and map-exit changes apply to it too.
+
+### PBR look (Stage 1 item 4, branch `s1-look`)
+
+- **S1.4 PBR look (branch `s1-look`):** the city is now drawn with physically based materials and lighting instead of flat vertex colours. Everything new lives in `src/systems/render/`; generator files change only where a material is assigned.
+  - **Procedural textures, baked on the GPU at boot** (`bakeShaders.ts`, `texBake.ts`): 27 surfaces drawn from noise, cells and parametric layouts (original by construction, nothing downloaded): asphalt with aggregate, wear, crack networks and tar-sealed cracks; worn road paint; concrete slabs; Georgetown herringbone brick pavers; granite; granite setts; grass; soil; gravel; bark; leaf clusters; timber decking; painted and bare metal; board-formed concrete; dressed stone; brick in running, Flemish (burnt headers) and common bond; painted brick; stucco; clapboard; slate; standing-seam metal; tar roofing; awning canvas; water ripples. Each bakes albedo + tint mask and normal + roughness + occlusion into two texture arrays with mipmaps and anisotropy, plus a macro-variation texture. One program per surface: a single shader with all of them ran every branch on software GL (110 s bake; now 1.5–5 s there, milliseconds on a real GPU).
+  - **World materials** (`worldMaterial.ts`, `surfaces.ts`, `palette.ts`): one patched `MeshStandardMaterial` per chunk layer reads a per-vertex surface id (`aSurf`) and projects that surface in world space (from above for ground, along the face for walls and roofs), tinted by the vertex colour relative to the surface's reference colour, with large-scale macro variation so tiles never repeat visibly. Surfaces come from tagged palette colours (`surf()` in the road, terrain and lot colour tables) or are inferred from the generators' existing palette colours, so bridges, waterworks, props and monuments needed no edits. Chunk batching and draw calls are unchanged.
+  - **Facades** (`facadeMaterial.ts`, facade tiles now 256 px with relief normals and window-reveal occlusion): walls show the building's own surface (brick bond, painted brick, stucco, clapboard, ashlar, chosen per building from its id), plinths are dressed stone, frames and doors have relief, and windows are glass: a sharp sky reflection (Fresnel) over a room behind it (interior mapping: back wall, side walls, floor, ceiling, furniture, blinds or curtains per window), dim by day and warm when lit at night.
+  - **Lighting** (`sky.ts`, `dayNight.ts`): three's Preetham sky with clouds and the sun where the clock puts it; the sky (without the sun disc, plus a warm ground bounce) captured into a 128 px cube and prefiltered as the scene environment, refreshed only when the sun moved 1.5° or the weather changed; a `SunLight` with two shadow cascades out to 320 m (Medium) or 650 m (High), soft PCF edges; ACES filmic tone mapping; deep blue night sky with city glow; grey, dimmer sky under cloud. All levels in `TUNING.look`.
+  - **Trees** (`trees.ts`): within `treeNear` (110 m Medium, 200 m High) a detailed tree replaces the far crown: tapered bark trunk, branches, a dense inner crown and 38–46 rounded alpha-to-coverage leaf cards; far crowns get bark and leaf textures and hide inside the ring in the vertex shader (no buffer rewrites).
+  - **Water** (`water.ts`): river, canal and creek mirror the sky with three scrolling layers of baked ripple normals over the existing swell.
+  - **Night** (`nightLights.ts`): real point lights at the 6 (Medium) or 10 (High) street lamps nearest the camera, a fixed pool so no shader ever recompiles; lit rooms; headlights as before.
+  - **Rain and snow:** porous surfaces darken, upward faces turn glossy and puddles form in the dips of the macro field (`uWet` from the weather); snow settles on upward faces.
+  - **Vehicles and people** (`vehicleMaterials.ts`): car paint under a clearcoat, dark glass, trim and lamps sorted per vertex colour; rubber tyres and polished hubs; people in cloth with a soft sheen (shapes unchanged).
+  - **Grid city** (`gridLook.ts`): the same materials, applied after it is built.
+  - **Presets** (`TUNING.quality`, pause menu): Low = 256 px textures without normal maps, no shadows, no near trees, no lamp lights, 70 % resolution; Medium = 512 px, two 1536 px cascades to 320 m, near trees to 110 m, 6 lamp lights; High = 1024 px, 2048 px cascades to 650 m, near trees to 200 m, 10 lamp lights. GPU memory of the bake: 19 MiB (Low), 73 MiB (Medium), 289 MiB (High), plus 16 MiB of facade tiles and the shadow cascades (Medium 2 x 1536², 18 MiB; High 2 x 2048², 32 MiB). Download grows by about 100 KB of code; no texture files.
+  - **No first-draw stalls:** after `renderer.compile()`, `warmup.ts` draws one representative of every material and mesh kind on screen behind the title, because some drivers (and software GL entirely) finish a program only at its first draw.
+  - **Test:**
+    - `npm run build && node scripts/lookShots.mjs --dist <base dist> --prefix 33-look-before` and `node scripts/lookShots.mjs --prefix 33-look-after mst rowhouses keybridge waterfront circle night`: the same preview cameras before and after (`screenshots/33-look-before-*.png`, `33-look-after-*.png`, side by side in `33-look-mst-before-after.png`); `texsheet` as a view shows every baked map.
+    - In the game: `MAP=georgetown node scripts/shot.mjs x lookgame "1337&quality=low&lookhour=15.5&lookout=33-look-low"` (also `weather=rain`, `lookhour=21.6`).
+    - `node scripts/shot.mjs x lookstall` (and with `MAP=georgetown`): no new shader program by day, at night or in the rain after boot.
+    - `node scripts/lookPerf.mjs --base <base dist>`: boot, draw calls, triangles and CPU per frame per preset, base vs this build, interleaved.
+  - **Measured** (`lookPerf.mjs`, base = main 8192ea1, Georgetown, M St at 15:30, 640 x 360, medians of 2 interleaved rounds; software GL on a shared 4-core machine at load 6-14, so frame times say little about a real GPU):
+
+    | Preset | Draw calls | Triangles | CPU per frame | CPU per frame, 4x throttle | Page start to first frame | Bake |
+    |---|---|---|---|---|---|---|
+    | Low | 92 -> 93 | 0.46 -> 0.46 M | 8.7 -> 4.5 ms | 29.1 -> 37.1 ms | 3.7 -> 9.7 s | 2.3 s |
+    | Medium | 159 -> 259 | 0.88 -> 1.38 M | 10.2 -> 6.1 ms | 34.9 -> 44.7 ms | 3.6 -> 15.3 s | 4.6 s |
+    | High | 242 -> 418 | 1.13 -> 2.01 M | 10.0 -> 13.5 ms | not run | 3.7 -> 29.6 s | 14.2 s |
+
+    - Medium's extra draw calls and triangles are the second shadow cascade and the near trees.
+    - The throttled CPU rise is the render call waiting for software GL, not script: a JS profile of 30 Low frames on a 64 x 36 canvas took 551 ms (base) and 524 ms (new), 72 % of both in native GL calls. CPU-side cost per frame is unchanged within noise.
+    - Software GL frame at 1280 x 720 Medium on M St: about 1.5-2 s before, 7-10 s now; the first street-level frame after boot about 35 s before, 110-200 s now. `scripts/shot.mjs` timeouts are raised to match.
+    - The bake and the boot times above are software-GL times (27 shader compiles plus the passes); on a real GPU the passes take milliseconds.
+    - No new shader program while visiting 7 places by day, at night and in the rain (`lookstall`: 46 programs before and after on Georgetown, 41 on the grid).
+  - **Known issues:**
+    - Frame times on a real GPU are not measured; only software GL is available here.
+    - No screen-space ambient occlusion on High (occlusion is baked into the textures and window reveals only).
+    - Shapes are unchanged: cars and people are still low-poly boxes, buildings keep their extrusions; the rooms behind windows are interior mapping, not enterable.
+    - Leaf cards very close to the camera show speckled edges; far canopies are solid crowns with a leaf texture.
+    - Under heavy rain with a bright overcast the wet streets still read light.
+    - Mortar colour is the same on every brick building (bond, brick colour and paint vary).
+    - The in-game shots show the taxi job's fare beacon (an existing 40 m light column) at the end of M St.
+    - Headless runs are slower (see above): budget minutes for a scenario's first rendered frame.
+
+- **S1.4 PBR look, independent review (verify-look, branch `s1-look`):** every claim re-run, screenshots at street level and from the air at dawn, day, dusk, night and in rain, perf against main 8192ea1, shader stalls while driving, grid regressions. Seven fixes, each its own commit:
+  - **Leaf cards mirrored the sky.** The detailed trees lit their leaf cards with the rounded canopy normal but without the back-face flip, so at the rim and on the far side of every crown the normal faced away from the camera, Fresnel went to 1 and the leaves showed the bright sky: pale, speckled "frost" on every backlit tree (all street-level M St shots). Normals now bend toward the viewer, leaves keep 60 % of the sky reflection, sunlight passes through backlit leaves (translucency, inside three's sun loop so it keeps the sun's shadow), and edge-on cards fade (`TUNING.look.leaf*`, `worldMaterial.ts`).
+  - **Black sky at 19:00.** `sunDirection()` set the sun at 18:00 while the day/night keys keep dusk light until about 19:45, so the physical sky went black and starry and the sun switched to the moon while the hemisphere light, fog and exposure still said dusk. Sunrise and sunset are now `TUNING.look.sunrise/sunset` (6.0 and 19.8): golden hour at 19:00, blue hour at 19:30, night by 20:00.
+  - **Rain sky with dark blue holes.** Cloud coverage only reached 0.95; three's Sky varies it by ±0.3 per region, so the overcast greying turned the gaps into slate patches. Coverage now goes to 1.25 and density to 0.85 at full cloud (`skyCloudOvercast`, `skyCloudDensity*`).
+  - **Tar roofs repeated a 4 m lattice of dark oval pairs** (the bake's repair patches inside one 4 m tile), plainly visible from any height. Patches are now rare and faint.
+  - **Entering a parked car recompiled every lit shader.** The headlight was parented to the driven car's mesh, which stays hidden while an untouched parked car is drawn as an instance; the light count dropped and 15-16 programs (world, facades, trees, water, sky, cars, people) compiled mid-game: frames of 2-3 s in software GL, and no headlight while sitting in the car. It now stays in the scene and copies the car's pose.
+  - **Shadow-pass program churn.** One shared depth material for instanced and plain casters made three re-derive program parameters per draw; with every prop casting and two cascades that was about 155 KB of garbage per frame on Medium (main: 89 KB). Instanced casters now have their own depth materials (`render/shadowCasters.ts`): 59 KB per frame.
+  - **TUNING.look comments** (`interiorDay`, shadow biases).
+  - **Test:**
+    - Screenshots of the review: `screenshots/34-look-review-{trees,dusk,rain,roof,aerial}.jpg` (builder build vs review fixes, Medium, 1280 x 720, the game itself).
+    - Stalls: in the game, get into a parked car at night: no hitch, headlight on. Scripted: a drive over the whole map (50 lane points on Georgetown, 40 on the grid; day, dusk, night, rain) compiles 0 new programs on either map (before the headlight fix: 16 on Georgetown).
+    - `node scripts/shot.mjs x lookstall` and `MAP=georgetown node scripts/shot.mjs x lookstall`.
+    - Grid regressions after the fixes, all exit 0 and console clean: `world`, `walk` (4.8 m walked, 0.64 m jump), `drive` (31 km/h after 3 s, turn, brake), `handling` (83 km/h after 4 s, handbrake slide recovers), `crashspikes` (930 frames, 0 over 33 ms, worst 10 ms), `gate2`, `mapcheck` (pass, 0 warnings), `theft`, `lookstall` (41 programs before and after); Georgetown `lookstall` 46 before and after (its final page screenshot timed out after 300 s in software GL; the scenario itself passed).
+  - **Measured** (base = main 8192ea1, Georgetown at M St 15:30, software GL, interleaved runs, medians):
+
+    | | Low base | Low new | Medium base | Medium new |
+    |---|---|---|---|---|
+    | CPU per frame, 4x throttle, 480 x 270 (3 rounds) | 19.9 ms | 19.6 ms | 33.3 ms | 28.6 ms |
+    | frames over 33 ms of 20, same runs | 0 | 0 | 10 | 3 |
+    | software-GL frame, 960 x 540, GPU drained (2 rounds) | 566 ms | 1311 ms | 1033 ms | 5307 ms |
+    | draw calls / triangles | 92 / 0.46 M | 92 / 0.46 M | 156 / 0.88 M | 256 / 1.39 M |
+    | page start to first frame | 8.6 s | 11.3 s | 9.5 s | 18.0 s |
+    | baked texture memory | - | 19.3 MiB | - | 73.3 MiB |
+    | garbage per frame (heap sampling, 30 frames) | | | 291 KB | 322 KB after the fixes (515 KB before) |
+
+    - CPU per frame is not worse on either preset; Low is not slower than main on the CPU.
+    - GPU cost is the open risk: software GL needs 2.3x main's work on Low and 5.1x on Medium (two 1536 px cascades, 6 point lights evaluated by every lit pixel all day, PBR texture fetches, sky light, interior-mapped windows). Software GL over-weights texture fetches, so real GPUs will scale differently, but Low cannot be called as cheap as main until it is measured on a real laptop.
+  - **Known issues (not fixed):**
+    - From the air the city reads as a toy model: flat pastel roofs and identical window grids come from the generator's palettes and facade tiles; the existing 180-750 m fog hides the city entirely from 300 m up.
+    - The asphalt aggregate is coarse and high-contrast (sandpaper at 10-30 m).
+    - Leaf cards still speckle at the crown edge (alpha to coverage), and a backlit crown shows its dark inner sphere.
+    - Stars appear while the 19:30 sky is still blue; blue hour is short (about 19:30 to 20:00).
+    - The 6 (Medium) or 10 (High) lamp point lights stay in every lit shader by day at intensity 0 (no recompiles, but every pixel pays for them).
+    - Pre-existing on main, still there: `carMaterial` is shared by instanced parked cars and plain traffic cars, and the crowd shares one material between coloured and plain parts, so the main pass still re-derives programs per draw (about 44 KB per frame); weather keeps 30 % of the sun under rain (hard shadows on an overcast day).
+    - The committed `33-look-*` shots predate these fixes (frosty trees, old sun angle).
+    - Changing the quality preset changes the light count; materials then compile lazily as they come into view after the menu closes.
+
+### Stage 1 integration (branch `s1-integrate`, from main 8192ea1)
+
+- **Merges, in order:** `s1-research` (731c18c), `s1-physics` (17c3625), `s1-realdata` (76ea1bd), `s1-look` (cf8e768). All four branches existed. Conflicts and how they were kept on both sides:
+  - `facades.ts`: concave footprints cut into convex pieces (real data) and every building collider tagged `building` (physics).
+  - `roadMesh.ts`: deck junctions collide as `deck` triangles and corners know they are on a deck (physics), plus the deck junction underside (real data); the look's surface-tagged colours (`surf(SURF.*)`) on every palette.
+  - `georgetownWorld.ts`: stairwell holes, the surface index, the audit recorder and the props' `standAt` (physics) with the real-data road topology (`omittedRoads`, `planLots` / `conformToLots`) and the look (`createLook`, world and facade materials, upgraded water and props, tree LOD).
+  - `loadMap` / `gridMap` / `georgetownMap` / `cityGen`: map factories take both the audit flag and the look: `(..., quality, audit, look)`.
+  - `main.ts`, `world.ts`, `scenarios.mjs`, `DEVLOG.md`, `ROADMAP.md`: both sides kept.
+- **Integration fixes** (the physics work had only seen the knowledge-based map; the real map has 86 Overture steps features, overlapping road surfaces and decks over streets):
+  - **Stairs climbable on the real map** (`bridges.ts`): stair ends are now fitted to the ground as built round them (`fitStairEnds`: the 5 m terrain mesh, sidewalks, lots, towpath, measured on the ground triangles with `surfaceIndex.ts trianglesNear` and `PhysChunks.soupsOf`), and the flights re-planned (`stairProfile`). The plan came from the 1 m raster before blending and meshing: 65 of 86 real stair ends sat 0.3-2 m off the ground beside them, a ledge nobody could step up. Steps running on into a building stop 0.4 m in front of the facade; steps running off the map stop inside its edge walls; an end landing on another stair takes that stair's height there (`joinStairEnds`); a side wall is left out where it would stand in another stairwell (another stair, the same stair's next piece at a sharp bend, another stair's end). New tuning: `geo.stairEndProbe`, `stairEndFit`, `stairDoorGap`, `stairJoinDist`, `stairEndClear`.
+  - **Lanes on the surface that is drawn** (`georgetownMap.ts`): where another road's or a sidewalk's surface overlaps a lane a little higher (about 35 lane points, up to 1.1 m: carriageway meshes meeting at different heights on Virginia Ave, the Rock Creek Parkway under the bridges, the Whitehurst west end, a sidewalk over a service road), the lane and walk nodes go up onto it, as the exact `map.heightAt(x, z, y)` from s1-physics reports. mapcheck height mismatches 5 -> 0.
+  - **No bridge abutment across a street under a deck's end** (`bridges.ts`): real data ends the Whitehurst Freeway deck over K St; the abutment wall (drawn on s1-realdata, solid since s1-physics) stood across K St and stopped the gate drive (55 hp crash at 44 km/h at 158, 433). Abutments are built in pieces and left out over road cells.
+  - `buildDeckIndex(null, piers)` no longer reads the road net's overlay stretches and deck nodes when there is no net (a type error after the merge); the dead-end caps' skirt is tagged `decor` for the physics audit.
+  - Scenarios: `stairs` steers along bent stair lines (real ones bend; W alone walked into the wall) and walks the longest footbridge (real data has 0.1 m footbridge stubs); `shot.mjs` loads `?map=grid` for scenarios written for the grid city (`GRID_SCENARIOS`) when MAP is not set.
+- **Default map:** `TUNING.map.defaultMap` is now `georgetown` (the real map); `?map=grid` keeps the grid city. README updated; the pause menu shows the data's attribution line (`meta.attribution`, the same text as the README's).
+- **How to test:** `npm run build`, then `node scripts/shot.mjs x <scenario>` (Georgetown unless the scenario is in `GRID_SCENARIOS`), `MAP=grid` / `MAP=georgetown` to force a map, `QUERY=physaudit=1` for `physaudit`. The runs below used copies of the build (`dist` + `scripts`) so a rebuild never changed a running test. The machine ran at a load of 10-22 on 4 cores the whole evening (other sessions plus up to four of these browsers): several scenarios lost their final or mid-run 1280x720 screenshot to the 300-420 s timeout, and every CPU figure is noisy.
+- **Stage 1 tests on the real map (Georgetown), final build unless noted:**
+  - `stairs`: 85 data stairs built; 79 climbed up and back down with held keys (W, steering along bent lines). Not walkable end to end: #5 and #6 (off a canal footbridge deck, behind its railing, -349, 240), #24 (switchback, -934, -24), #39 and #43 (overlapping pieces, 252, -770), #56 (69-degree bend, 228, -888). Before the integration fixes 28 of 86 failed. The Exorcist Steps climb in 11.6 s (the test calls that slow). Stoops: 2, 3, 5, 7 and 10 steps all climbed to the door, rails hold; 3 of them come back down to a ground 0.17 m below where they started (the steep-street frontage strip). The scenario's other checks fail on real terrain: the statue plinth and a fountain stand on slopes, so their lowest tier is stepped up from the uphill side; the bench jump; the kerb test at the spawn finds the pavement 0.39 m below the road there. `pass: false`.
+  - `fallthrough` (2,000 drops, f3 build): 1,303 landed, 0 below the floor, 0 off `heightAt`, 0 inside a building, 0 not settled, 1 hover (-352.6, 302.5: the capsule rests 0.27 m up touching nothing the rays see). `pass: false` (hover must be 0).
+  - `physaudit` (f3 build): 29,142 colliders; 504 side-probe mismatches (railing 178 missing + 43 short, stair 194 short: riser offsets up to 0.29 m on the re-planned flights, lamp 44 / bench 25 / tree 11 / building 6 colliders 0.1-0.47 m long, 2.9 m on two waterfront benches) and 140 floor mismatches (railing 105, stair flights 32, ground 3). On the knowledge-based map the physics review had 0 and 6. `pass: false`; not fixed here.
+  - `physf4`: pass on both maps (4 views on Georgetown, 1 on the grid).
+  - `mapcheck`: graph, walk, places and heights clean (0 height mismatches, was 5 after the merge); its drive part (an AI car within 3 m of its lane over 30 choices) failed at 3.02 m and 6.4 m off lane in two runs (it passed about 1 run in 3 on s1-realdata).
+  - `roadaudit`, `roaddrive`: not re-run to completion on the integrated build (see below); s1-realdata's own numbers stand: limits still exceeded in places.
+  - Look presets: Low / Medium / High screenshots `34-stage1-quality-*`. Low -> Medium through the pause menu re-baked the surface maps (12.4 s / 5.3 s at 640x360) with a clean console.
+- **Milestone 3 gate on the real map:**
+  - `geodrive` (f5 = final code): completed Key Bridge -> M St -> Pennsylvania Ave -> Washington Circle -> K St -> waterfront, 3,284 m in 362 s, 0 damage, 0 red lights by the test car. AI over the run: 0 failed yields in 15 circle entries, 0 red-light runs in 244 signal crossings, 0 illegal lane moves in 1,177, 5 wrong-way moves (K St / 30th St, the Rock Creek interchange), 23 AI contacts, 0 cars stuck over 20 s. F3 spikes in the drive window 0; 260 of 21,680 frames over 33 ms (load 11-20; worst 862 ms in physics). The run before the abutment fix (f4) crashed into the abutment wall on K St (55 hp) and stopped at 95.9 %.
+  - `taxi` (f4): 3 of 3 fares between real places: Key Bridge rank -> O St NW, Washington Circle rank -> a place whose street is shown as "Georgetown" (no street name), M St at Wisconsin Ave rank -> O St NW.
+  - Theft (`geolife` at 640x360, final): an unlocked sedan on N St NW (residential) with nobody near: 0 calls, 0 stars, the owner remembers ("stole my sedan"). A locked pickup on M St NW with four people on the pavement: window smashed in 3.1 s, alarm, 4 calls started and completed, 2 stars, the owner chases, then phones, remembers ("stole my pickup right in front of me") and refuses to talk. `theft` on 33rd St (f4): the same pattern, 5 calls, 2 stars.
+  - People at 12:30 (`geolife`): M St at Wisconsin Ave 25 people in the 60 m window (F3 target 45, real-world estimate 147, active 44, a person every 7 m of pavement); 29th St between N and P 10 (target 10, a person every 48 m). Night on M St 5, waterfront at 19:30 30, towpath at 07:30 9. 430 seeded items, 4 placed badly (2 in blocked cells, 2 near a drop; main had 0).
+  - Seeds 1, 123, 456: static colliders (28,575) and the road, walk and building graphs hash identically; the shop names differ, and so do the drawn meshes, by the shop signs only (about 500 vertices of 6.47 M).
+  - F3 spikes: 0 in the gate drive window. `crashspikes` (f4, load 11): 11 of 930 frames over 33 ms, worst 293 ms in physics during a traffic pile-up.
+- **Regressions:**
+  - Grid (`MAP=grid`; the integration's later changes are Georgetown-only): world, walk, drive (31 km/h after 3 s), handling, crashspikes (1 of 930 frames over 33 ms, worst 85 ms in the weather / sky-light refresh), gate2, theft, taxi (3 fares), dealership, life, witness, police (3 stars, lost in 57 s), chat, mapcheck (pass), stairs (pass), fallthrough (823 landed, 0 below, 0 hover), physf4 (pass): all exit 0 with a clean console. `crowd` did not finish: the browser's renderer was killed (the session's memory limit; "the kernel killed a process for lack of memory") after the scenario switches the preset to High; the same happens with the s1-look build alone, so it is not from the integration.
+  - Georgetown (`MAP=georgetown`): world (the default map, no MAP: loads Georgetown at the spawn), walk, drive, handling, gate2 (1 star, escaped in 28 s), theft, dealership (3 dealerships, a hatchback bought and driven), life, chat, roadaudit, pause, witness and police (these two at 640x360: their 1280x720 screenshots timed out at a load of 20) exit 0 with a clean console. `crowd`: renderer killed as on the grid. `police` on Georgetown: the scripted run-over misses both people (they stay idle), so there is no chase to judge (the grid run chases and loses 3 stars). `drive`: the starting car hits the corner pole within 20 m (120 -> 52 hp, carried over from s1-realdata). `handling`: the test car runs off K St into a building at (100, 422) after 2 s.
+  - `roadaudit` (f4 build): grade samples over the limit 3,017 (s1-realdata review 2,994), grade change 1,164 (1,080), lane-to-surface gaps 612 (1,875: the lanes now lie on the drawn surface), junction kinks 234 (235), walk steps over 0.3 m 1,647 (1,525), holes 3 (3). `roaddrive` was not run on the integrated build.
+- **Performance against main 8192ea1** (main's `?map=georgetown` is the knowledge-based map without PBR or the new colliders; this build is the real map with all of Stage 1). `node perf.mjs` (scratch tool): interleaved base/new runs, 960x540, page load unthrottled, then 4x CPU throttle; 60 rendered frames on foot at M St and 60 driving; garbage over 300 unrendered frames between forced GCs. 3 rounds on Low and Medium, 1 on High, 1 on the grid; the machine was at a load of 12-20 throughout, so CPU medians are rough and frames over 33 ms are mostly the machine. Medians:
+
+  | | Low main | Low new | Medium main | Medium new | High main | High new |
+  |---|---|---|---|---|---|---|
+  | Page ready (s) | 13.6 | 33.5 | 16.6 | 49.4 | 24.7 | 95.3 |
+  | Map build (s) | 3.9 | 13.6 | 4.2 | 23.0 | 4.9 | 40.0 |
+  | Draw calls at M St | 91 | 92 | 156 | 264 | 243 | 422 |
+  | Triangles at M St (M) | 0.46 | 0.54 | 0.88 | 1.89 | 1.13 | 2.61 |
+  | CPU per frame on foot, 4x throttle (ms, median / p90) | 18.6 / 42.2 | 25.9 / 46.3 | 29.3 / 43.8 | 28.7 / 45.3 | 41.7 / 75.8 | 34.4 / 71.9 |
+  | CPU per frame driving (ms, median / p90) | 17.7 / 39.4 | 25.4 / 87.8 | 23.3 / 42.0 | 33.7 / 74.9 | 33.5 / 93.3 | 52.1 / 99.3 |
+  | Frames over 33 ms of 60, foot / car | 8 / 6 | 16 / 19 | 19 / 9 | 21 / 30 | 45 / 32 | 31 / 51 |
+  | Garbage per frame (KB) | 74 | 62 | 5-105 | 77 | 94 | 85 |
+  | Baked texture memory (MiB) | - | 19.3 | - | 73.3 | - | 289.3 |
+  | JS heap after the runs (MB) | 153 | 299 | 166 | 277 | 164 | 280 |
+  | Shader programs | 26 | 44 | 29 | 47 | 29 | 47 |
+  | Static colliders | 10,778 | 29,146 | 10,778 | 29,146 | 10,778 | 29,146 |
+
+  Grid Medium (2 rounds): ready 7.1 -> 47.8 s (the texture bake), draw calls 126 -> 230, triangles 0.18 -> 0.24 M, CPU on foot 19.0 -> 19.2 ms (p90 56 -> 98), in a car 20.9 -> 24.4 ms, colliders 1,806 -> 2,050. Stage 1 costs more almost everywhere: twice the draw calls and triangles on Medium, a three-to-four times longer boot (texture bake plus a bigger real map and three times the colliders), about 130 MB more JS heap, and frame times that are higher on Low and in a car (software GL also pays the PBR shading in the CPU-side numbers here). Real-GPU frame times are still unmeasured.
+- **Screenshots** (in-game, 1280x720, Medium unless named, final build): `34-stage1-keybridge` (on the deck), `34-stage1-mst-lunch`, `34-stage1-rowhouses` (29th St), `34-stage1-circle-traffic` (Washington Circle), `34-stage1-waterfront`, `34-stage1-stair-f4` (a stair with the F4 collision view), `34-stage1-night` (M St at 21:36), `34-stage1-f3` (the overlay: its spike counter shows the software-GL frames of the screenshot run, 40 s each under load), `34-stage1-minimap`, `34-stage1-quality-{low,medium,high}` (M St).
+- **Known issues after the integration** (places in `docs/m3-suspicious-areas.md`, part 0):
+  - 6 of 85 real stairs are not walkable end to end; `physaudit` is not clean on the real map (504 + 140); `fallthrough` 1 hover in 1,303.
+  - AI traffic: 5 wrong-way moves per gate drive (the gate wants 0), 23 AI contacts; mapcheck's drive part fails about 2 runs in 3.
+  - Road smoothness still over the limits in places (roadaudit above); `roaddrive` not re-run.
+  - The starting car hits a pole within 20 m of the spawn; the kerb by the spawn sits 0.39 m below the road.
+  - The `crowd` scenario's switch to High gets the browser's renderer killed for memory in this container (also on s1-look alone); the High preset bakes 289 MiB of surface maps.
+  - Synthesized street trees on M St and Wisconsin Ave are not moved to the kerb strip on real data: 136 trees and 60 posts stand within a person's reach of a walk link (none blocks a walkway).
+  - The taxi can name a destination's street as "Georgetown" when the place has none.
+  - Boot is 3-4 times slower than main (texture bake, bigger real map, three times the colliders); Stage 1 costs more draw calls, triangles, heap and frame time than main; real-GPU numbers are still unmeasured.

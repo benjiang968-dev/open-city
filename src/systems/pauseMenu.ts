@@ -17,7 +17,7 @@ export function createPauseMenu(w: World): void {
   root.id = 'pause';
   const q = TUNING.quality;
   const desc = (k: Quality) =>
-    `${Math.round(q[k].resolutionScale * 100)}% resolution · ${q[k].shadows ? `${q[k].shadowMapSize}px shadows` : 'no shadows'} · ${q[k].pedBudget} people nearby`;
+    `${Math.round(q[k].resolutionScale * 100)}% resolution · ${q[k].shadows ? `${q[k].shadowMapSize}px shadows to ${q[k].shadowDistance} m` : 'no shadows'} · ${q[k].textureRes}px textures · ${q[k].pedBudget} people nearby`;
   root.innerHTML = `
     <div class="panel" role="dialog" aria-label="Paused">
       <h2>Paused</h2>
@@ -32,7 +32,7 @@ export function createPauseMenu(w: World): void {
         <b>Controls</b><br>
         W/S walk · A/D turn · Shift run · Space jump / handbrake · E use / talk / pick up<br>
         1–9 or mouse wheel: hotbar · Left click (or F): throw / swing · Q drop · R flip car · H horn<br>
-        N weather · M mute · \` or F3 stats · Esc or P pause
+        N weather · M mute · \` or F3 stats · F4 collision shapes · Esc or P pause
       </div>
       <div class="attrib"></div>
     </div>`;

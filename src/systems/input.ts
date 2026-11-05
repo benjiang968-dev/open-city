@@ -49,7 +49,7 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
     if (s.blocked) return;
     if (!s.keys.has(e.code)) s.pressed.add(e.code);
     s.keys.add(e.code);
-    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F3', 'Tab'].includes(e.code)) e.preventDefault();
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F3', 'F4', 'Tab'].includes(e.code)) e.preventDefault();
   });
   window.addEventListener('keyup', (e) => {
     s.keys.delete(e.code);
@@ -104,4 +104,5 @@ export const act = {
   horn: (s: InputState) => !s.blocked && s.keys.has('KeyH'),
   reset: (s: InputState) => !s.blocked && s.pressed.has('KeyR'),
   debug: (s: InputState) => s.pressed.has('F3') || s.pressed.has('Backquote'), // backtick too: F3 is often a browser or laptop media key
+  physDebug: (s: InputState) => s.pressed.has('F4'), // collision shapes near the player
 };

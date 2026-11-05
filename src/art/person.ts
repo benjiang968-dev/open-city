@@ -1,6 +1,7 @@
 // Low-poly person built from boxes: torso+head in one mesh, plus pivoting legs and arms for a walk cycle.
 import * as THREE from 'three';
 import { GeoBuilder } from './geo';
+import { makePersonMaterial } from '../systems/render/vehicleMaterials';
 
 export interface PersonRig {
   root: THREE.Group;
@@ -10,7 +11,7 @@ export interface PersonRig {
   armR: THREE.Object3D;
 }
 
-const matCache = new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8 });
+const matCache = makePersonMaterial(); // cloth with a soft sheen (render/vehicleMaterials.ts)
 
 export function makePerson(shirt: THREE.Color, pants: THREE.Color, skin: THREE.Color, hair: THREE.Color, scale = 1): PersonRig {
   const root = new THREE.Group();

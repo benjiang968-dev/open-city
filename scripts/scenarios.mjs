@@ -7,6 +7,14 @@ const state = (page) => page.evaluate(() => {
 export { hold, state };
 
 /**
+ * Scenarios written for the grid city (their spots, screenshots and expectations): shot.mjs loads ?map=grid for them
+ * when MAP is not set. Everything else runs on the game's default map (TUNING.map.defaultMap); the map-agnostic ones
+ * (world walk drive handling crashspikes gate2 theft taxi dealership life crowd witness police chat, the physics and
+ * map checks) are run on both maps, and the geo* / road* ones are Georgetown's.
+ */
+export const GRID_SCENARIOS = new Set(['title', 'drivecam', 'traffic2', 'bust', 'debug', 'night', 'nightdrive', 'perf', 'backtick', 'tank', 'chatbuttons', 'weathershot', 'crashbench', 'dentclean', 'dent', 'gate1', 'injured', 'deathscreen', 'pause', 'items', 'combat', 'lineup', 'hurtfx']);
+
+/**
  * Map-agnostic spots for the scenarios (installed in the page as window.__mh by shot.mjs). Spots are given as
  * offsets from the map centre; on the grid city the offsets used below land exactly where the old scenarios
  * put things (between avenues, in a lane, on a pavement), and on any other map they snap to the nearest road.
@@ -940,7 +948,12 @@ export async function witness(page, S) {
     window.__mh.put(w.player.body, bottle.px, bottle.pz - 1.0, 1.2); w.player.facing = 0;
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
     const pp = w.player.mesh.position;
-    const victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly'));
+    // (real maps: the bottle may lie on a quiet street where nobody suitable is out yet; let the crowd fill in)
+    let victim = null;
+    for (let k = 0; k < 40 && !victim; k++) {
+      victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly')) ?? (k > 10 ? w.peds.find((p) => p.active && p.archetype === 'adult') : null);
+      if (!victim) run(0.5);
+    }
     victim.pos.set(pp.x, window.__mh.gy(pp.x, pp.z + 5) + 0.02, pp.z + 5); victim.state = 'idle'; victim.timer = 30; victim.route = [];
     w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
     w.input.keys.add('KeyF'); run(0.36); w.input.keys.delete('KeyF');
@@ -1003,8 +1016,12 @@ export async function gate2(page, S) {
   // 2) an NPC stands in front; hold F to charge, release to throw
   const victim = await page.evaluate(() => {
     const w = window.__oc; const pp = w.player.mesh.position;
-    const v = w.peds.find((p) => p.active && p.archetype === 'adult' && p.npc.personality === 'friendly') ?? w.peds.find((p) => p.active && p.archetype === 'adult');
-    v.pos.set(pp.x, 0.02, pp.z + 5); v.state = 'idle'; v.timer = 30; v.route = [];
+    let v = null;
+    for (let k = 0; k < 40 && !v; k++) {
+      v = w.peds.find((p) => p.active && p.archetype === 'adult' && p.npc.personality === 'friendly') ?? w.peds.find((p) => p.active && p.archetype === 'adult');
+      if (!v) window.__ocRun(0.5); // (real maps: a quiet street; let the crowd fill in)
+    }
+    v.pos.set(pp.x, window.__mh?.gy ? window.__mh.gy(pp.x, pp.z + 5) + 0.02 : 0.02, pp.z + 5); v.state = 'idle'; v.timer = 30; v.route = [];
     w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
     return { id: v.id, personality: v.npc.personality };
   });
@@ -1623,7 +1640,9 @@ export async function mapcheck(page, S) {
     const simStart = w.time;
     while (streak < 30 && w.time - simStart < 900) {
       window.__ocRun(0.1, 30);
-      if (car.phase === 'lane' && car.stunT <= 0) {
+      // (not on the tick a recycled car reappears elsewhere: that is a jump, counted below, not a lane-keeping error)
+      const jumped = car.edge !== prev && !N[E[prev].to].out.includes(car.edge);
+      if (car.phase === 'lane' && car.stunT <= 0 && !jumped) {
         // off its lane beyond the sideways offset of a lane change it is making (car.latOff)
         const h = M.projectOnLane(E[car.edge], car.px, car.pz, hit);
         const lat = (car.px - h.x) * -Math.cos(h.heading) + (car.pz - h.z) * Math.sin(h.heading);
@@ -1848,6 +1867,895 @@ export async function geoplay(page, S) {
   return out;
 }
 
+/**
+ * Physics audit (run with QUERY=physaudit=1): drawn geometry vs Rapier colliders per solid kind (side probes),
+ * drawn floors vs physics floors (surface samples) and every stair. Prints the mismatches with coordinates.
+ * AUDIT_OUT=<file> writes the whole report as JSON. Passes when no solid kind has a probe or surface mismatch.
+ */
+export async function physaudit(page) {
+  await page.waitForFunction(() => !!window.__ocPhysAudit, null, { timeout: 60000 }).catch(() => { throw new Error('physaudit needs QUERY=physaudit=1'); });
+  const rep = await page.evaluate(() => window.__ocPhysAudit({ randomSamples: Number(new URLSearchParams(location.search).get('samples') ?? 3000) }));
+  if (process.env.AUDIT_OUT) (await import('node:fs')).writeFileSync(process.env.AUDIT_OUT, JSON.stringify(rep, null, 1));
+  const lines = [];
+  for (const [k, s] of Object.entries(rep.probes)) {
+    const bad = s.missing + s.short + s.long;
+    lines.push(`probe ${k.padEnd(11)} ${String(s.probes).padStart(6)} probes  ok ${s.ok}  missing ${s.missing}  short ${s.short}  long ${s.long}  occluded ${s.occluded}  unreachable ${s.unreachable}${bad ? `  worst long ${s.worstLong.toFixed(2)} short ${s.worstShort.toFixed(2)}` : ''}`);
+    for (const e of s.examples.slice(0, bad ? 4 : 0)) lines.push(`    ${e}`);
+  }
+  for (const [k, s] of Object.entries(rep.surfaces)) {
+    lines.push(`floor ${k.padEnd(16)} ${String(s.samples).padStart(6)} samples  ok ${s.ok}  unsolid ${s.unsolid}  undrawn ${s.undrawn}${s.unsolid + s.undrawn ? `  worst ${s.worst.toFixed(2)}` : ''}`);
+    for (const e of s.examples.slice(0, s.unsolid + s.undrawn ? 4 : 0)) lines.push(`    ${e}`);
+  }
+  for (const st of rep.stairs) lines.push(`stair ${st.name.padEnd(16)} L ${st.length} rise ${st.rise}  phys-visual ${st.physMinusVisual.join('..')}  max step ${st.maxPhysStep}`);
+  console.log(lines.join('\n'));
+  return { map: rep.map, colliders: rep.colliders, records: rep.records, totals: rep.totals, ms: rep.ms, pass: rep.totals.probeMismatches === 0 && rep.totals.surfaceMismatches === 0 };
+}
+
+/**
+ * Page helpers for the walking tests: the player is put at a start spot (the only teleport), then moved ONLY by held
+ * keys (W, A/D to turn, Space to jump) through the real game loop (window.__ocStep, 60 Hz). Each frame records the
+ * feet height against the static collider surface right under the player (a ray that ignores the player).
+ */
+function installWalkHelpers() {
+  const w = window.__oc, c = w.city, P = w.player, R = w.R;
+  const hh = P.collider.halfHeight(), rad = P.collider.radius();
+  const STATIC = (0xffff << 16) | 1; // query: every membership, filter = static colliders only
+  const ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+  const H = {};
+  H.kindName = (id) => ['untagged', 'ground', 'kerb', 'deck', 'parapet', 'stair', 'stairWall', 'stoop', 'stoopRail', 'building', 'tower', 'column', 'bridgePier', 'monument', 'railing', 'wall', 'canopy', 'pier', 'boat', 'lockGate', 'fountain', 'tree', 'lamp', 'signalPole', 'signPost', 'bench', 'busShelter', 'gravestone', 'container', 'kiosk', 'boundary'][id] ?? `#${id}`;
+  /** Static floor under (x, z) from y down: { y, kind } or null. */
+  H.floor = (x, y, z, max = 60) => {
+    ray.origin.x = x; ray.origin.y = y; ray.origin.z = z; ray.dir.x = 0; ray.dir.y = -1; ray.dir.z = 0;
+    const h = w.physics.castRay(ray, max, true, undefined, STATIC);
+    return h ? { y: y - h.timeOfImpact, kind: H.kindName(c.solidTags.get(h.collider.handle)), toi: h.timeOfImpact } : null;
+  };
+  /** Horizontal ray (static only): distance to the first hit and its kind, or null. */
+  H.cast = (x, y, z, dx, dz, max) => {
+    const l = Math.hypot(dx, dz) || 1;
+    ray.origin.x = x; ray.origin.y = y; ray.origin.z = z; ray.dir.x = dx / l; ray.dir.y = 0; ray.dir.z = dz / l;
+    const h = w.physics.castRay(ray, max, true, undefined, STATIC);
+    return h ? { d: h.timeOfImpact, kind: H.kindName(c.solidTags.get(h.collider.handle)) } : null;
+  };
+  H.feet = () => P.body.translation().y - hh - rad;
+  H.pos = () => P.body.translation();
+  /** Put the player standing at (x, z) on the floor under `from` (a physics ray), facing `facing`. */
+  H.put = (x, z, facing, from) => {
+    const f = H.floor(x, from, z, 80);
+    const y = (f ? f.y : c.heightAt(x, z)) + hh + rad + 0.03;
+    P.body.setTranslation({ x, y, z }, true);
+    P.body.setNextKinematicTranslation({ x, y, z });
+    P.vy = 0; P.facing = facing; P.knockT = 0;
+    w.input.keys.clear();
+    window.__ocStep(20); // settle (feet on the ground)
+    return H.feet();
+  };
+  /** Hold keys for `sec` seconds; returns per-run stats (max penetration below the static floor, path). */
+  H.hold = (keys, sec, onFrame) => {
+    for (const k of keys) w.input.keys.add(k);
+    let pen = -Infinity, airborneMax = 0, frames = Math.round(sec * 60), air = 0;
+    const p0 = H.pos();
+    for (let i = 0; i < frames; i++) {
+      window.__ocStep(1);
+      const t = H.pos(), fy = t.y - hh - rad;
+      const f = H.floor(t.x, fy + 0.6, t.z);
+      if (f) pen = Math.max(pen, f.y - fy); // > 0: feet below the static surface under the player
+      if (!P.grounded) air++; else { airborneMax = Math.max(airborneMax, air); air = 0; }
+      if (onFrame && onFrame(i / 60, t, fy) === false) { frames = i + 1; break; }
+    }
+    for (const k of keys) w.input.keys.delete(k);
+    const p1 = H.pos();
+    return { pen: +pen.toFixed(3), moved: +Math.hypot(p1.x - p0.x, p1.z - p0.z).toFixed(2), seconds: +(frames / 60).toFixed(2), airborneFramesMax: Math.max(airborneMax, air) };
+  };
+  H.press = (key) => { w.input.pressed.add(key); };
+  /** Turn on the spot by holding A or D (tank controls) until facing `to` (radians). */
+  H.turnTo = (to) => {
+    const d = Math.atan2(Math.sin(to - P.facing), Math.cos(to - P.facing));
+    const key = d > 0 ? 'KeyA' : 'KeyD';
+    const frames = Math.round(Math.abs(d) / 3.0 * 60); // TUNING.player.turnSpeed = 3 rad/s
+    w.input.keys.add(key);
+    window.__ocStep(frames);
+    w.input.keys.delete(key);
+    P.facing = to; // remove the last fraction of a frame of turn
+  };
+  window.__wk = H;
+}
+
+/**
+ * Stairs and props on foot (Georgetown, or any map for the props part): walks up and down one instance of every
+ * stair type (the big landmark stair, canal steps, a footbridge, house stoops of several heights, the statue plinth
+ * by jumping, kerbs, a car park kerb, Key Bridge and the freeway deck) and into one instance of every solid prop
+ * kind, with held keys only. Asserts: feet never below the static surface (> 5 cm), the height gained matches the
+ * stair (10 cm), climbs finish in reasonable time, and props stop the player at their collider.
+ */
+export async function stairs(page) {
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
+  await page.evaluate(installWalkHelpers);
+  const out = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, P = w.player, H = window.__wk, geo = c.geo;
+    const res = { stairs: [], stoops: [], special: [], props: [], fails: [] };
+    const fail = (what) => res.fails.push(what);
+    const PEN = 0.05; // m: feet may not go deeper than this below the static surface
+    const along = (pts, s) => {
+      let acc = 0;
+      for (let i = 1; i < pts.length; i++) {
+        const L = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+        if (s <= acc + L || i === pts.length - 1) {
+          const t = (s - acc) / L;
+          const ux = (pts[i][0] - pts[i - 1][0]) / L, uz = (pts[i][1] - pts[i - 1][1]) / L;
+          return { x: pts[i - 1][0] + ux * (s - acc), z: pts[i - 1][1] + uz * (s - acc), ux, uz, t };
+        }
+        acc += L;
+      }
+    };
+    const face = (ux, uz) => Math.atan2(ux, uz);
+    // arc length of the point of a stair line nearest (x, z)
+    const project = (pts, x, z) => {
+      let acc = 0, best = 0, bd = Infinity;
+      for (let i = 1; i < pts.length; i++) {
+        const ax = pts[i - 1][0], az = pts[i - 1][1], dx = pts[i][0] - ax, dz = pts[i][1] - az, L = Math.hypot(dx, dz) || 1e-6;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (L * L)));
+        const d = Math.hypot(ax + dx * t - x, az + dz * t - z);
+        if (d < bd) { bd = d; best = acc + t * L; }
+        acc += L;
+      }
+      return best;
+    };
+    // steering along a bent stair (real data): face the point 1.5 m on along the line, as a player turning with A / D
+    const steer = (st, dir, p) => {
+      const s = project(st.pts, p.x, p.z), q = along(st.pts, s + dir * 1.5);
+      P.facing = face(q.x - p.x, q.z - p.z);
+    };
+    // ------------------------------------------------------------------ stairs (up, then down)
+    if (geo) {
+      const pick = geo.stairs.map((_s, i) => i); // every stair: the landmark stair, the canal steps, path stairs
+      for (const si of pick) {
+        const st = geo.stairs[si];
+        if (!st) continue;
+        const up = st.h(st.L) > st.h(0);
+        const sLow = up ? 0 : st.L, dir = up ? 1 : -1;
+        const lane = st.name ? st.w / 4 : 0; // the big stair has a hand rail down the middle
+        const a = along(st.pts, sLow - dir * 1.2);
+        const ox = -a.uz * lane, oz = a.ux * lane;
+        const hLow = st.h(sLow), hTop = st.h(up ? st.L : 0);
+        const feet0 = H.put(a.x + ox, a.z + oz, face(a.ux * dir, a.uz * dir), hLow + 2);
+        let reached = -1, rx = 0, rz = 0;
+        const upRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => {
+          if (reached < 0) steer(st, dir, p);
+          if (reached < 0 && fy > hTop - 0.12) { reached = t; rx = p.x; rz = p.z; }
+          // stop a little past the top (1.2 m on from where the top was reached: a bent stair's end isn't straight ahead)
+          if (reached >= 0 && Math.hypot(p.x - rx, p.z - rz) > 1.2) return false;
+        });
+        const feetTop = H.feet();
+        H.turnTo(P.facing + Math.PI);
+        let back = -1;
+        const downRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => { if (back < 0) steer(st, -dir, p); if (back < 0 && fy < hLow + 0.12) back = t; if (back >= 0 && t > back + 0.4) return false; });
+        const feetEnd = H.feet();
+        const r = { stair: st.name ?? `steps #${si}`, L: +st.L.toFixed(1), rise: +(hTop - hLow).toFixed(2), feet0: +feet0.toFixed(2), feetTop: +feetTop.toFixed(2), climbSec: +reached.toFixed(2), descendSec: +back.toFixed(2), feetEnd: +feetEnd.toFixed(2), penUp: upRun.pen, penDown: downRun.pen };
+        res.stairs.push(r);
+        if (reached < 0) fail(`${r.stair}: never reached the top (feet ${r.feetTop} vs ${hTop.toFixed(2)})`);
+        else if (reached > (st.L + 2.4) / 4.2 * 1.6 + 1) fail(`${r.stair}: slow climb ${r.climbSec} s`);
+        if (back < 0) fail(`${r.stair}: never got back down (feet ${r.feetEnd} vs ${hLow.toFixed(2)})`);
+        if (Math.max(upRun.pen, downRun.pen) > PEN) fail(`${r.stair}: feet ${Math.max(upRun.pen, downRun.pen)} m below the surface`);
+      }
+      // standing still on a flight: no creeping, no jitter
+      {
+        const st = geo.stairs[0];
+        const f0 = st.flights[0];
+        const a = along(st.pts, (f0[0] + f0[1]) / 2);
+        H.put(a.x - a.uz * st.w / 4, a.z + a.ux * st.w / 4, face(a.ux, a.uz), st.h((f0[0] + f0[1]) / 2) + 1.5);
+        const p0 = H.pos(), y0 = H.feet();
+        let ymin = Infinity, ymax = -Infinity;
+        H.hold([], 3, (t, p, fy) => { ymin = Math.min(ymin, fy); ymax = Math.max(ymax, fy); });
+        const p1 = H.pos();
+        const creep = Math.hypot(p1.x - p0.x, p1.z - p0.z);
+        res.special.push({ test: 'stand still 3 s mid-flight', creep: +creep.toFixed(3), jitter: +(ymax - ymin).toFixed(3) });
+        if (creep > 0.05 || ymax - ymin > 0.03) fail(`standing on the stair: creep ${creep.toFixed(3)} m, jitter ${(ymax - ymin).toFixed(3)} m`);
+        void y0;
+      }
+      // ------------------------------------------------------------------ footbridge over the canal (arched deck)
+      {
+        // the longest one (real data also has footbridge stubs a few decimetres long)
+        const fbLen = (f) => Math.hypot(f.pts[f.pts.length - 1][0] - f.pts[0][0], f.pts[f.pts.length - 1][1] - f.pts[0][1]);
+        const fb = geo.footbridges.reduce((b, f) => (!b || fbLen(f) > fbLen(b) ? f : b), null);
+        if (fb) {
+          const a = fb.pts[0], b = fb.pts[fb.pts.length - 1];
+          const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+          H.put(a[0] - ux * 0.6, a[1] - uz * 0.6, face(ux, uz), fb.h[0] + 0.8); // on the bank the bridge lands on
+          const top = Math.max(...fb.h);
+          let peak = -Infinity;
+          const run = H.hold(['KeyW'], (L + 3) / 4.2 + 1.5, (t, p, fy) => { peak = Math.max(peak, fy); });
+          const e = H.pos();
+          const crossed = (e.x - a[0]) * ux + (e.z - a[1]) * uz > L;
+          res.special.push({ test: 'footbridge', L: +L.toFixed(1), deckTop: +top.toFixed(2), feetPeak: +peak.toFixed(2), crossed, pen: run.pen });
+          if (!crossed) fail('footbridge: did not get across');
+          if (Math.abs(peak - top) > 0.15) fail(`footbridge: peak ${peak.toFixed(2)} vs deck ${top.toFixed(2)}`);
+          if (run.pen > PEN) fail(`footbridge: feet ${run.pen} below the deck`);
+        }
+      }
+      // ------------------------------------------------------------------ stoops of several heights (up to the door, down)
+      const S = geo.audit?.stoopInfo;
+      if (S) {
+        const want = [2, 3, 5, 7, 10];
+        for (const steps of want) {
+          let best = -1, bd = Infinity;
+          for (let i = 0; i < S.length; i += 8) {
+            if (S[i + 7] !== steps) continue;
+            const d = Math.hypot(S[i] - c.spawn.x, S[i + 1] - c.spawn.z);
+            // open pavement in front of the foot
+            const fx = S[i] + S[i + 3] * (S[i + 5] + 1.5), fz = S[i + 1] + S[i + 4] * (S[i + 5] + 1.5);
+            if (c.isBlocked(fx, fz) || c.isRoad(fx, fz)) continue;
+            if (d < bd) { bd = d; best = i; }
+          }
+          if (best < 0) continue;
+          const [dx, dz, y0, nx, nz, outN, gy] = Array.from(S.slice(best, best + 7));
+          const sx = dx + nx * (outN + 1.3), sz = dz + nz * (outN + 1.3);
+          const f0 = H.put(sx, sz, face(-nx, -nz), gy + 2);
+          let reachedT = -1;
+          const upRun = H.hold(['KeyW'], 3, (t, p, fy) => { if (reachedT < 0 && fy > y0 - 0.12) reachedT = t; });
+          const e = H.pos();
+          const wallGap = (e.x - dx) * nx + (e.z - dz) * nz; // distance of the capsule axis from the facade
+          const top = H.feet();
+          H.turnTo(P.facing + Math.PI);
+          let end = NaN;
+          const downRun = H.hold(['KeyW'], 2.5, (t, p, fy) => { if ((p.x - dx) * nx + (p.z - dz) * nz > outN + 0.6) { end = fy; return false; } });
+          const r = { steps, rise: +(y0 - gy).toFixed(2), feet0: +f0.toFixed(2), feetTop: +top.toFixed(2), landing: +y0.toFixed(2), climbSec: +reachedT.toFixed(2), wallGap: +wallGap.toFixed(2), feetEnd: +end.toFixed(2), pen: Math.max(upRun.pen, downRun.pen) };
+          res.stoops.push(r);
+          if (Math.abs(top - y0) > 0.12) fail(`stoop ${steps} steps: landing feet ${r.feetTop} vs ${r.landing}`);
+          if (wallGap < 0.3) fail(`stoop ${steps} steps: walked into the facade (gap ${r.wallGap})`);
+          if (r.pen > PEN) fail(`stoop ${steps} steps: feet ${r.pen} below the surface`);
+          if (Math.abs(end - gy) > 0.15) fail(`stoop ${steps} steps: back down at ${r.feetEnd} vs ${gy.toFixed(2)}`);
+          // sideways off the landing into the iron rail
+          if (steps >= 3) {
+            const ux = -nz, uz = nx;
+            H.put(dx + nx * 0.6, dz + nz * 0.6, face(ux, uz), y0 + 1.5);
+            const p0 = H.pos();
+            H.hold(['KeyW'], 1.2);
+            const p1 = H.pos();
+            const side = Math.abs((p1.x - dx) * ux + (p1.z - dz) * uz);
+            res.stoops.push({ steps, test: 'into the rail', sideOffset: +side.toFixed(2), feet: +H.feet().toFixed(2) });
+            if (side > 0.72 - 0.35 + 0.08) fail(`stoop ${steps} steps: walked through the rail (offset ${side.toFixed(2)})`);
+            void p0;
+          }
+        }
+      }
+    }
+    // ------------------------------------------------------------------ kerb: road to sidewalk and back (real maps: the grid has none)
+    if (geo) {
+      const k = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
+      // a kerb near the spawn with no car parked on it (the test once started on a car's bonnet at the spawn's kerb)
+      const fx0 = Math.sin(c.kerbPoint(c.spawn.x, c.spawn.z, k) ? k.heading : 0), fz0 = Math.cos(k.heading);
+      for (const along of [0, 6, -6, 12, -12, 18, -18, 24, -24, 30, -30]) {
+        c.kerbPoint(c.spawn.x + fx0 * along, c.spawn.z + fz0 * along, k);
+        if (!w.vehicles.some((v) => { const t = v.body.translation(); return Math.hypot(t.x - k.x, t.z - k.z) < 4; })) break;
+      }
+      const rx = -Math.cos(k.heading), rz = Math.sin(k.heading); // the pavement side
+      H.put(k.x, k.z, face(rx, rz), k.y + 2);
+      const f0 = H.feet();
+      const run = H.hold(['KeyW'], 1.2);
+      const f1 = H.feet();
+      H.turnTo(P.facing + Math.PI);
+      const back = H.hold(['KeyW'], 1.2);
+      const f2 = H.feet();
+      res.special.push({ test: 'kerb up and down', road: +f0.toFixed(2), sidewalk: +f1.toFixed(2), backOnRoad: +f2.toFixed(2), moved: run.moved, pen: Math.max(run.pen, back.pen) });
+      if (run.moved < 3) fail(`kerb: stuck at the kerb (moved ${run.moved} m)`);
+      if (f1 - f0 < 0.1) fail(`kerb: did not step up (${f0.toFixed(2)} -> ${f1.toFixed(2)})`);
+      if (Math.max(run.pen, back.pen) > PEN) fail('kerb: feet below the surface');
+    }
+    // ------------------------------------------------------------------ statue plinth: blocked, then jump up two tiers
+    {
+      let tier = null;
+      w.physics.colliders.forEach((col) => {
+        if (tier || H.kindName(c.solidTags.get(col.handle)) !== 'monument' || col.shapeType() !== 1) return;
+        const h = col.halfExtents();
+        if (Math.abs(h.x - 4.5) < 0.01 && Math.abs(h.z - 3.2) < 0.01) { const t = col.translation(); tier = { x: t.x, y: t.y + h.y, z: t.z }; }
+      });
+      if (tier) {
+        const y = tier.y - 0.5; // ground level at the plinth
+        H.put(tier.x, tier.z + 3.2 + 2.5, Math.PI, y + 2);
+        const blocked = H.hold(['KeyW'], 1.2);
+        const gap1 = H.pos().z - (tier.z + 3.2);
+        H.press('Space');
+        const j1 = H.hold(['KeyW'], 0.9);
+        const onTier1 = H.feet();
+        H.press('Space');
+        const j2 = H.hold(['KeyW'], 0.9);
+        const onTier2 = H.feet();
+        const j3 = H.hold(['KeyW'], 1.0);
+        res.special.push({ test: 'statue plinth', groundFeet: +y.toFixed(2), blockedGap: +gap1.toFixed(2), tier1: +(onTier1 - y).toFixed(2), tier2: +(onTier2 - y).toFixed(2), pen: Math.max(blocked.pen, j1.pen, j2.pen, j3.pen), stoppedByMarble: j3.moved < 0.6 });
+        if (gap1 < 0.35 - 0.08) fail(`plinth: walked into the first tier (gap ${gap1.toFixed(2)})`);
+        // one running jump lands on tier 1 (0.5 m) or, carried on by the run and the autostep, on tier 2 (1.0 m)
+        if (onTier1 - y < 0.4) fail(`plinth: jump onto tier 1 failed (${(onTier1 - y).toFixed(2)})`);
+        if (Math.abs(onTier2 - y - 1.0) > 0.1) fail(`plinth: not standing on tier 2 after two jumps (${(onTier2 - y).toFixed(2)})`);
+        if (!(j3.moved < 0.6)) fail('plinth: the marble block did not stop the player');
+      }
+    }
+    // ------------------------------------------------------------------ jump onto a bench seat from the front
+    {
+      let seat = null;
+      w.physics.colliders.forEach((col) => {
+        if (H.kindName(c.solidTags.get(col.handle)) !== 'bench' || col.shapeType() !== 1) return;
+        const h = col.halfExtents();
+        if (Math.abs(h.y - 0.025) > 0.005 || Math.abs(h.x - 0.95) > 0.01) return; // the seat slats box
+        const t = col.translation(), q = col.rotation();
+        // the bench's local +z (its back) in world: rotate (0, 0, 1) by q
+        const bx = 2 * (q.x * q.z + q.w * q.y), bz = 1 - 2 * (q.x * q.x + q.y * q.y);
+        const fx = t.x - bx * 1.4, fz = t.z - bz * 1.4;
+        const d = Math.hypot(t.x - c.spawn.x, t.z - c.spawn.z);
+        if (c.isBlocked(fx, fz) || (seat && seat.d < d)) return;
+        const fl = H.floor(fx, t.y + 2, fz);
+        if (!fl || Math.abs(fl.y - (t.y - 0.445)) > 0.15) return; // level ground in front
+        seat = { x: t.x, z: t.z, top: t.y + 0.025, bx, bz, fx, fz, d };
+      });
+      if (seat) {
+        // stand at the front edge, jump with a short push forward (a running jump clears the 0.9 m back)
+        H.put(seat.x - seat.bx * 0.7, seat.z - seat.bz * 0.7, face(seat.bx, seat.bz), seat.top + 1);
+        const y0 = H.feet();
+        H.press('Space');
+        const run = H.hold(['KeyW'], 0.2);
+        H.hold([], 1.0);
+        const y1 = H.feet();
+        res.special.push({ test: 'jump onto a bench', ground: +y0.toFixed(2), seatTop: +seat.top.toFixed(2), feetAfter: +y1.toFixed(2), pen: run.pen });
+        if (Math.abs(y1 - seat.top) > 0.12) fail(`bench: not standing on the seat after the jump (feet ${y1.toFixed(2)}, seat ${seat.top.toFixed(2)})`);
+      }
+    }
+    // ------------------------------------------------------------------ decks: Key Bridge sidewalk, the freeway carriageway
+    for (const [name, onSidewalk] of [['Key Bridge', true], ['Whitehurst Freeway', false]]) {
+      const e = c.roads.edges.find((q) => q.bridge && (q.name ?? '').includes(name) && q.len > 80);
+      if (!e) continue;
+      const lp = { x: 0, y: 0, z: 0, heading: 0 };
+      window.__ocMap.laneSample?.(e, e.len * 0.3, lp);
+      const off = onSidewalk ? e.halfWidth - e.offset + 1.5 : 0;
+      const sx = lp.x - Math.cos(lp.heading) * off, sz = lp.z + Math.sin(lp.heading) * off;
+      H.put(sx, sz, lp.heading, lp.y + 2.5);
+      const f0 = H.feet();
+      let minY = Infinity, maxDrop = 0;
+      const run = H.hold(['KeyW'], 8, (t, p, fy) => { minY = Math.min(minY, fy); const s = c.heightAt(p.x, p.z, fy + 0.5); maxDrop = Math.max(maxDrop, s - fy); });
+      const f1 = H.feet();
+      // (mapDeckAbove: how far map.heightAt's deck stood above the feet: a map-query difference, reported only)
+      res.special.push({ test: `walk the ${name} deck`, start: +f0.toFixed(2), end: +f1.toFixed(2), minFeet: +minY.toFixed(2), deckAt: +lp.y.toFixed(2), moved: run.moved, pen: run.pen, mapDeckAbove: +maxDrop.toFixed(3) });
+      if (run.pen > PEN) fail(`${name}: feet below the deck`);
+      if (minY < lp.y - 3) fail(`${name}: fell off the deck`);
+      if (run.moved < 20) fail(`${name}: stuck on the deck (moved ${run.moved} m)`);
+    }
+    // ------------------------------------------------------------------ props: walk into one of each kind
+    {
+      const byKind = new Map();
+      w.physics.colliders.forEach((col) => {
+        const kn = H.kindName(c.solidTags.get(col.handle));
+        if (!['tree', 'lamp', 'signalPole', 'signPost', 'bench', 'busShelter', 'gravestone', 'fountain', 'lockGate', 'column', 'railing', 'boat', 'kiosk', 'container', 'monument', 'wall', 'building', 'stoopRail', 'tower'].includes(kn)) return;
+        if (col.shapeType() !== 1 && col.shapeType() !== 10) return; // primitives (their centre is meaningful)
+        const t = col.translation();
+        const d = Math.hypot(t.x - c.spawn.x, t.z - c.spawn.z);
+        let l = byKind.get(kn);
+        if (!l) byKind.set(kn, (l = []));
+        l.push({ col, d, x: t.x, z: t.z });
+      });
+      for (const [kn, list] of byKind) {
+        list.sort((a, b) => a.d - b.d);
+        let done = false;
+        for (const cand of list.slice(0, 60)) {
+          if (done) break;
+          for (let k = 0; k < 8 && !done; k++) {
+            const a = (k / 8) * Math.PI * 2;
+            const dx = Math.cos(a), dz = Math.sin(a);
+            // start 3 m out on open ground, nothing else between the start and the prop at knee height
+            const sx = cand.x + dx * 3, sz = cand.z + dz * 3;
+            if (c.isBlocked(sx, sz) || c.isWater(sx, sz)) continue;
+            const fl = H.floor(sx, c.heightAt(sx, sz, 1e3) + 3, sz);
+            if (!fl || fl.kind !== 'ground' && fl.kind !== 'pier' && fl.kind !== 'kerb') continue;
+            const knee = fl.y + 0.4;
+            const hit = H.cast(sx, knee, sz, -dx, -dz, 4);
+            if (!hit || hit.kind !== kn || hit.d > 3.2 || hit.d < 1.0) continue;
+            // the floor between must be walkable and level-ish
+            const mid = H.floor(sx - dx * hit.d * 0.5, fl.y + 1.5, sz - dz * hit.d * 0.5);
+            if (!mid || Math.abs(mid.y - fl.y) > 0.3) continue;
+            // how high the obstacle stands above that floor (a low one is stepped over or jumped on, not a wall)
+            const hx = sx - dx * (hit.d + 0.06), hz = sz - dz * (hit.d + 0.06);
+            const topHit = H.floor(hx, fl.y + 8, hz, 9);
+            const height = topHit ? topHit.y - fl.y : 0;
+            H.put(sx, sz, face(-dx, -dz), fl.y + 1.5);
+            // closest the capsule's axis gets to the prop's collider (at knee and chest height), minus its radius
+            let worst = Infinity;
+            const run = H.hold(['KeyW'], 1.5, (t, p, fy) => {
+              for (const hgt of [0.4, 1.2]) {
+                const pr = cand.col.projectPoint({ x: p.x, y: fy + hgt, z: p.z }, true);
+                const gap = pr.isInside ? -1 : Math.hypot(pr.point.x - p.x, pr.point.z - p.z) - 0.35;
+                if (gap < worst) worst = gap;
+              }
+            });
+            const r = { kind: kn, at: [+cand.x.toFixed(1), +cand.z.toFixed(1)], startGap: +(hit.d - 0.35).toFixed(2), obstacleHeight: +height.toFixed(2), closestGap: +worst.toFixed(3), moved: run.moved, pen: run.pen };
+            res.props.push(r);
+            if (height > 0.5 && worst < -0.06) fail(`${kn}: the capsule went ${(-worst).toFixed(2)} m into it at (${r.at})`);
+            done = true;
+          }
+        }
+        if (!done) res.props.push({ kind: kn, skipped: 'no clear approach found' });
+      }
+    }
+    w.input.keys.clear();
+    // the closing screenshot: halfway up the landmark stair with the F4 collision view on
+    if (geo) {
+      const st = geo.stairs[0], f = st.flights[1] ?? st.flights[0];
+      const a = along(st.pts, (f[0] + f[1]) / 2);
+      H.put(a.x - a.uz * st.w / 4, a.z + a.ux * st.w / 4, face(a.ux, a.uz), st.h((f[0] + f[1]) / 2) + 1.5);
+      w.dayNight.hour = 12.5;
+      if (!w.physDebug.on) w.input.pressed.add('F4');
+      const y = H.feet();
+      w.cam.override = { px: a.x - a.ux * 7 - a.uz * 6, py: y + 5, pz: a.z - a.uz * 7 + a.ux * 6, lx: a.x + a.ux * 2, ly: y + 0.5, lz: a.z + a.uz * 2 };
+      window.__ocFrames(1, true); w.physDebug.nextAt = 0; window.__ocFrames(4, true);
+    }
+    return res;
+  });
+  return { ...out, pass: out.fails.length === 0 };
+}
+
+/**
+ * Drops the player from 2 m at thousands of random points over the whole map (fixed sequence) and checks where the
+ * feet come to rest: on a surface within 5 cm of map.heightAt (props, stoops and decks are reported separately:
+ * landing on a bench is right), never below it, never inside a building. A capsule resting on a ledge's edge (its
+ * centre over the lower floor) is counted as `ledge`, not as a hover. SAMPLES=<n> (default 2000), FALL_SEED=<n> picks
+ * another fixed set of points.
+ */
+export async function fallthrough(page) {
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
+  await page.evaluate(installWalkHelpers);
+  const n = Number(process.env.SAMPLES ?? 2000), seed0 = Number(process.env.FALL_SEED ?? 987654);
+  return page.evaluate(([n, seed0]) => {
+    const w = window.__oc, c = w.city, P = w.player, H = window.__wk, R = w.R;
+    const hh = P.collider.halfHeight(), rad = P.collider.radius();
+    const b = c.bounds;
+    let seed = seed0;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    // below: the feet sank under the collider they stand on; mapLow / mapHigh: that collider is more than 5 cm under /
+    // over map.heightAt there; hover: the feet rest more than 0.25 m above it (a capsule on a slope rests a little up)
+    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, raised: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, mapLow: 0, mapHigh: 0, hover: 0, ledge: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
+    const examples = { below: [], mapLow: [], mapHigh: [], hover: [], ledge: [], insideBuilding: [], notSettled: [], onProp: {} };
+    let maxRest = 0;
+    const capsule = new R.Capsule(hh, rad);
+    const STATIC = (0xffff << 16) | 1;
+    const anyRay = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+    const t0 = performance.now();
+    let maxDrift = 0;
+    for (let i = 0; i < n; i++) {
+      const x = b.minX + 3 + rnd() * (b.maxX - b.minX - 6), z = b.minZ + 3 + rnd() * (b.maxZ - b.minZ - 6);
+      st.tried++;
+      if (c.isWater(x, z)) { st.water++; continue; }
+      if (c.isBlocked(x, z)) { st.blocked++; continue; }
+      const g = c.heightAt(x, z);
+      // a post, trunk or wall standing on the spot: nothing to land on there
+      if (w.physics.intersectionWithShape({ x, y: g + hh + rad + 0.25, z }, { x: 0, y: 0, z: 0, w: 1 }, capsule, undefined, STATIC) !== null) { st.occupied++; continue; }
+      // 2 m above the ground; where that is inside something (a bridge deck or pier over the spot), 2 m above the top
+      // of it (the player falls onto the deck: dropping a capsule inside a solid tests nothing)
+      let top = g + 2;
+      const inSolid = (y) => w.physics.intersectionWithShape({ x, y: y + hh + rad, z }, { x: 0, y: 0, z: 0, w: 1 }, capsule, undefined, STATIC) !== null;
+      if (inSolid(top)) {
+        const roof = H.floor(x, g + 60, z, 60);
+        if (roof && roof.y > g + 0.3) top = roof.y + 2;
+        if (inSolid(top)) { st.occupied++; continue; }
+        st.raised++;
+      }
+      P.body.setTranslation({ x, y: top + hh + rad, z }, true);
+      P.body.setNextKinematicTranslation({ x, y: top + hh + rad, z });
+      P.vy = 0; P.knockT = 0; w.input.keys.clear();
+      // at rest: on the ground and no longer moving (a capsule that lands on a steep bank is grounded while it still
+      // slides down it for a few frames)
+      let settled = false, still = 0, lastY = NaN;
+      for (let f = 0; f < 120; f++) {
+        window.__ocStep(1);
+        const y = P.body.translation().y;
+        still = P.grounded && Math.abs(y - lastY) < 0.002 ? still + 1 : 0;
+        lastY = y;
+        if (f > 20 && still >= 4) { settled = true; break; }
+      }
+      const p = P.body.translation();
+      const feet = p.y - hh - rad;
+      const drift = Math.hypot(p.x - x, p.z - z);
+      maxDrift = Math.max(maxDrift, drift);
+      if (!settled) { st.notSettled++; if (examples.notSettled.length < 8) examples.notSettled.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(2), +g.toFixed(2)]); continue; }
+      st.landed++;
+      if (drift > 0.3) st.drift++;
+      const under = H.floor(p.x, feet + 0.3, p.z, 5);
+      const kind = under ? under.kind : 'none';
+      const gy = c.heightAt(p.x, p.z), gyy = c.heightAt(p.x, p.z, feet + 0.3);
+      // inside a building: the capsule overlaps a building collider, or stands where the map says it's blocked
+      let inBld = false;
+      w.physics.intersectionsWithShape({ x: p.x, y: p.y, z: p.z }, { x: 0, y: 0, z: 0, w: 1 }, new R.Capsule(hh - 0.05, rad - 0.05), (col) => { if (H.kindName(c.solidTags.get(col.handle)) === 'building') inBld = true; return !inBld; }, undefined, STATIC);
+      if (inBld) { st.insideBuilding++; if (examples.insideBuilding.length < 8) examples.insideBuilding.push([+x.toFixed(1), +z.toFixed(1)]); continue; }
+      const ex = (list, extra) => { if (list.length < 8) list.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), ...extra]); };
+      if (!under) { st.below++; ex(examples.below, ['no floor under']); continue; }
+      const rest = feet - under.y;
+      maxRest = Math.max(maxRest, rest);
+      if (rest < -0.05) { st.below++; ex(examples.below, [+under.y.toFixed(3), kind]); continue; }
+      if (rest > 0.25) {
+        // landed on something that moves (a parked car's roof, a person): the static floor ray doesn't see it
+        let onBody = null;
+        for (let k = 0; k <= 12 && !onBody; k++) {
+          const r = k === 12 ? 0 : rad * 0.95;
+          anyRay.origin.x = p.x + Math.cos(k * Math.PI / 6) * r; anyRay.origin.y = feet + 0.3; anyRay.origin.z = p.z + Math.sin(k * Math.PI / 6) * r;
+          const h = w.physics.castRay(anyRay, 0.6, true, undefined, undefined, undefined, P.body);
+          const body = h && h.collider.parent();
+          if (body && !body.isFixed()) onBody = body.isDynamic() ? 'dynamic body' : 'kinematic body';
+        }
+        if (onBody) { st.onProp++; examples.onProp[onBody] = (examples.onProp[onBody] ?? 0) + 1; continue; }
+        // resting on a ledge's or a step's edge (a capsule holds there with its centre over the lower floor): some floor
+        // under the capsule's round bottom touches it. The controller keeps its skin gap (ccOffset) from surfaces, so
+        // the bottom is a sphere of radius rad + gap whose lowest point is the gap below the feet: a floor point d from
+        // the axis touches it at feet - gap + R - sqrt(R^2 - d^2). Reported, not a failure; a hover with nothing
+        // touching the capsule is.
+        const gap = w.player.cc.offset(), Rr = rad + gap;
+        let rim = -Infinity, touch = false;
+        for (let fr = 0.2; fr <= 1.001; fr += 0.1) for (let k = 0; k < 16; k++) {
+          const d = Rr * fr;
+          const f = H.floor(p.x + Math.cos(k * Math.PI / 8) * d, feet + rad, p.z + Math.sin(k * Math.PI / 8) * d, 5);
+          if (!f) continue;
+          rim = Math.max(rim, f.y);
+          if (f.y >= feet - gap + Rr - Math.sqrt(Math.max(0, Rr * Rr - d * d)) - 0.03) touch = true;
+        }
+        if (touch) { st.ledge++; ex(examples.ledge, [+under.y.toFixed(3), +rim.toFixed(3), kind]); continue; }
+        st.hover++; ex(examples.hover, [+under.y.toFixed(3), +rim.toFixed(3), kind]); continue;
+      }
+      if (kind !== 'ground' && kind !== 'kerb' && kind !== 'stair' && kind !== 'deck') { st.onProp++; examples.onProp[kind] = (examples.onProp[kind] ?? 0) + 1; continue; }
+      const ref = Math.abs(gyy - under.y) < Math.abs(gy - under.y) ? gyy : gy;
+      if (ref !== gy) st.onDeck++;
+      const d = under.y - ref;
+      if (d < -0.05) { st.mapLow++; ex(examples.mapLow, [+under.y.toFixed(3), +ref.toFixed(3), kind]); }
+      else if (d > 0.05) { st.mapHigh++; ex(examples.mapHigh, [+under.y.toFixed(3), +ref.toFixed(3), kind]); }
+      else st.ok++;
+    }
+    const ms = Math.round(performance.now() - t0);
+    return { samples: n, seed: seed0, ...st, maxDrift: +maxDrift.toFixed(3), maxRestAbove: +maxRest.toFixed(3), examples, ms, pass: st.below === 0 && st.insideBuilding === 0 && st.notSettled === 0 && st.hover === 0 && st.mapLow + st.mapHigh <= Math.ceil(st.landed * 0.002) };
+  }, [n, seed0]);
+}
+
+/**
+ * F4 collision view screenshots (screenshots/31-physics-f4-*.png): a stair, a stoop, a park with trees and Key Bridge
+ * on Georgetown (on the grid: a park and a street corner). The camera is fixed for each shot; the view is rebuilt
+ * around the player, who stands at the spot.
+ */
+export async function physf4(page) {
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
+  const spots = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, geo = c.geo;
+    w.dayNight.hour = 12.5;
+    const out = [];
+    const cam = (name, px, py, pz, lx, ly, lz, sx, sz) => out.push({ name, px, py, pz, lx, ly, lz, sx, sz });
+    if (geo) {
+      // the canal steps by Wisconsin Ave: from the towpath, looking up the flight (from the side away from the bridge,
+      // whose sidewalk would hide the stair)
+      const st = geo.stairs.reduce((b, s) => (Math.abs(s.pts[0][0] + 131) < Math.abs(b.pts[0][0] + 131) ? s : b), geo.stairs[1]);
+      const a = st.pts[0], b = st.pts[st.pts.length - 1];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+      const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      cam('stair', m[0] - ux * 9 + uz * 3, 3.2, m[1] - uz * 9 - ux * 3, m[0] + ux * 2, 1.2, m[1] + uz * 2, m[0] - ux * 2, m[1] - uz * 2);
+      // a stoop of about 7 steps near the spawn
+      const S = geo.audit.stoopInfo;
+      let best = -1, bd = Infinity;
+      for (let i = 0; i < S.length; i += 8) { if (S[i + 7] < 6) continue; const d = Math.hypot(S[i] - c.spawn.x, S[i + 1] - c.spawn.z); if (d < bd) { bd = d; best = i; } }
+      const [dx, dz, , nx, nz, outN] = Array.from(S.slice(best, best + 6));
+      const ex = -nz, ez = nx;
+      cam('stoop', dx + nx * (outN + 4) + ex * 3.5, 3, dz + nz * (outN + 4) + ez * 3.5, dx + nx * outN * 0.5, 0.6, dz + nz * outN * 0.5, dx + nx * (outN + 1.2), dz + nz * (outN + 1.2));
+      // a park with trees and benches: the densest cluster of trunk colliders near the spawn
+      let tx = 0, tz = 0, bn = -1;
+      const trunks = [];
+      w.physics.colliders.forEach((col) => { if (c.solidTags.get(col.handle) === 21 && col.shapeType() === 10) { const t = col.translation(); trunks.push([t.x, t.z]); } });
+      for (let k = 0; k < trunks.length; k += 7) {
+        const [x, z] = trunks[k];
+        let n = 0;
+        for (const [x2, z2] of trunks) if (Math.abs(x2 - x) < 12 && Math.abs(z2 - z) < 12) n++;
+        if (n > bn && !c.isBlocked(x + 3, z) && !c.isWater(x + 3, z)) { bn = n; tx = x; tz = z; }
+      }
+      cam('park', tx + 9, 15, tz + 9, tx, 0.5, tz, tx + 3, tz); // above the crowns
+      // Key Bridge: on its sidewalk
+      const e = c.roads.edges.find((q) => q.bridge && (q.name ?? '').includes('Key Bridge') && q.len > 80);
+      const lp = { x: 0, y: 0, z: 0, heading: 0 };
+      window.__ocMap.laneSample(e, e.len * 0.4, lp);
+      const off = e.halfWidth - e.offset + 1.5;
+      const sx = lp.x - Math.cos(lp.heading) * off, sz = lp.z + Math.sin(lp.heading) * off;
+      const fx = Math.sin(lp.heading), fz = Math.cos(lp.heading);
+      cam('keybridge', sx - fx * 9 + Math.cos(lp.heading) * 2, 3.5, sz - fz * 9 - Math.sin(lp.heading) * 2, sx + fx * 4, 0.5, sz + fz * 4, sx, sz);
+    } else {
+      const p = c.parkRects?.[0] ?? null;
+      const x = c.center.x, z = c.center.z;
+      cam('grid-street', x + 14, 6, z + 14, x, 0.5, z, x + 2, z + 2);
+      if (p) cam('grid-park', (p.x0 + p.x1) / 2 + 14, 7, (p.z0 + p.z1) / 2 + 14, (p.x0 + p.x1) / 2, 0.5, (p.z0 + p.z1) / 2, (p.x0 + p.x1) / 2 + 3, (p.z0 + p.z1) / 2 + 6);
+    }
+    return out;
+  });
+  const shots = [];
+  for (const s of spots) {
+    const info = await page.evaluate((s) => {
+      const w = window.__oc, c = w.city, P = w.player;
+      const y = c.heightAt(s.sx, s.sz, 1e3);
+      P.body.setTranslation({ x: s.sx, y: y + 1.0, z: s.sz }, true);
+      P.vy = 0;
+      window.__ocStep(30);
+      if (!w.physDebug.on) w.input.pressed.add('F4');
+      // camera and target heights are above the player's own floor (on a bridge, the ground under the camera is the river)
+      const fy = P.body.translation().y - P.collider.halfHeight() - P.collider.radius();
+      w.cam.override = { px: s.px, py: fy + s.py, pz: s.pz, lx: s.lx, ly: fy + s.ly, lz: s.lz };
+      window.__ocFrames(1, true);
+      w.physDebug.nextAt = 0;
+      window.__ocFrames(4, true);
+      return { colliders: w.physDebug.colliders, edges: w.physDebug.segs };
+    }, s);
+    const path = `screenshots/31-physics-f4-${s.name}.png`;
+    await page.screenshot({ path });
+    shots.push({ path, ...info });
+  }
+  await page.evaluate(() => { const w = window.__oc; w.cam.override = null; if (w.physDebug.on) { w.input.pressed.add('F4'); window.__ocFrames(1, true); } });
+  return { shots, pass: shots.every((s) => s.edges > 0) };
+}
+
+// Debug probe (any map): starts the game and prints the JSON value of the expression in $PROBE, evaluated in the page
+// with w = window.__oc, c = the CityMap, M = window.__ocMap.  PROBE='c.roads.edges.length' node scripts/shot.mjs x probe
+export async function probe(page, S) {
+  await S.start(page);
+  return page.evaluate((src) => { const w = window.__oc, c = w.city, M = window.__ocMap; return eval(src); }, process.env.PROBE ?? 'null');
+}
+
+// Road smoothness audit (MAP=georgetown node scripts/shot.mjs x roadaudit): casts rays at the static colliders along
+// every lane (centre and both wheel tracks, every 0.5 m), across every junction (each arriving lane to each leaving
+// lane, straight chord) and along every walk link, and measures grade, grade change per metre, kinks (second
+// difference: bumps, seams, deck joins), cross-slope and the gap between the lane and the surface under it. Limits:
+// TUNING.geo.roadLimits. Prints counts over the limits, percentiles and the worst places.
+export async function roadaudit(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, M = window.__ocMap, Lm = M.roadLimits, R = w.R, P = w.physics;
+    const E = c.roads.edges, N = c.roads.nodes;
+    const ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+    const fixedOnly = (col) => { const b = col.parent(); return !b || b.isFixed(); };
+    const cast = (x, y, z, down) => {
+      ray.origin.x = x; ray.origin.y = y; ray.origin.z = z;
+      const hit = P.castRay(ray, down, true, undefined, undefined, undefined, undefined, fixedOnly);
+      return hit ? y - hit.timeOfImpact : NaN;
+    };
+    const main = new Set(['primary', 'secondary', 'trunk', 'parkway']);
+    const LP = { x: 0, y: 0, z: 0, heading: 0 };
+    const stat = () => ({ n: 0, over: 0, worst: [] });
+    const S2 = { grade: stat(), gradeChange: stat(), step: stat(), cross: stat(), gap: stat(), junction: stat(), walk: stat(), walkWall: stat(), holes: stat() };
+    const vals = { grade: [], gradeChange: [], step: [], cross: [] };
+    const byCls = {};
+    let rs = 7;
+    const rnd = () => ((rs = (Math.imul(rs, 1103515245) + 12345) >>> 0) / 4294967296);
+    let curEnd = false;
+    const note = (st, v, lim, where) => {
+      st.n++;
+      if (v > lim) {
+        st.over++;
+        const key = `${Object.keys(S2).find((k) => S2[k] === st)}:${where[1]}${curEnd ? ':end' : ''}`;
+        byCls[key] = (byCls[key] ?? 0) + 1;
+        // a reservoir sample of typical cases (the worst list only shows the extremes)
+        st.sample ??= [];
+        if (st.sample.length < 40) st.sample.push([+v.toFixed(3), ...where, curEnd ? 'end' : 'mid']);
+        else { const j = Math.floor(rnd() * st.over); if (j < 40) st.sample[j] = [+v.toFixed(3), ...where, curEnd ? 'end' : 'mid']; }
+        st.worst.push([+v.toFixed(3), ...where]);
+        if (st.worst.length > 4000) { st.worst.sort((a, b) => b[0] - a[0]); st.worst.length = 2000; }
+      }
+    };
+    const DS = 0.5;
+    for (const e of E) {
+      if (e.len < 2) continue;
+      const isMain = main.has(e.cls), isSvc = e.cls === 'service';
+      const n = Math.floor(e.len / DS) + 1;
+      const ys = new Float32Array(n);
+      const where = (s) => { curEnd = s < e.trimStart + 6 || s > e.len - e.trimEnd - 6; M.laneSample(e, s, LP); return [e.name ?? e.roadId, e.cls, Math.round(LP.x), Math.round(LP.z)]; };
+      for (let i = 0; i < n; i++) {
+        const s = Math.min(e.len, i * DS);
+        M.laneSample(e, s, LP);
+        const y = cast(LP.x, LP.y + 1.5, LP.z, 4);
+        ys[i] = y;
+        if (Number.isNaN(y)) { note(S2.holes, 1, 0.5, where(s)); continue; }
+        note(S2.gap, Math.abs(y - LP.y), Lm.maxSurfaceGap, where(s));
+        if (i % 2 === 0) {
+          const rx = -Math.cos(LP.heading) * 0.8, rz = Math.sin(LP.heading) * 0.8;
+          const yl = cast(LP.x - rx, LP.y + 1.5, LP.z - rz, 4), yr = cast(LP.x + rx, LP.y + 1.5, LP.z + rz, 4);
+          if (!Number.isNaN(yl) && !Number.isNaN(yr)) { const cs = Math.abs(yl - yr) / 1.6; vals.cross.push(cs); note(S2.cross, cs, Lm.maxCrossSlope, where(s)); }
+        }
+      }
+      // kinks: second difference over 0.5 m (a seam, a bump, a deck join); grades on a 4 m baseline
+      for (let i = 1; i + 1 < n; i++) {
+        if (Number.isNaN(ys[i - 1] + ys[i] + ys[i + 1])) continue;
+        const k = Math.abs(ys[i + 1] - 2 * ys[i] + ys[i - 1]);
+        vals.step.push(k);
+        note(S2.step, k, Lm.maxStep, where(i * DS));
+      }
+      const g = new Float32Array(n).fill(NaN);
+      for (let i = 4; i + 4 < n; i++) if (!Number.isNaN(ys[i - 4] + ys[i + 4])) g[i] = (ys[i + 4] - ys[i - 4]) / 4;
+      for (let i = 4; i + 4 < n; i++) {
+        if (Number.isNaN(g[i])) continue;
+        vals.grade.push(Math.abs(g[i]));
+        note(S2.grade, Math.abs(g[i]), isMain ? Lm.maxGradeMain : isSvc ? Lm.maxGradeService : Lm.maxGrade, where(i * DS));
+        if (i + 2 < n && i >= 2 && !Number.isNaN(g[i - 2] + g[i + 2])) {
+          const gc = Math.abs(g[i + 2] - g[i - 2]) / 2;
+          vals.gradeChange.push(gc);
+          note(S2.gradeChange, gc, isMain ? Lm.maxGradeChangeMain : isSvc ? Lm.maxGradeChangeService : Lm.maxGradeChange, where(i * DS));
+        }
+      }
+    }
+    // junctions: arriving lane end -> leaving lane start, a straight chord (the plateau and its seams with the arms)
+    for (const nd of N) {
+      if (!nd.junction) continue;
+      for (const ia of nd.in) for (const ob of nd.out) {
+        const a = E[ia], b = E[ob];
+        if (b.twin === a.id && !nd.deadEnd) continue;
+        M.laneSample(a, a.len - Math.min(a.len, 3), LP);
+        const ax = LP.x, ay = LP.y, az = LP.z;
+        M.laneSample(b, Math.min(b.len, 3), LP);
+        const bx = LP.x, by = LP.y, bz = LP.z;
+        const L = Math.hypot(bx - ax, bz - az);
+        if (L < 1) continue;
+        const m = Math.ceil(L / DS);
+        let y0 = NaN, y1 = NaN, worst = 0, wx = 0, wz = 0;
+        for (let i = 0; i <= m; i++) {
+          const t = i / m, x = ax + (bx - ax) * t, z = az + (bz - az) * t, yy = ay + (by - ay) * t;
+          const y = cast(x, yy + 1.5, z, 4);
+          if (!Number.isNaN(y + y0 + y1)) { const k = Math.abs(y - 2 * y1 + y0); if (k > worst) { worst = k; wx = x; wz = z; } }
+          y0 = y1; y1 = y;
+        }
+        note(S2.junction, worst, Lm.maxJunctionStep, [`${a.name ?? a.roadId} -> ${b.name ?? b.roadId}`, nd.id, Math.round(wx), Math.round(wz)]);
+      }
+    }
+    // walk links: steps along the way people walk (kerbs at crossings are 0.15 m)
+    const W = c.walk.nodes;
+    for (const a of W) for (const j of a.nbrs) {
+      if (j < a.id) continue;
+      const b = W[j];
+      const L = Math.hypot(b.x - a.x, b.z - a.z);
+      if (L < 0.5) continue;
+      const m = Math.ceil(L / DS);
+      let prev = NaN, worst = 0, wx = 0, wz = 0;
+      for (let i = 0; i <= m; i++) {
+        const t = i / m, x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t, yy = a.y + (b.y - a.y) * t;
+        const y = cast(x, yy + 1.2, z, 3);
+        if (!Number.isNaN(y + prev) && Math.abs(y - prev) > worst) { worst = Math.abs(y - prev); wx = x; wz = z; }
+        prev = y;
+      }
+      note(S2.walk, worst, Lm.maxWalkStep, [a.kind + '-' + b.kind, a.street ?? '', Math.round(wx), Math.round(wz)]);
+      if (worst > 0.45) note(S2.walkWall, worst, 0.45, [a.kind + '-' + b.kind, a.street ?? '', Math.round(wx), Math.round(wz)]);
+    }
+    const pct = (a, q) => { if (!a.length) return 0; a.sort((x, y) => x - y); return +a[Math.min(a.length - 1, Math.floor(a.length * q))].toFixed(3); };
+    curEnd = false;
+    const out = { limits: Lm, lanes: E.length, metrics: {}, areas: {}, byClass: byCls };
+    // where the over-limit samples are: 250 m cells
+    for (const [k, st] of Object.entries(S2)) for (const wv of st.worst) { const key = `${Math.floor(wv[wv.length - 2] / 250) * 250},${Math.floor(wv[wv.length - 1] / 250) * 250}`; out.areas[key] = (out.areas[key] ?? 0) + 1; }
+    for (const [k, st] of Object.entries(S2)) {
+      st.worst.sort((a, b) => b[0] - a[0]);
+      out.metrics[k] = { samples: st.n, over: st.over, worst: st.worst.slice(0, 12), sample: st.sample ?? [] };
+      if (vals[k]) Object.assign(out.metrics[k], { p50: pct(vals[k], 0.5), p99: pct(vals[k], 0.99), p999: pct(vals[k], 0.999), max: pct(vals[k], 1) });
+    }
+    return out;
+  });
+}
+
+// Drive test (MAP=georgetown node scripts/shot.mjs x roaddrive): the player's car driven physically along every
+// major street (primary, secondary, tertiary, parkway; lanes chained straight on through junctions), at street speed,
+// steered by a path follower that only turns the body about the vertical (suspension, pitch and roll stay physical).
+// Measures the chassis' vertical acceleration and the time with all four wheels off the ground; reports the worst
+// streets and places against TUNING.geo.roadLimits (maxVertAccel, maxAirtime). Other traffic is moved away first.
+export async function roaddrive(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, M = window.__ocMap, Lm = M.roadLimits;
+    const E = c.roads.edges, N = c.roads.nodes;
+    const STEP = 1 / 60;
+    const major = new Set(['primary', 'secondary', 'tertiary', 'parkway']);
+    const dir = (e, atEnd) => { const p = e.pts, n = p.length; return atEnd ? Math.atan2(p[n - 3] - p[n - 6], p[n - 1] - p[n - 4]) : Math.atan2(p[3] - p[0], p[5] - p[2]); };
+    const dAng = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+    const next = (e) => N[e.to].out.map((i) => E[i]).filter((n) => n.name && n.name === e.name && major.has(n.cls) && n.to !== e.from && !n.parking && dAng(dir(n, false), dir(e, true)) < 0.5).sort((a, b) => dAng(dir(a, false), dir(e, true)) - dAng(dir(b, false), dir(e, true)) || b.lane - a.lane)[0];
+    const prev = (e) => N[e.from].in.map((i) => E[i]).find((p) => p.name === e.name && major.has(p.cls) && p.from !== e.to && dAng(dir(p, true), dir(e, false)) < 0.5);
+    // chains of lanes along each major street (the inner lane: the kerbside one may be a parking lane), longest first,
+    // each lane used once
+    const used = new Set();
+    const chains = [];
+    for (const e of E) {
+      if (!major.has(e.cls) || !e.name || e.lane !== e.lanesSameDir - 1 || e.parking || used.has(e.id) || prev(e)) continue;
+      const list = [];
+      for (let k = e, guard = 0; k && !used.has(k.id) && guard < 200; k = next(k), guard++) { list.push(k); used.add(k.id); }
+      const len = list.reduce((s, q) => s + q.len, 0);
+      if (len >= 120) chains.push({ name: e.name, cls: e.cls, list, len });
+    }
+    chains.sort((a, b) => b.len - a.len);
+    const LP = { x: 0, y: 0, z: 0, heading: 0 };
+    const pathOf = (ch) => {
+      const P = [];
+      for (const e of ch.list) for (let s = 0; s < e.len; s += 1) { M.laneSample(e, s, LP); P.push(LP.x, LP.y, LP.z); }
+      return P;
+    };
+    // the player's car
+    let v = w.player.vehicle;
+    if (!v) {
+      v = w.vehicles.find((q) => q.owned) ?? w.vehicles[0];
+      window.__mh.put(w.player.body, v.px - Math.cos(v.heading) * 2.2, v.pz + Math.sin(v.heading) * 2.2, 1.2);
+      window.__ocRun(0.2); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+      v = w.player.vehicle ?? v;
+    }
+    // other traffic, parked cars and people out of the way (a collision would skew the numbers)
+    for (const t of w.traffic) if (t.body) t.body.setTranslation({ x: t.px, y: -500, z: t.pz }, false);
+    for (const q of w.vehicles) if (q !== v) { q.body.setTranslation({ x: q.px, y: -600, z: q.pz }, false); q.body.setLinvel({ x: 0, y: 0, z: 0 }, false); q.body.setBodyType(w.R.RigidBodyType.Fixed, false); }
+    w.peds.length = 0;
+    w.traffic.length = 0;
+    const out = [];
+    let worstA = 0, worstAir = 0, overA = 0, overAir = 0, samples = 0, metres = 0;
+    const budgetM = 30000;
+    for (const ch of chains) {
+      if (metres > budgetM) break;
+      const P = pathOf(ch), n = P.length / 3;
+      if (n < 30) continue;
+      const target = Math.min(ch.cls === 'parkway' ? 18 : 13.9, ch.list[0].speed || 13.9);
+      const h0 = Math.atan2(P[9] - P[0], P[11] - P[2]);
+      // a fresh, drivable car each run (a collision in the previous run may have wrecked it)
+      v.health = v.maxHealth; v.wrecked = false; v.driven = true; v.upsideTimer = 0;
+      v.body.setTranslation({ x: P[3], y: P[4] + 0.9, z: P[5] }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h0 / 2), z: 0, w: Math.cos(h0 / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.body.setLinvel({ x: Math.sin(h0) * target, y: 0, z: Math.cos(h0) * target }, true);
+      v.prevVel?.set(Math.sin(h0) * target, 0, Math.cos(h0) * target);
+      let idx = 1, t = 0, vyPrev = 0, air = 0, maxA = 0, maxAir = 0, at = null, airAt = null, lost = false, crash = null, spPrev = target;
+      const recent = []; // last 0.4 s of samples: dropped if a collision follows (its spike is not the road's)
+      const vys = [];
+      const K = w.input.keys;
+      for (let step = 0; step < 60 * 400; step++) {
+        const p = v.body.translation();
+        let bd = Infinity, bi = idx;
+        for (let i = idx; i < Math.min(n, idx + 40); i++) { const d = Math.hypot(P[i * 3] - p.x, P[i * 3 + 2] - p.z); if (d < bd) { bd = d; bi = i; } }
+        idx = bi;
+        if (bd > 6) { lost = true; break; }
+        if (idx >= n - 8) break;
+        const la = Math.min(n - 1, idx + 7);
+        const want = Math.atan2(P[la * 3] - p.x, P[la * 3 + 2] - p.z);
+        const r = v.body.rotation();
+        const fwdx = 2 * (r.x * r.z + r.w * r.y), fwdz = 1 - 2 * (r.x * r.x + r.y * r.y);
+        const cur = Math.atan2(fwdx, fwdz);
+        const err = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
+        const d = err * 0.25;
+        const cy = Math.cos(d / 2), sy = Math.sin(d / 2);
+        v.body.setRotation({ w: cy * r.w - sy * r.y, x: cy * r.x + sy * r.z, y: cy * r.y + sy * r.w, z: cy * r.z - sy * r.x }, true);
+        const lv = v.body.linvel();
+        const cd = Math.cos(d), sd = Math.sin(d);
+        v.body.setLinvel({ x: lv.x * cd + lv.z * sd, y: lv.y, z: -lv.x * sd + lv.z * cd }, true);
+        const sp = Math.hypot(lv.x, lv.z);
+        if (sp < target - 0.5) { K.add('KeyW'); K.delete('KeyS'); } else if (sp > target + 2) { K.delete('KeyW'); K.add('KeyS'); } else { K.delete('KeyW'); K.delete('KeyS'); }
+        window.__ocStep(1);
+        t += STEP;
+        // vertical acceleration felt in the cabin: the change of vertical speed over 0.1 s (a single 1/60 s step is
+        // contact-solver noise)
+        const vy = v.body.linvel().y;
+        vys.push(vy);
+        if (vys.length > 7) vys.shift();
+        const ay = vys.length === 7 ? (vys[6] - vys[0]) / (6 * STEP) : 0;
+        vyPrev = vy;
+        let contacts = 0;
+        for (let i = 0; i < 4; i++) if (v.ctrl.wheelIsInContact(i)) contacts++;
+        const lv2 = v.body.linvel(), sp2 = Math.hypot(lv2.x, lv2.z);
+        if (t < 1.5) { air = 0; spPrev = sp2; continue; }
+        if (spPrev - sp2 > 0.8 || (sp2 < target * 0.4 && t > 3)) { crash = [Math.round(p.x), Math.round(p.z)]; break; } // hit something
+        spPrev = sp2;
+        air = contacts === 0 ? air + STEP : 0;
+        recent.push([ay, air, Math.round(p.x), Math.round(p.z)]);
+        if (recent.length > 24) {
+          const [a0, air0, x0, z0] = recent.shift();
+          samples++;
+          if (Math.abs(a0) > Math.abs(maxA)) { maxA = a0; at = [x0, z0]; }
+          if (Math.abs(a0) > Lm.maxVertAccel) overA++;
+          if (air0 > maxAir) { maxAir = air0; airAt = [x0, z0]; }
+          if (air0 > Lm.maxAirtime && air0 - STEP <= Lm.maxAirtime) overAir++;
+        }
+      }
+      K.delete('KeyW'); K.delete('KeyS');
+      metres += (idx / n) * ch.len;
+      worstA = Math.max(worstA, Math.abs(maxA));
+      worstAir = Math.max(worstAir, maxAir);
+      out.push({ street: ch.name, cls: ch.cls, len: Math.round(ch.len), driven: Math.round((idx / n) * ch.len), maxVertAccel: +maxA.toFixed(2), at, maxAirtime: +maxAir.toFixed(3), airAt, lost, crash });
+    }
+    out.sort((a, b) => Math.abs(b.maxVertAccel) - Math.abs(a.maxVertAccel));
+    return { limits: { maxVertAccel: Lm.maxVertAccel, maxAirtime: Lm.maxAirtime }, chains: chains.length, drivenKm: +(metres / 1000).toFixed(1), samples, worstVertAccel: +worstA.toFixed(2), worstAirtime: +worstAir.toFixed(3), samplesOverAccel: overA, airEventsOver: overAir, pass: worstA <= Lm.maxVertAccel && worstAir <= Lm.maxAirtime, runs: out };
+  });
+}
+
 // Gate drive on the real graph (MAP=georgetown node scripts/shot.mjs x geodrive): your car drives Key Bridge -> M St
 // east -> Pennsylvania Ave -> once round Washington Circle -> K St west to the waterfront, steered by a simple
 // autopilot that only presses W/A/S/D/Space (no teleports after the start), stopping at red lights, waiting at stop
@@ -1880,10 +2788,13 @@ export async function geodrive(page, S) {
     for (const n of wps) if (!n || !go(n.id)) return { error: `no route to ${n ? n.id : '?'}`, route };
     // into the circle from Pennsylvania Ave (the entry nearest the end of the route so far)
     const here = N[E[route[route.length - 1]].to];
-    const entry = N.filter((n) => n.roundabout && namesAt(n).has('Pennsylvania Ave NW')).sort((a, b) => Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z))[0];
+    // (real data: each carriageway of an avenue meets the ring at its own node, so look for one with an arm coming in)
+    const armIn = (n, name) => n.roundabout && n.in.some((i) => !E[i].roundabout && E[i].name === name && traffic(E[i]));
+    const armOut = (n, name) => n.roundabout && n.out.some((i) => !E[i].roundabout && E[i].name === name && traffic(E[i]));
+    const entry = N.filter((n) => armIn(n, 'Pennsylvania Ave NW')).sort((a, b) => Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z))[0];
     if (!entry || !go(entry.id)) return { error: 'no way into the circle', route };
     // once round (outer lane) and on to the K St exit on the west side
-    const kExit = N.filter((n) => n.roundabout && namesAt(n).has('K St NW')).sort((a, b) => a.x - b.x)[0];
+    const kExit = N.filter((n) => armOut(n, 'K St NW')).sort((a, b) => a.x - b.x)[0];
     let at = entry.id, ringSteps = 0;
     for (let k = 0; k < 20; k++) {
       const e = E.find((q) => q.roundabout && q.from === at && J.edgeRank[q.id] === 0);
@@ -2404,5 +3315,72 @@ export async function parkcheck(page, S) {
     const v = best.v;
     const prompt = w.player.prompt.replace(/<[^>]+>/g, '');
     return { stats: { cars: st.cars, kerb: st.kerb, lot: st.lot, byClass: st.byClass, poolGrown: st.poolGrown }, per100: per100.slice(0, 14), lots, atMst, nearest: { dist: Math.round(bd), street: best.street, standIn: v ? `${v.type} #${v.id}` : null, prompt, locked: best.locked, owner: best.owner, local: best.ownerLocal } };
+  });
+}
+
+// Look screenshots from the game itself (cars, people, weather, the chosen quality). URL params (through the seed
+// argument: `1337&lookview=mst&lookhour=21.6&weather=rain&quality=low`): lookview (a street view below), lookhour,
+// lookout (file name, default screenshots/33-look-game.png). Renders single frames with the camera fixed at the view
+// (software GL is slow: the animation loop is held while the shot is taken), writes the canvas as PNG, then restores.
+export async function lookgame(page, S) {
+  await S.start(page);
+  const res = await page.evaluate(() => {
+    const w = window.__oc, q = new URLSearchParams(location.search);
+    // x, height above ground, z (camera), look-at x, height above ground, z, default hour
+    const V = {
+      mst: [-262, 1.8, 158.4, -120, 4.5, 154.5, 15.5],
+      rowhouses: [12, 1.8, -9.6, 160, 3.0, -11.6, 9.5],
+      waterfront: [-140, 26, 640, 60, 2, 470, 17.5],
+      grid: [16, 2.2, -200, 16, 3, -120, 15.5],
+    };
+    const name = q.get('lookview') ?? (w.city.id === 'grid' ? 'grid' : 'mst');
+    const v = V[name];
+    w.dayNight.hour = Number(q.get('lookhour') ?? v[6]);
+    if (name !== 'grid') window.__mh.put(w.player.body, v[0] + 1.5, v[2] + 1.5, 1.2);
+    window.__ocRun(1.5);
+    const gy = (x, z) => w.city.heightAt(x, z);
+    // the grid city: the normal chase camera behind you at the spawn; the real maps: the fixed street view
+    if (name === 'grid') { w.cam.override = null; window.__ocRun(1); }
+    else w.cam.override = { px: v[0], py: gy(v[0], v[2]) + v[1], pz: v[2], lx: v[3], ly: gy(v[3], v[5]) + v[4], lz: v[5] };
+    window.__ocFrames(2, true);
+    // hold the animation loop's own rendering while capturing
+    const r = w.renderer, orig = r.render.bind(r);
+    window.__lookOrig = orig;
+    r.render = () => {};
+    const t0 = performance.now();
+    orig(w.scene, w.camera);
+    const url = r.domElement.toDataURL('image/png');
+    return { name, hour: w.dayNight.hour, quality: w.settings.quality, weather: w.weather.kind, wet: +w.look.uniforms.uWet.value.toFixed(2), calls: r.info.render.calls, tris: r.info.render.triangles, frameMs: Math.round(performance.now() - t0), url, out: q.get('lookout') };
+  });
+  const { writeFileSync } = await import('node:fs');
+  const file = res.out ? `screenshots/${res.out}.png` : 'screenshots/33-look-game.png';
+  writeFileSync(file, Buffer.from(res.url.split(',')[1], 'base64'));
+  await page.evaluate(() => { const w = window.__oc; w.renderer.render = window.__lookOrig; w.cam.override = null; });
+  delete res.url;
+  return { ...res, file };
+}
+
+// Shader compile stalls: after the boot warm-up, visiting the map by day, at night and in the rain must not compile a
+// single new program (a first-time compile mid-game is a frame spike). Renders two frames per stop.
+export async function lookstall(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, r = w.renderer;
+    const stops = w.city.id === 'grid'
+      ? [[16, -200], [200, -100], [-200, 50], [0, 60], [300, 200]]
+      : [[-240, 160], [-760, 200], [-140, 520], [60, -10], [900, 440], [-400, 240], [300, 120]];
+    const programs0 = r.info.programs.length;
+    const log = [];
+    const visit = (label) => {
+      for (const [x, z] of stops) {
+        window.__mh.put(w.player.body, x, z, 1.2);
+        window.__ocFrames(2, true);
+      }
+      log.push({ label, programs: r.info.programs.length });
+    };
+    w.dayNight.hour = 13; visit('day');
+    w.dayNight.hour = 22; visit('night');
+    w.weather.kind = 'rain'; w.weather.look.wet = 1; w.weather.look.rain = 0.8; w.weather.look.cloud = 0.8; visit('rain');
+    return { programs0, log, newPrograms: r.info.programs.length - programs0, envRefreshes: w.dayNight.env.refreshes };
   });
 }

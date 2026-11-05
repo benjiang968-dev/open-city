@@ -5,18 +5,20 @@
 // Everything is deterministic from the building id; only shop names use the world seed.
 import * as THREE from 'three';
 import type { GeoDoc, GeoBuilding, Pt } from './geoDoc';
-import { centroid, clamp, hashStr, lerp, project, rand, type SegGrid } from './geoDoc';
+import { centroid, clamp, hashStr, lerp, pointInPoly, project, rand, type SegGrid } from './geoDoc';
 import { lin, mixc, shade, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
 import type { RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
-import { TILE, makeFacadeTexture } from './facadeTex';
+import { TILE } from './facadeTex';
 import { POI_NAMES, poiName } from '../../data/poiNames';
+import { TUNING } from '../../tuning';
+import { facadeColour } from '../render/palette';
 
 // ----------------------------------------------------------------------------------------- art constants
 const STOREY = 3.2; // m
 const PARAPET = 0.7; // m of wall above the top floor on flat roofs
 const WEST_END_X = 380;
-const hx = (h: number) => lin(h);
+const hx = (h: number) => facadeColour(h); // packed linear, tagged with the wall / roof surface (render/palette.ts)
 const ROW_COLOURS = [
   [0xad5844, 7], [0xb8664e, 5], [0x9e4c3c, 4], [0xc2735a, 3], // red brick
   [0xead48f, 3], [0xf0e3c4, 3], [0xa9c2d4, 2], [0xa7c4a2, 2], [0xe7b9b4, 2], [0xc9b9d8, 1], [0xf3efe6, 2], [0xe9c79c, 2], [0x9fb4a0, 1], [0xd9a98d, 1],
@@ -57,53 +59,6 @@ const LANDMARKS: { key: string; lat: number; lon: number; type: string; minH?: n
 ];
 
 // ======================================================================================================
-export function createFacadeMaterial(litWindowMat: THREE.MeshBasicMaterial, anisotropy: number): THREE.MeshStandardMaterial {
-  const { tex, glass } = makeFacadeTexture();
-  tex.anisotropy = glass.anisotropy = anisotropy; // fixed at build: changing it later re-uploads the arrays
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.02 });
-  mat.userData.facadeTex = tex;
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uFacade = { value: tex };
-    sh.uniforms.uGlass = { value: glass };
-    sh.uniforms.uWin = { value: litWindowMat.color }; // the day/night system drives this colour
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 aFac;\nflat varying vec4 vFac;\nvarying vec2 vFUv;')
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvFac = aFac;\nvFUv = uv;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>
-uniform highp sampler2DArray uFacade;
-uniform highp sampler2DArray uGlass;
-uniform vec3 uWin;
-flat varying vec4 vFac;
-varying vec2 vFUv;
-// integer hash of a window cell and the building's seed: exact, so a window is either lit or not
-float fHash(vec2 c, float seed){
-  uint h = uint(int(c.x) + 4096) * 73856093u ^ uint(int(c.y) + 4096) * 19349663u ^ uint(seed) * 83492791u;
-  h ^= h >> 13u; h *= 0x5bd1e995u; h ^= h >> 15u;
-  return float(h & 1023u) / 1023.0;
-}`)
-      .replace('#include <map_fragment>', `
-vec2 fCell = floor(vFUv);
-float fLayer = (abs(fCell.x - vFac.z) < 0.5 && fCell.y < 0.5) ? vFac.y : vFac.x;
-vec4 fTex = texture(uFacade, vec3(vFUv, fLayer));
-float fGlassM = texture(uGlass, vec3(vFUv, fLayer)).r;`)
-      .replace('#include <color_fragment>', `
-float fTint = fTex.a;
-float fGlass = fGlassM;
-diffuseColor.rgb *= fTex.rgb * mix(vec3(1.0), vColor.rgb, fTint);`)
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(roughness, 0.22, fGlass);')
-      .replace('#include <emissivemap_fragment>', `
-float fNight = clamp((uWin.r - 0.22) / 0.78, 0.0, 1.0);
-float fShare = 0.34 + 0.18 * fract(vFac.w * 0.137);
-fShare += fCell.y < 0.5 ? 0.3 : 0.0; // ground floors (shops) are lit more often
-float fLit = step(fHash(fCell, vFac.w), fShare);
-vec2 fW = fwidth(vFUv);
-fLit = mix(fLit, fShare, smoothstep(0.25, 0.7, max(fW.x, fW.y)));
-totalEmissiveRadiance += uWin * vec3(1.0, 0.86, 0.62) * fGlass * fLit * fNight * (0.55 + 0.4 * fract(vFUv.y));`);
-  };
-  return mat;
-}
-
 /** Building footprints into the raster (kind BUILDING, terrain mesh skipped under them). */
 export function rasterizeBuildings(doc: GeoDoc, ras: GeoRaster, skip: Set<string>) {
   const band = ras.band, k = ras.k;
@@ -156,6 +111,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
 
   let extraTris = 0;
   const stoopBottoms: number[] = [];
+  /** per stoop: door x, z on the wall line, landing height, outward normal x, z, reach of the last step, foot height, steps */
+  const stoopInfo: number[] = [];
   for (const b of doc.buildings) {
     if (skip.has(b.id)) continue;
     const key = special.get(b.id) ?? '';
@@ -163,6 +120,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   }
 
   function buildOne(b: GeoBuilding, key: string) {
+    chunks.tag('untagged');
     const P = b.pts;
     const n = P.length;
     const [cx, cz] = centroid(P);
@@ -304,6 +262,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       if (cornice && (isFront || w.street) && roof === 'flat') {
         const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
         const cc = t === 'terrace' || t === 'house' || t === 'retail' ? lin(0xf2efe6) : shade(col, 0.82);
+        chunks.tag('overhead');
         grd.obox(mx + w.nx * 0.18, yTop + PARAPET - 0.05, mz + w.nz * 0.18, w.len / 2 + 0.08, 0.3, yTop + PARAPET + 0.38, w.ux, w.uz, cc, shade(cc, 0.9), true);
         grd.obox(mx + w.nx * 0.08, yTop - 0.1, mz + w.nz * 0.08, w.len / 2, 0.14, yTop + 0.12, w.ux, w.uz, cc, shade(cc, 0.9), true);
       }
@@ -312,6 +271,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         const bw = w.len / nb;
         const sillTile = tileUp === TILE.ROW_SHUT || tileUp === TILE.ROW_WIN || tileUp === TILE.UNIV || tileUp === TILE.ARCH;
         if (sillTile) {
+          chunks.tag('overhead');
           for (let f = 1; f < levels; f++) {
             const ys = y0 + gH + (f - 1) * STOREY + STOREY * 0.22;
             for (let k = 0; k < nb; k++) {
@@ -337,6 +297,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           const stepH = stoop / steps;
           if (rise >= 0.2 && rise <= 2.4) {
           const sc = lin(0xb8b1a4);
+          chunks.tag('stoop');
           det.obox(px + w.nx * 0.55, y0 - 0.25, pz + w.nz * 0.55, 0.75, 0.55, y0, w.ux, w.uz, sc, shade(sc, 0.9));
           for (let k = 1; k < steps; k++) {
             const out = 1.1 + k * 0.3;
@@ -345,6 +306,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           // iron rails: a post at each end and a rail following the steps down
           const iron = lin(0x222428);
           const outN = 1.1 + (steps - 1) * 0.3;
+          chunks.tag('stoopRail');
           for (const sd of [-1, 1]) {
             const rx = px + w.ux * 0.72 * sd, rz = pz + w.uz * 0.72 * sd;
             det.obox(rx + w.nx * 0.2, y0, rz + w.nz * 0.2, 0.03, 0.03, y0 + 0.95, w.ux, w.uz, iron);
@@ -353,9 +315,12 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
             det.quad(ax - w.ux * 0.03, y0 + 0.95, az - w.uz * 0.03, ax + w.ux * 0.03, y0 + 0.95, az + w.uz * 0.03, bx + w.ux * 0.03, y0 - stoop + 0.95, bz + w.uz * 0.03, bx - w.ux * 0.03, y0 - stoop + 0.95, bz - w.uz * 0.03, iron, 0, 1, 0);
             det.quad(ax, y0 + 0.95, az, bx, y0 - stoop + 0.95, bz, bx, y0 - stoop + 0.89, bz, ax, y0 + 0.89, az, iron, w.ux * sd, 0, w.uz * sd);
           }
+          stoopColliders(px, pz, w, y0, stepH, outN, Math.min(gy, yMin) - 0.3);
           stoopBottoms.push(px + w.nx * outN, y0 - stoop, pz + w.nz * outN, 0);
+          stoopInfo.push(px, pz, y0, w.nx, w.nz, outN, y0 - stoop, steps);
           }
           // door canopy
+          chunks.tag('overhead');
           det.obox(px + w.nx * 0.25, y0 + 2.75, pz + w.nz * 0.25, 0.8, 0.25, y0 + 2.9, w.ux, w.uz, lin(0xf2efe6));
         }
       }
@@ -367,6 +332,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       for (let i = 1; i + 1 < n; i++) froof(fac, P[0], P[i], P[i + 1], yr, roofCol, seedByte);
       // rooftop clutter: chimneys on rowhouses, plant on bigger roofs
       const r2 = rand(hashStr(b.id + 'c'));
+      chunks.tag('roof');
       if (t === 'terrace' || t === 'house') {
         const w = walls.find((q) => q.party) ?? walls[1];
         const s = 0.3 + r2() * 0.4;
@@ -379,8 +345,10 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         }
       }
     } else {
+      chunks.tag('roof');
       pitchedRoof(fac, grd, walls, P, yTop, roof, roofCol, col, plainTile, seedByte, key);
     }
+    chunks.tag('roof'); // landmark extras stand on the roofs (arcade and portico tag their own parts)
     // ---- landmark extras
     if (key === 'healy-tower') clockTower(walls, P, cx, cz, yTop, col);
     if (t === 'church' && key !== 'healy') steeple(front, walls, cx, cz, yTop, col, rnd);
@@ -415,6 +383,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       const gH = ground || STOREY;
       const ys = y0 + gH - 0.42;
       const slot = signs.slot(name);
+      chunks.tag('overhead');
       signBuf.quad(sx + w.nx * 0.07, ys, sz + w.nz * 0.07, w.ux, w.uz, w.nx, w.nz, sw, 0.62, slot, signs);
       grd.obox(sx + w.nx * 0.03, ys - 0.36, sz + w.nz * 0.03, sw / 2 + 0.06, 0.04, ys + 0.36, w.ux, w.uz, lin(0x1f2226));
       if (AWNING_CATS.test(p.cat) && ground >= 4) {
@@ -433,13 +402,46 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       hv = Math.max(hv, Math.abs((p[0] - cx) * w0.nx + (p[1] - cz) * w0.nz));
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
-    if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
-    else if (!phys.prism(P.flat(), yMin, top)) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
+    else {
+      // a prism is a convex hull: over an L- or U-shaped footprint (a third of the real buildings) it filled the notch,
+      // an invisible wall across courtyards, driveways and pavements. Concave footprints are cut into convex pieces.
+      let made = 0;
+      for (const piece of convexPieces(P)) if (phys.prism(piece.flat(), yMin, top, 'building')) made++;
+      if (!made) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
+    }
   }
 
   // -------------------------------------------------------------------------------------------- helpers
+  /**
+   * A stoop's colliders: one convex ramp under the steps (flat on the landing, then down through the middle of each
+   * tread, so feet sink or float at most half a riser; a half-riser lip at the foot that autostep takes), and a thin
+   * slab under each iron rail. (px, pz): the door on the wall line; outN: how far the last step reaches out.
+   */
+  function stoopColliders(px: number, pz: number, w: Wall, y0: number, stepH: number, outN: number, bottom: number) {
+    const HW = 0.75; // half width of the landing
+    const flat = 0.95; // m out from the wall where the ramp starts down (the first tread's middle line - one tread)
+    const yFoot = y0 - stepH * ((outN - flat) / 0.3);
+    const prof: [number, number][] = [[-0.05, y0], [flat, y0], [outN, yFoot], [outN, bottom], [-0.05, bottom]];
+    const pts: number[] = [];
+    for (const sd of [-1, 1]) for (const [o, y] of prof) pts.push(px + w.nx * o + w.ux * HW * sd, y, pz + w.nz * o + w.uz * HW * sd);
+    phys.hull(pts, 'stoop');
+    // rails: from the post by the door (0.2 m out, rail 0.95 m above the landing) to the post at the foot
+    const yB = y0 - stepH * Math.round((outN - 1.1) / 0.3 + 1); // the pavement at the foot
+    for (const sd of [-1, 1]) {
+      const r: number[] = [];
+      const o0 = 0.17, o1 = outN + 0.03; // post to post, posts included
+      for (const t of [-0.03, 0.03]) {
+        const ox = w.ux * (0.72 * sd + t), oz = w.uz * (0.72 * sd + t);
+        r.push(px + w.nx * o0 + ox, y0 + 0.95, pz + w.nz * o0 + oz, px + w.nx * o1 + ox, yB + 0.95, pz + w.nz * o1 + oz);
+        r.push(px + w.nx * o1 + ox, yB - 0.1, pz + w.nz * o1 + oz, px + w.nx * o0 + ox, y0 - 0.2, pz + w.nz * o0 + oz);
+      }
+      phys.hull(r, 'stoopRail');
+    }
+  }
   function fquad(buf: MeshBuf, w: Wall, y0: number, y1: number, u0: number, u1: number, v0: number, v1: number, col: number, tileA: number, tileB: number, alt: number, seedByte: number) {
     if (y1 - y0 < 0.02) return;
+    if (buf.rec) { const k = buf.rec.kind; buf.rec.tag('building'); buf.rec.wall(w.ax, w.az, w.bx, w.bz, y0, y1, y0, y1, w.nx, w.nz); buf.rec.kind = k; }
     buf.exA = tileA; buf.exB = tileB; buf.exC = alt; buf.exD = seedByte;
     const nx = w.nx, nz = w.nz;
     // (b-a) x up = (-dz, 0, dx); start from the end that makes it face outward, so u also runs left to right as seen
@@ -521,14 +523,23 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     if (Math.abs(long.ux * ax + long.uz * az) < 0.5) { ax = long.ux; az = long.uz; if ((front.ax + front.bx) / 2 - cx < 0 === ax > 0 && Math.abs(ax) > 0.3) { ax = -ax; az = -az; } }
     const half = Math.max(...walls.map((w) => Math.abs(((w.ax + w.bx) / 2 - cx) * ax + ((w.az + w.bz) / 2 - cz) * az)));
     const ts = Math.min(3.4, front.len * 0.22 + 1.5);
-    const tx = cx + ax * (half - ts * 0.6), tz = cz + az * (half - ts * 0.6);
-    const towerTop = yTop + 7 + rnd() * 5;
+    // the tower stands on the church's own footprint (it may project a little from the front wall) and off the road:
+    // on an irregular (real) outline the end of the long axis could lie outside it, and a tower stood in Q St. Step
+    // back toward the middle until it fits.
+    const foot: Pt[] = walls.map((w) => [w.ax, w.az]);
+    const ux = -az, uz = ax;
+    const cornersAt = (x: number, z: number): Pt[] => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b2]) => [x + ux * a * ts + ax * b2 * ts, z + uz * a * ts + az * b2 * ts]);
+    let along = half - ts * 0.6;
+    const fits = (d: number) => pointInPoly(cx + ax * d, cz + az * d, foot) && cornersAt(cx + ax * d, cz + az * d).every((p) => !(ras.kindAt(p[0], p[1]) & K.ROAD));
+    while (along > 0 && !fits(along)) along -= 0.5;
+    const towerTop = yTop + 7 + rnd() * 5; // (drawn before the fit test result is used: the building's random stream stays the same)
+    if (!fits(Math.max(0, along))) return;
+    const tx = cx + ax * Math.max(0, along), tz = cz + az * Math.max(0, along);
     const fac = chunks.buf('facade', tx, tz);
     const grd = chunks.buf('ground', tx, tz);
     const sb = hashStr(String(tx)) & 255;
     const yBase = ras.heightAt(tx, tz) - 0.5;
-    const ux = -az, uz = ax;
-    const corners: Pt[] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b2]) => [tx + ux * a * ts + ax * b2 * ts, tz + uz * a * ts + az * b2 * ts]);
+    const corners: Pt[] = cornersAt(tx, tz);
     for (let i = 0; i < 4; i++) {
       const p = corners[i], q = corners[(i + 1) % 4];
       const L = Math.hypot(q[0] - p[0], q[1] - p[1]);
@@ -541,7 +552,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     }
     grd.obox(tx, towerTop, tz, ts + 0.25, ts + 0.25, towerTop + 0.5, ax, az, shade(col, 0.8));
     grd.pyramid(tx, towerTop + 0.5, tz, ts + 0.1, 9 + rnd() * 7, ax, az, lin(rnd() < 0.5 ? 0x4a5560 : 0x5f8f7c));
-    phys.box(tx, (yBase + towerTop) / 2, tz, ts, (towerTop - yBase) / 2, ts, ax, az);
+    phys.box(tx, (yBase + towerTop) / 2, tz, ts, (towerTop - yBase) / 2, ts, ax, az, 'tower');
   }
   function clockTower(walls: Wall[], P: Pt[], cx: number, cz: number, yTop: number, col: number) {
     const grd = chunks.buf('ground', cx, cz);
@@ -579,11 +590,18 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   function smokestack(b: GeoBuilding, cx: number, cz: number, yMin: number, ySide: number) {
     const grd = chunks.buf('ground', cx, cz);
     const r0 = 2.3, r1 = 1.5, h = Math.max(36, b.h);
+    chunks.tag('tower');
     grd.cyl(cx, yMin, cz, r0 + 0.4, r0 + 0.4, ySide - yMin + 1.5, 14, lin(0x8c7f70));
     grd.cyl(cx, ySide + 1.5, cz, r0, r1, h - 3, 14, lin(0x9b5a45));
     grd.cyl(cx, ySide + h - 3.5, cz, r1 + 0.25, r1 + 0.25, 1.2, 14, lin(0x7d4636));
     grd.cyl(cx, ySide + 6, cz, r0 - 0.05, r0 - 0.12, 0.8, 14, lin(0x7d4636), false);
-    phys.cylinder(cx, yMin, cz, r0 + 0.4, h + ySide - yMin);
+    phys.cylinder(cx, yMin, cz, r0 + 0.4, ySide + 1.5 - yMin, 'tower');
+    const ring: number[] = [];
+    for (let k = 0; k < 12; k++) {
+      const a = (k / 12) * Math.PI * 2, c = Math.cos(a), sn = Math.sin(a);
+      ring.push(cx + c * r0, ySide + 1.5, cz + sn * r0, cx + c * r1, ySide + h - 1.5, cz + sn * r1);
+    }
+    phys.hull(ring, 'tower');
   }
   function gableFront(grd: MeshBuf, x: number, z: number, ux: number, uz: number, hw: number, y: number, h: number, c: number) {
     grd.tri(x - ux * hw, y, z - uz * hw, x + ux * hw, y, z + uz * hw, x, y + h, z, c, -uz, 0, ux);
@@ -611,6 +629,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       }
       froof(fac, C[0], C[1], C[2], y1, lin(0x8a857c), seedByte);
       froof(fac, C[0], C[2], C[3], y1, lin(0x8a857c), seedByte);
+      phys.box(bx, (y0 + y1) / 2, bz, hu2, (y1 - y0) / 2, hv2, w0.ux, w0.uz, 'building'); // the setback tier on the roof
       return [bx, bz] as Pt;
     };
     box(0, -hv * 0.2, iu, iv, yTop + PARAPET - 0.2, top2, TILE.OFFICE);
@@ -618,17 +637,21 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     grd.pyramid(tx, top2 + 2 * STOREY, tz, 4.9, 6.5, w0.ux, w0.uz, lin(0x5f9c86));
     // arcade columns along the river side
     const rv = walls.reduce((m, w) => (w.nz > m.nz ? w : m), walls[0]);
+    chunks.tag('column');
     for (let s = 2; s < rv.len - 1; s += 4) {
       const px = rv.ax + rv.ux * s + rv.nx * 1.6, pz = rv.az + rv.uz * s + rv.nz * 1.6;
       const y = ras.heightAt(px, pz);
       chunks.buf('ground', px, pz).cyl(px, y, pz, 0.32, 0.3, 4.2, 8, lin(0xe9e1d0));
+      phys.cylinder(px, y - 0.3, pz, 0.32, 4.5, 'column');
     }
     const rmx = (rv.ax + rv.bx) / 2, rmz = (rv.az + rv.bz) / 2;
     const ry = ras.heightAt(rmx + rv.nx * 1.6, rmz + rv.nz * 1.6) + 4.2;
+    chunks.tag('overhead');
     grd.obox(rmx + rv.nx * 1.0, ry, rmz + rv.nz * 1.0, rv.len / 2, 1.1, ry + 0.45, rv.ux, rv.uz, lin(0xe9e1d0), shade(lin(0xe9e1d0), 0.9), true);
   }
   function balconyBands(walls: Wall[], y0: number, yTop: number, levels: number) {
     // continuous balcony slabs on every floor, toothed on the long sides: the distinctive banded block
+    chunks.tag('overhead');
     for (const w of walls) {
       const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
       const grd = chunks.buf('ground', mx, mz);
@@ -656,11 +679,16 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
     const grd = chunks.buf('ground', mx, mz);
     const h = Math.min(yTop - y0, 7.5);
+    chunks.tag('column');
     for (const s of [-3.6, -1.2, 1.2, 3.6]) {
       const px = mx + w.ux * s + w.nx * 2.4, pz = mz + w.uz * s + w.nz * 2.4;
       grd.cyl(px, y0, pz, 0.33, 0.28, h, 10, lin(0xf4f1ea));
+      phys.cylinder(px, y0 - 0.05, pz, 0.33, h + 0.05, 'column');
     }
+    chunks.tag('stoop'); // the portico's platform
     grd.obox(mx + w.nx * 1.4, y0 - 0.3, mz + w.nz * 1.4, 4.6, 1.5, y0, w.ux, w.uz, lin(0xd8d2c6));
+    phys.box(mx + w.nx * 1.4, y0 - 0.15, mz + w.nz * 1.4, 4.6, 0.15, 1.5, w.ux, w.uz, 'stoop');
+    chunks.tag('overhead');
     grd.obox(mx + w.nx * 1.3, y0 + h, mz + w.nz * 1.3, 4.6, 1.5, y0 + h + 0.7, w.ux, w.uz, lin(0xf4f1ea));
     gableFront(grd, mx + w.nx * 2.75, mz + w.nz * 2.75, w.ux, w.uz, 4.6, y0 + h + 0.7, 1.8, lin(0xf4f1ea));
   }
@@ -689,11 +717,61 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   return {
     extraTris,
     stoops: Float32Array.from(stoopBottoms),
+    stoopInfo: Float32Array.from(stoopInfo),
     update(_cam: THREE.Vector3, _detail: number) { /* chunk LOD is handled by the world */ },
   };
 }
 
 // ======================================================================================================
+/**
+ * A footprint as convex pieces: itself when convex (within a few cm), else its triangulation with neighbouring
+ * triangles merged while the union stays convex (Hertel-Mehlhorn). A footprint the triangulation cannot cover (self-
+ * intersecting data) stays whole (its hull, as before).
+ */
+function convexPieces(P: Pt[]): Pt[][] {
+  const n = P.length;
+  const cross = (a: Pt, b: Pt, c: Pt) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const area2 = (idx: number[]) => { let a = 0; for (let i = 0; i < idx.length; i++) { const p = P[idx[i]], q = P[idx[(i + 1) % idx.length]]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
+  const all = Array.from({ length: n }, (_, i) => i);
+  const sgn = Math.sign(area2(all)) || 1;
+  // convex enough: no vertex more than TUNING.geo.footprintNotchTol inside the line past it (a bay window or a shallow jog is
+  // filled, as the hull did; a courtyard, a driveway notch or an L's inner corner is not)
+  const convex = (idx: number[]) => {
+    for (let i = 0; i < idx.length; i++) {
+      const a = P[idx[(i + idx.length - 1) % idx.length]], b = P[idx[i]], c = P[idx[(i + 1) % idx.length]];
+      const L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
+      if ((cross(a, b, c) * sgn) / L < -TUNING.geo.footprintNotchTol) return false;
+    }
+    return true;
+  };
+  if (convex(all)) return [P];
+  if (n > 400) return [P];
+  const tris = THREE.ShapeUtils.triangulateShape(P.map((p) => new THREE.Vector2(p[0], p[1])), []);
+  let polys = tris.map((t) => (Math.sign(area2(t)) === sgn ? [...t] : [t[0], t[2], t[1]]));
+  const total = polys.reduce((s, q) => s + Math.abs(area2(q)), 0);
+  if (!polys.length || Math.abs(total - Math.abs(area2(all))) > Math.abs(area2(all)) * 0.02 + 1) return [P];
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let i = 0; i < polys.length && !merged; i++) {
+      const A = polys[i];
+      for (let j = i + 1; j < polys.length && !merged; j++) {
+        const B2 = polys[j];
+        for (let k = 0; k < A.length && !merged; k++) {
+          const a = A[k], b = A[(k + 1) % A.length];
+          const m = B2.findIndex((v, q) => v === b && B2[(q + 1) % B2.length] === a);
+          if (m < 0) continue;
+          // A from b round to a, then B from a round to b (shared edge dropped)
+          const ra: number[] = [], rb: number[] = [];
+          for (let q = 0; q < A.length; q++) ra.push(A[(k + 1 + q) % A.length]);
+          for (let q = 0; q < B2.length; q++) rb.push(B2[(m + 1 + q) % B2.length]);
+          const U = [...ra, ...rb.slice(1, -1)];
+          if (convex(U)) { polys[i] = U; polys.splice(j, 1); merged = true; }
+        }
+      }
+    }
+  }
+  return polys.map((q) => q.map((v) => P[v]));
+}
 function footArea(P: Pt[]) {
   let a = 0;
   for (let i = 0, j = P.length - 1; i < P.length; j = i++) a += (P[j][0] - P[i][0]) * (P[j][1] + P[i][1]);

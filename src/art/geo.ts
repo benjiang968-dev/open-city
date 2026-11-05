@@ -1,5 +1,6 @@
 // Accumulates coloured triangles into a single BufferGeometry (one draw call for many boxes).
 import * as THREE from 'three';
+import type { SolidRecorder } from '../systems/objects/solidKinds';
 
 // ---------- geometry helper: accumulates coloured triangles into one BufferGeometry ----------
 export class GeoBuilder {
@@ -7,6 +8,9 @@ export class GeoBuilder {
   nor: number[] = [];
   col: number[] = [];
   uv: number[] = [];
+  /** Physics audit mode: drawn boxes and walls are recorded with the recorder's current kind (null = off). */
+  rec: SolidRecorder | null = null;
+  private recDepth = 0;
   private tri(a: number[], b: number[], c: number[], n: number[], k: THREE.Color, uvs?: number[][]) {
     this.pos.push(...a, ...b, ...c);
     this.nor.push(...n, ...n, ...n);
@@ -23,6 +27,7 @@ export class GeoBuilder {
   wall(cx: number, cy: number, cz: number, w: number, h: number, nx: number, nz: number, k: THREE.Color, uvr?: number[]) {
     const tx = nz, tz = -nx; // viewer's right
     const hw = w / 2, hh = h / 2;
+    if (this.rec && this.recDepth === 0) this.rec.wall(cx - tx * hw, cz - tz * hw, cx + tx * hw, cz + tz * hw, cy - hh, cy + hh, cy - hh, cy + hh, nx, nz);
     const BL = [cx - tx * hw, cy - hh, cz - tz * hw];
     const BR = [cx + tx * hw, cy - hh, cz + tz * hw];
     const TR = [cx + tx * hw, cy + hh, cz + tz * hw];
@@ -42,11 +47,14 @@ export class GeoBuilder {
     const s = sideK ?? k;
     const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, cz = (z0 + z1) / 2;
     const w = x1 - x0, h = y1 - y0, d = z1 - z0;
+    if (this.rec && this.recDepth === 0) this.rec.obox(cx, cz, y0, y1, w / 2, d / 2, 1, 0);
+    this.recDepth++;
     this.quadY(x0, z0, x1, z1, y1, k);
     this.wall(cx, cy, z1, w, h, 0, 1, s);
     this.wall(cx, cy, z0, w, h, 0, -1, s);
     this.wall(x1, cy, cz, d, h, 1, 0, s);
     this.wall(x0, cy, cz, d, h, -1, 0, s);
+    this.recDepth--;
   }
   build(withUv = false): THREE.BufferGeometry {
     const g = new THREE.BufferGeometry();

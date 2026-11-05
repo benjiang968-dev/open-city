@@ -21,7 +21,7 @@ const SHOPPING = [{ name: 'M St NW', maxX: 362 }, { name: 'Wisconsin Ave NW', mi
 
 interface TreeSpot { x: number; y: number; z: number; s: number; sp: number; c: number; yaw: number; rank: number }
 
-export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetMeshInfo, extraLamps: { x: number; y: number; z: number; ax: number; az: number }[], chunks: RenderChunks, phys: PhysChunks, root: THREE.Group, lampMat: THREE.MeshBasicMaterial, lampPoolMat: THREE.MeshBasicMaterial) {
+export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetMeshInfo, extraLamps: { x: number; y: number; z: number; ax: number; az: number }[], chunks: RenderChunks, phys: PhysChunks, root: THREE.Group, lampMat: THREE.MeshBasicMaterial, lampPoolMat: THREE.MeshBasicMaterial, standAt: (x: number, z: number) => number) {
   let tris = 0;
   const near = new SegGrid(16);
   const roadDist = (x: number, z: number) => {
@@ -30,10 +30,37 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     return d;
   };
 
+  /**
+   * Synthesized map data (doc.meta.synthetic): a tree or lamp the data puts on a sidewalk moves to that sidewalk's
+   * furnishing strip, `off` m from the kerb at the same distance along the street, so it never stands in the walking
+   * line (the data's sidewalk lines and the generator's road widths differ: on Dumbarton St and Potomac St 137 data
+   * trees stood right on the sidewalks' walk links). Off the sidewalk (yards, parks, frontage) or with real data: as
+   * given. Null: on a sidewalk at a junction corner, where there is no strip to move to.
+   */
+  const toStrip = (x: number, z: number, off: number): [number, number] | null => {
+    if (!doc.meta.synthetic) return [x, z];
+    let best = Infinity, bestE = -1;
+    info.edgeGrid.query(x, z, (_s, id, d) => { const e = net.edges[id]; if (!e.deck && d < best) { best = d; bestE = id; } });
+    if (bestE < 0) return [x, z];
+    const e = net.edges[bestE];
+    const pr = net.project(e, x, z);
+    const side = pr.off >= 0 ? 1 : -1, lat = Math.abs(pr.off);
+    if (!(side > 0 ? e.swR : e.swL) || lat < e.hw - 0.3 || lat > e.hw + G.sidewalkWidth) return [x, z];
+    // at a junction corner (the corner's walk links cut across the sidewalk to the kerb there): no strip
+    if (pr.s < e.trimA + G.cornerRadius || pr.s > e.L - e.trimB - G.cornerRadius) return null;
+    if (e.cuts.some((c) => c[0] === side && pr.s > c[1] - 2 && pr.s < c[2] + 2)) return null; // a dropped kerb (driveway)
+    const q = pointAtS(e, pr.s), o = (e.hw + off) * side;
+    return [q.x - q.uz * o, q.z + q.ux * o];
+  };
+
   // ------------------------------------------------------------------------------------- lamps
   const lamps: { x: number; y: number; z: number }[] = [];
   // (not where the road now runs: Washington Circle is snapped to a true circle, which put a few data lamps in its lanes)
-  for (const p of doc.props) if (p[2] === 'lamp' && roadDist(p[0], p[1]) > 0.3) lamps.push({ x: p[0], y: ras.heightAt(p[0], p[1]), z: p[1] });
+  for (const p of doc.props) {
+    if (p[2] !== 'lamp') continue;
+    const q = toStrip(p[0], p[1], G.streetLampKerbOffset) ?? [p[0], p[1]]; // at a corner: where the data has it
+    if (q && roadDist(q[0], q[1]) > 0.3 && !(ras.kindAt(q[0], q[1]) & (K.BUILDING | K.WATER))) lamps.push({ x: q[0], y: ras.heightAt(q[0], q[1]), z: q[1] });
+  }
   for (const l of extraLamps) lamps.push({ x: l.x, y: l.y, z: l.z });
   const lampPositions = new Float32Array(lamps.length * 3);
   lamps.forEach((l, i) => { lampPositions[i * 3] = l.x; lampPositions[i * 3 + 1] = l.y; lampPositions[i * 3 + 2] = l.z; });
@@ -70,10 +97,11 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       poles.setMatrixAt(i, m);
       globe.setMatrixAt(i, m);
       pools.setMatrixAt(i, m);
-      phys.cylinder(l.x, l.y, l.z, 0.16, 4.3);
+      phys.placeProp('lamp', l.x, l.y, l.z);
     });
     pools.renderOrder = 1;
     poles.name = 'lamp-poles'; globe.name = 'lamp-globes'; pools.name = 'lamp-pools';
+    poles.userData.solidKind = 'lamp'; globe.userData.solidKind = 'overhead'; pools.userData.solidKind = 'decor';
     for (const im of [poles, globe, pools]) { im.computeBoundingSphere(); root.add(im); }
     tris += lamps.length * (pole.tris + 20 + 2);
   }
@@ -93,16 +121,29 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     treeGrid.add(x, z, x, z, trees.length - 1, 4);
   };
   for (const p of doc.props) if (p[2] === 'tree') {
-    const k = ras.kindAt(p[0], p[1]);
+    const q = toStrip(p[0], p[1], G.streetTreeKerbOffset);
+    if (!q) continue;
+    const [x, z] = q;
+    const k = ras.kindAt(x, z);
     if (k & (K.ROAD | K.BUILDING | K.WATER)) continue;
-    addTree(p[0], p[1], false);
+    if (x !== p[0] || z !== p[1]) {
+      // moved to the strip: not in a driveway, a crossing or a lamp's place
+      if (k & K.LOT) continue;
+      if (info.crossings.some((cr) => Math.hypot(cr.x - x, cr.z - z) < 7)) continue; // the walk links bend to it
+      let clash = false;
+      lampGrid.query(x, z, (_s, _p, d) => { if (d < G.streetTreeLampGap) clash = true; });
+      treeGrid.query(x, z, (_s, _p, d) => { if (d < G.streetTreeLampGap) clash = true; });
+      if (clash) continue;
+    }
+    addTree(x, z, false);
   }
   // street trees on the shopping streets, where the sidewalk has room
   const busStops = doc.props.filter((p) => p[2] === 'bus_stop');
   const pits = new MeshBuf();
   for (const e of net.edges) {
     if (e.deck) continue;
-    const spec = SHOPPING.find((s) => s.name === e.name);
+    // (imported data brings its own street trees as synthesized props; only the knowledge-based map plants them here)
+    const spec = doc.meta.synthetic ? SHOPPING.find((s) => s.name === e.name) : undefined;
     if (!spec) continue;
     for (const side of [-1, 1]) {
       if (!(side < 0 ? e.swL : e.swR)) continue;
@@ -136,6 +177,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     const list = trees.filter((t) => t.sp === sp).sort((a, b) => a.rank - b.rank);
     const im = inst(species[sp], treeMat, list.length);
     im.name = `trees-${sp}`;
+    im.userData.solidKind = 'tree';
     const m = new THREE.Matrix4(), q = new THREE.Quaternion(), v = new THREE.Vector3(), sc = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0);
     const col = new THREE.Color();
     const base = new THREE.Color(sp === 1 ? CONIFER[0] : GREENS[0]);
@@ -145,7 +187,8 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       im.setMatrixAt(i, m);
       col.setHex(t.c);
       im.setColorAt(i, col.setRGB(col.r / base.r, col.g / base.g, col.b / base.b));
-      if (roadDist(t.x, t.z) < G.treeColliderRoadDist) phys.cylinder(t.x, t.y, t.z, 0.2 * t.s, 2.4 * t.s);
+      // every trunk collides (a cylinder in the chunk body; the crown is foliage)
+      phys.placeProp('tree', t.x, t.y, t.z, 0, t.s, sc.y);
     });
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.castShadow = true;
@@ -167,6 +210,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     for (let k = 0; k < 2; k++) g.box(-0.95, 0.6 + k * 0.18, 0.24, 0.95, 0.72 + k * 0.18, 0.29, wood);
     const im = inst(g.toGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 }), benches.length);
     im.name = 'benches';
+    im.userData.solidKind = 'bench';
     const m = new THREE.Matrix4();
     benches.forEach((p, i) => {
       // face the nearest path (back toward the lawn), else a road
@@ -178,8 +222,10 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         const qx = S[o] + (S[o + 2] - S[o]) * t, qz = S[o + 1] + (S[o + 3] - S[o + 1]) * t;
         yaw = Math.atan2(p[0] - qx, p[1] - qz); // +z of the bench (its back) points away from the path
       });
-      m.makeRotationY(yaw).setPosition(p[0], ras.heightAt(p[0], p[1]), p[1]);
+      const y = standAt(p[0], p[1]); // on the boardwalk where it covers the ground
+      m.makeRotationY(yaw).setPosition(p[0], y, p[1]);
       im.setMatrixAt(i, m);
+      phys.placeProp('bench', p[0], y, p[1], yaw);
     });
     im.castShadow = true;
     im.computeBoundingSphere();
@@ -197,11 +243,12 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
   const sigSpots: { x: number; y: number; z: number; ux: number; uz: number; len: number; heads: number[]; node: number }[] = [];
   const stopSpots: { x: number; y: number; z: number; ux: number; uz: number }[] = [];
   for (const n of net.nodes) {
-    if (!n.signals && !n.stop) continue;
+    if (!n.signals && !n.stop && !n.arms.some((A) => A.stop)) continue;
     if (n.roundabout) continue;
     for (const A of n.arms) {
       const nIn = inbound(A);
       if (!nIn) continue;
+      if (!n.signals && !n.stop && !A.stop) continue; // a stop sign on some approaches only
       const e = A.edge;
       const s = Math.min(e.L / 2, A.trim + (n.signals ? 2.5 : 1.5));
       const q = pointAtS(e, A.atStart ? s : e.L - s);
@@ -219,7 +266,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         for (let k = 0; k < nIn; k++) heads.push(off - e.hw + (k + 0.5) * lw);
         sigSpots.push({ x: px, y, z: pz, ux, uz, len: off - e.hw + nIn * lw + 0.3, heads, node: n.id });
       } else stopSpots.push({ x: px, y, z: pz, ux, uz });
-      phys.cylinder(px, y, pz, 0.12, 3);
+      phys.placeProp(n.signals ? 'signalPole' : 'stopPost', px, y, pz);
     }
   }
   void ({} as RNode);
@@ -262,6 +309,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       }
     });
     poles.name = 'signal-poles'; arms.name = 'signal-arms'; heads.name = 'signal-heads';
+    poles.userData.solidKind = 'signalPole'; arms.userData.solidKind = 'overhead'; heads.userData.solidKind = 'overhead';
     for (const im of [poles, arms, heads]) { im.castShadow = true; im.computeBoundingSphere(); root.add(im); }
     tris += sigSpots.length * (poleG.tris + armG.tris) + nHeads * headG.tris;
 
@@ -288,6 +336,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       faces.setMatrixAt(i, m);
     });
     posts.name = 'stop-posts'; faces.name = 'stop-faces';
+    posts.userData.solidKind = 'signPost'; faces.userData.solidKind = 'overhead';
     for (const im of [posts, faces]) { im.computeBoundingSphere(); root.add(im); }
     tris += stopSpots.length * (postG.tris + faceG.tris);
   }
@@ -323,11 +372,15 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       if (ras.kindAt(ex, ez) & (K.BUILDING | K.ROAD)) continue;
       // local +z (the back panel) points away from the road
       const bx = -q.uz * side, bz = q.ux * side;
+      // the whole shelter (4.3 m long) clear of roads and buildings, not just its middle: next to a driveway mouth
+      // (real data) its end stood 2 m into Wisconsin Ave
+      if ([[-2.2, -0.8], [2.2, -0.8], [-2.2, 0.8], [2.2, 0.8]].some(([a, b2]) => ras.kindAt(ex + q.ux * a + bx * b2, ez + q.uz * a + bz * b2) & (K.BUILDING | K.ROAD))) continue;
       shelters.push({ x: ex, y: ras.heightAt(ex, ez), z: ez, yaw: Math.atan2(bx, bz) });
-      phys.box(ex + bx * 0.58, ras.heightAt(ex, ez) + 1.2, ez + bz * 0.58, 2, 1.2, 0.06, q.ux, q.uz);
+      phys.placeProp('busShelter', ex, ras.heightAt(ex, ez), ez, Math.atan2(bx, bz));
     }
     const im = inst(g.toGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 }), shelters.length);
     im.name = 'bus-shelters';
+    im.userData.solidKind = 'busShelter';
     const m = new THREE.Matrix4();
     shelters.forEach((s, i) => { m.makeRotationY(s.yaw).setPosition(s.x, s.y, s.z); im.setMatrixAt(i, m); });
     im.castShadow = true;
@@ -358,10 +411,12 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       }
     const im = inst(g.toGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), spots.length / 4);
     im.name = 'gravestones';
+    im.userData.solidKind = 'gravestone';
     const m = new THREE.Matrix4();
     for (let i = 0; i < spots.length / 4; i++) {
       m.makeRotationY(spots[i * 4 + 3]).setPosition(spots[i * 4], spots[i * 4 + 1] - 0.05, spots[i * 4 + 2]);
       im.setMatrixAt(i, m);
+      phys.placeProp('gravestone', spots[i * 4], spots[i * 4 + 1] - 0.05, spots[i * 4 + 2], spots[i * 4 + 3]);
     }
     im.computeBoundingSphere();
     root.add(im);

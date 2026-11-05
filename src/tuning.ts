@@ -27,7 +27,7 @@ const RAW = {
 
   // The map interface (src/systems/map/): shared by every map implementation (grid city, Georgetown).
   map: {
-    defaultMap: 'grid', // map loaded when the URL has no ?map= (or an unknown one); the seed never picks the map
+    defaultMap: 'georgetown', // map loaded when the URL has no ?map= (or an unknown one; ?map=grid is the procedural grid city); the seed never picks the map
     // cruise speed (m/s) for roads without a maxspeed tag, by road class (the grid city uses traffic.cruiseSpeed)
     classSpeed: { primary: 13.4, secondary: 12.5, tertiary: 11.2, residential: 11, service: 6.7, parkway: 15.6 },
     laneWidth: 3.5, // metres per traffic lane (grid: how many lanes per direction fit a road's width)
@@ -95,6 +95,15 @@ const RAW = {
     backSpeedFactor: 0.55, // walking backwards is this fraction of walk speed
     capsuleRadius: 0.35,
     capsuleHalfHeight: 0.55,
+    // character controller (Rapier KinematicCharacterController); stairs are smooth ramps under the treads, kerbs and
+    // stoop lips are steps
+    ccOffset: 0.04, // m: skin gap the controller keeps from surfaces
+    autostepHeight: 0.45, // m: tallest step walked up without jumping (kerbs 0.15, stair-flight lips 0.09, lot kerbs 0.15)
+    autostepMinWidth: 0.2, // m: free depth needed on top of a step to take it
+    snapToGround: 0.45, // m: walking down steps and ramps keeps the feet on the ground within this drop
+    maxSlopeDeg: 52, // steepest slope (degrees) walked up: stair ramps are 32 to 47 degrees, terrain banks steeper stop you
+    minSlopeSlideDeg: 52, // standing still, the character only slides down slopes steeper than this (no creep on stairs)
+    groundedVy: -1, // m/s pressed into the ground while standing (keeps contact on slopes and decks)
     enterCarRange: 3.6, // metres from the car to be able to press E
     talkRange: 3.0, // metres to an NPC to be able to press E and talk
     rescuePavementStep: 2.0, // metres past the kerb onto the pavement where you land after swimming back to shore
@@ -336,6 +345,7 @@ const RAW = {
     stopBackMax: 8, // ... but never more than this many metres behind the line
     boxNudgeTime: 6, // seconds stopped inside a junction after which other AI cars no longer hold a car back (breaks a mutual block)
     uTurnReach: 2.5, // metres a U-turn's curve reaches forward beyond the width it turns across (dead ends)
+    overlapStartMax: 3, // metres: an exit lane that starts up to this far behind the stop line it continues from (inside of a bend) is joined with no turn curve
     mapEdgeRange: 40, // metres: a dead end this close to the map's edge is a road leaving the map (cars drive off it)
     // roundabout (Washington Circle): entering cars yield to circulating ones
     ringSpeed: 8.5, // m/s (31 km/h): top speed on the roundabout ring and through its nodes
@@ -619,6 +629,8 @@ const RAW = {
     waterClearance: 0.3, // metres: a spot whose surface is less than this above water is in the water
     edgeProbe: 0.35, // metres out on four sides where the surface is checked (and must be free of buildings)...
     maxStep: 0.12, // ...and must be within this of the item's (no deck, pier, kerb or stair edge right beside it)
+    dropProbe: 0.6, // metres out on four sides where the surface may not drop or rise by more than maxDrop (map.heightAt is
+    maxDrop: 0.5, // the collider surface now, so a sharp ledge just past edgeProbe is no longer smoothed into it)
     wallProbe: 0.2, // metres: an item this close to a wall (or the map edge) on any side would stick into it: left out
     // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
     // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
@@ -770,39 +782,146 @@ const RAW = {
   geo: {
     laneWidth: 3.3, // m per lane; the map data's carriageway width is lanes x laneWidth
     minTwoWayWidth: 5.6, // m: a two-way street tagged with 1 lane is widened to this (two narrow lanes)
+    minRoadWidth: 3, // m: narrowest carriageway drawn (imported driveways and alleys keep their own width above this)
     sidewalkWidth: 3, // m from the kerb to the back of the sidewalk (the data's sidewalk lines run 1.5 m from the kerb)
     kerbHeight: 0.15, // m step from road to sidewalk; car wheels feel it, people step up it
     cornerRadius: 6, // m kerb radius at street corners
+    cornerRadiusLocal: 4.5, // m at corners with a residential street (real data; Georgetown's corners are tight)
+    cornerRadiusService: 2, // m where a driveway, alley or service road meets a street (real data)
+    maxJunctionTrim: 12, // m: longest flat plateau an arm keeps at a junction (real data: sharp merges would ask for 30 m)
+    plateauEase: 10, // m over which a road leaves a flat junction plateau into its grade (real data: no kink at the junction)
+    relaxGradeMain: 0.1, // real data: junction heights are relaxed until a main road's free length takes their difference at this grade
+    relaxGrade: 0.15, // the same for residential and other streets (Georgetown's steep side streets reach 15 %)
+    relaxGradeService: 0.2, // the same for driveways, alleys and parking aisles
     maxGrade: 0.075, // steepest grade (rise/run) the generator gives ramps and bridge approaches
     roadClearance: 5, // m of headroom under a deck that crosses a road
     pathClearance: 2.6, // m of headroom under a deck that crosses a towpath or trail
     waterClearance: 2.4, // m from canal / creek water to the underside of a deck
     freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
     deckThickness: 1.1, // m from deck surface to its underside
+    deckGroundGap: 0.6, // m: natural ground under a bridge deck is cut down to at least this far below its underside
+    deckJoinHop: 30, // m: real data: an at-grade piece shorter than this between a deck end and the next junction joins the deck to its street (the deck need not clear roads beyond it)
+    approachMaxLift: 3, // m: real data: a junction next to a raised deck end may rise this much at most so the short piece between them stays within its grade limit (bigger lifts cascaded through the Rock Creek valley)
+    sagFillSpan: 160, // m: real data: a bridge abutment lower than both the street's next junction and the deck's far end, within this span, rises to the line between them (no V-shaped dip onto a bridge)
+    footprintNotchTol: 0.3, // m: a building collider follows its footprint's notches deeper than this (a convex hull over an L- or U-shaped footprint was an invisible wall); shallower jogs are filled
+    gradeSeparation: 2.5, // m: overlapping carriageways closer in height than this are one surface (the smaller road conforms to the bigger); more is a real grade separation
+    conformBlend: 12, // m over which a road blends into the surface of a bigger road it overlaps
+    overlayTolerance: 0.25, // m: an at-grade road this far off the raster's surface is a grade separation (kept as its own surface)
+    /**
+     * Smoothness limits the road audit and drive test hold the generated roads to (MAP=georgetown node scripts/shot.mjs
+     * x roadaudit / roaddrive). Terrain keeps its hills; these bound what a road does on top of them.
+     */
+    roadLimits: {
+      maxGrade: 0.2, // rise/run on any lane, 4 m baseline (Georgetown's steepest real streets are 15-18 %)
+      maxGradeMain: 0.12, // primary, secondary, trunk and parkway lanes
+      maxGradeChange: 0.05, // grade change per metre along any lane (vertical curve; 0.05/m at 30 km/h is ~0.35 g)
+      maxGradeChangeMain: 0.03, // per metre on main roads (0.03/m at 50 km/h is ~0.6 g peak over a 1 m kink, softened by suspension)
+      maxGradeService: 0.25, // driveways, alleys, parking aisles (real ones are steep and short)
+      maxGradeChangeService: 0.08, // per metre on service roads (walking pace)
+      maxStep: 0.04, // m: a kink in the surface (second difference over 0.5 m samples) along a lane: a bump or a seam
+      maxCrossSlope: 0.08, // rise/run across the wheel tracks (1.6 m)
+      maxSurfaceGap: 0.3, // m between a lane's height and the collider under it (a hole, or a lane floating / buried)
+      maxJunctionStep: 0.06, // m: kink on a straight path through a junction (arm to arm: plateau seams)
+      maxWalkStep: 0.3, // m: a step along a walk link (kerbs are 0.15 m, two kerbs or a stair riser pair at most; the player climbs 0.45)
+      maxVertAccel: 4.5, // m/s²: peak chassis vertical acceleration (beyond gravity) in the drive test at street speed
+      maxAirtime: 0.08, // s with all four wheels off the ground in the drive test
+    },
     stairWallFrom: 0.2, // m: a stair's side walls start once it has risen this far above its foot (the flat run-in stays open)
+    stairMaxSlope: 0.84, // rise per run: no stair flight is steeper than this (40 degrees; the character climbs up to TUNING.player.maxSlopeDeg)
+    stairMaxExtend: 3.5, // m: how far a stair's foot may move out along its line to stay under stairMaxSlope
+    stairMinRise: 0.3, // m: a data stair rising less than this (once cut back out of the carriageways) is a plain path
+    stairEndProbe: 0.15, // m: a stair's end height is fitted to the built ground this far beyond the end (bridges.ts fitStairEnds)
+    stairEndFit: 3, // m: the most an end may move to meet that ground (more: the ground there is something else, e.g. a wall top)
+    stairDoorGap: 0.4, // m: a data stair running on into a building stops this far in front of the facade (steps up to a door)
+    stairJoinDist: 1.0, // m: a stair end this far beyond another stair's side (or on it) lands on it and takes its height there
+    stairEndClear: 0.6, // m: another stair's side wall within this distance beyond a stair's end is left out (they join there)
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)
     riverLevel: 0, // m: the Potomac surface (map heights are metres above the river)
     canalLevels: [5.2, 4.4, 3.6, 2.8, 2.0], // m: canal water west of lock 4, then after locks 4, 3, 2, 1 (east)
     canalDepth: 1.6, // m of water in the canal
     creekDepth: 1.2, // m of water in Rock Creek
-    treeColliderRoadDist: 9, // m: trees closer than this to a carriageway get a trunk collider
     stallWidth: 2.6, // m: painted parking bay width in car parks
+    // synthesized street furniture (map data marked synthetic) on a sidewalk stands in the furnishing strip by the
+    // kerb, out of the walking line along the sidewalk's middle (TUNING.geo.sidewalkWidth / 2 from the kerb)
+    streetTreeKerbOffset: 0.7, // m from the kerb to a street tree's trunk (a 0.3 m trunk leaves the walking line clear)
+    streetLampKerbOffset: 0.45, // m from the kerb to a street lamp's post
+    streetTreeLampGap: 2, // m: a synthesized street tree moved to the strip is dropped if a lamp stands this close
     stallLength: 5.2, // m: parking bay length
     lotAisle: 6.6, // m: aisle between bay rows
+    stopArmSnap: 30, // m: a stop sign mapped on one approach (data 'stop_arm') belongs to the nearest junction this close, on the arm pointing at it
+    stallSurfaceTol: 0.2, // m: a car park bay whose plane height is further than this from the ground (a footway or kerb inside the lot outline sets the surface there) is left out, so parked cars never float or sink
   },
 
   quality: {
     default: 'medium', // preset used until the player picks one in the pause menu
     // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player
-    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, pedBudget: 30 },
-    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1024, pedBudget: 45 },
-    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, pedBudget: 60 },
+    // textureRes = px per side of every baked surface map (procedural PBR, render/texBake.ts); anisotropy = texture
+    // filtering samples; textureDetail 1 = normal maps and baked occlusion on, 0 = off (cheaper pixels)
+    // shadowMapSize = px per side of each of the sun's two shadow cascades (near and far); shadowDistance = metres the
+    // cascades reach from the camera (beyond it, no sun shadows); treeNear = metres within which trees are drawn in full
+    // detail (bark trunk, branches, leaf cards; render/trees.ts), 0 = never
+    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, shadowDistance: 0, pedBudget: 30, textureRes: 256, anisotropy: 2, textureDetail: 0, treeNear: 0, lampLights: 0 },
+    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1536, shadowDistance: 320, pedBudget: 45, textureRes: 512, anisotropy: 8, textureDetail: 1, treeNear: 110, lampLights: 6 },
+    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, shadowDistance: 650, pedBudget: 60, textureRes: 1024, anisotropy: 16, textureDetail: 1, treeNear: 200, lampLights: 10 },
+  },
+
+  look: {
+    // sky (three's Preetham sky, render/sky.ts) and image-based lighting from it
+    skyBoxSize: 1200, // m: the sky box around the camera (drawn at the far plane)
+    skyTurbidity: 3.2, // haze in clear weather (2 = very clear, 10 = hazy); clouds raise it
+    skyRayleigh: 0.85, // blue scattering strength
+    skyMie: 0.004, // aerosol scattering
+    skyMieG: 0.82, // forward glow round the sun
+    skyCloudClear: 0.18, // cloud cover drawn in clear weather (the weather's cloud value raises it)...
+    skyCloudOvercast: 1.25, // ...toward this at full cloud (above 1 so the deck closes: rain 0.8 -> 1.04, cloudy 0.65 -> 0.88)
+    skyCloudDensityClear: 0.45, // cloud opacity in clear weather (three's Sky cloudDensity)...
+    skyCloudDensityOvercast: 0.85, // ...and at full cloud (an opaque grey deck)
+    skyCloudElevation: 0.55, // apparent height of the cloud layer (three's Sky cloudElevation, 0..1)
+    envCubeSize: 128, // px per face of the sky capture that lights everything (PMREM)
+    envRefreshDegrees: 1.5, // recapture the sky when the sun has moved this far...
+    envRefreshMinSeconds: 1.5, // ...but at most this often (real seconds)
+    envIntensityDay: 1.0, // scene.environmentIntensity by day (sky light on PBR materials)
+    envIntensityNight: 0.16, // at night (the night sky is dark anyway; this keeps a little moonlit fill)
+    skyDiffuseDay: 0.42, // share of the sky light that reaches diffuse surfaces by day (reflections keep it all): sets how
+    // bright the shade is next to sunlight (about 1:4 on a clear day)
+    skyDiffuseNight: 0.7,
+    skyDiffuseSaturation: 0.55, // colour saturation of that sky fill (1 = the sky's own blue; lower stands in for the warm
+    // light bounced off sunlit streets and walls, which the sky capture does not hold)
+    nightSkyZenith: [0.006, 0.008, 0.018], // linear radiance of the night sky overhead...
+    nightSkyHorizon: [0.035, 0.028, 0.026], // ...and near the horizon (city glow)
+    overcastDim: 0.62, // how much darker the sky (and so its light) gets under full cloud
+    groundBounce: 0.45, // brightness of the ground below the horizon in the sky capture by day (bounce light from below)
+    sunrise: 6.0, // game hour the sun crosses the horizon in the morning (matches the day/night keys in dayNight.ts)...
+    sunset: 19.8, // ...and in the evening (the keys fade the sun out by 21:00; noon falls half way, about 12:54)
+    sunIntensity: 6.5, // sunlight at noon (the day/night keys scale it toward dawn and dusk)
+    moonIntensity: 0.25, // night key light
+    exposureDay: 0.86, // tone mapping exposure by day (ACES filmic)
+    exposureNight: 1.1, // at night (eyes adapt)
+    hemiDay: 0.12, // hemisphere fill by day (the sky environment does most of it)
+    hemiNight: 0.32, // at night (city glow and moonlight)
+    shadowRadius: 2.2, // soft shadow filter radius (shadow map texels) on Medium/High
+    shadowBias: -0.0004, // depth bias of the sun's shadow cascades (against acne on lit faces)
+    shadowNormalBias: 0.035, // offset along the normal (m-ish, scaled by texel size) against acne at grazing sun
+    interiorDay: 0.35, // daylight reaching window interiors, relative (window glass, render/facadeMaterial.ts)
+    lampLightRange: 24, // m: reach of the real lights at the street lamps nearest the camera (render/nightLights.ts)
+    lampLightIntensity: 55, // candela-like intensity of one lamp at full night
+    lampLightsMax: 10, // the most lamp lights any preset uses (TUNING.quality.*.lampLights)
+    // leaf cards of the detailed trees (render/worldMaterial.ts)
+    leafMinFacing: 0.2, // shading normals turned at least this far toward the viewer (no sky-mirror rims on backlit trees)
+    leafSkyReflection: 0.6, // share of the sky reflection leaves keep (they are matt, waxy at most)
+    leafTranslucency: 0.45, // share of the sunlight a leaf passes on toward the viewer when the sun is behind it...
+    leafTransmitBase: 0.12, // ...and the share it passes on whatever the angle (diffuse transmission)
+    leafEdgeOn: [0.06, 0.28], // |cos| between card and view where edge-on cards fade out (no dark spikes)
   },
 
   debug: {
     spikeMs: 33, // a frame longer than this counts as a spike in the F3 overlay
     spikeWindow: 10, // seconds of history for the spike counter and worst frame
+    physRadius: 22, // m: the F4 collision view draws the colliders within this distance of the player
+    physHeight: 14, // m: ... and this far above or below them
+    physRefresh: 0.25, // s between rebuilds of the F4 collision view
+    physMaxSegments: 90000, // line segments the F4 view can draw (preallocated when first switched on)
   },
 
   hud: {

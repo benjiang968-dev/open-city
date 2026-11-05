@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, densify, lerp, offsetLine, pointInPoly, SegGrid } from './geoDoc';
-import { lin, shade, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
+import { lin, segmentOutsideHoles, shade, type Holes, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
 import { B, K, bakeAprons, type GeoRaster } from './terrain';
 
 const G = TUNING.geo;
@@ -61,14 +61,25 @@ export function makeWaterModel(doc: GeoDoc): WaterModel {
   const gates = doc.props.filter((p) => p[2] === 'lock_gate').map((p) => p[0]).sort((a, b) => a - b);
   const lockX: number[] = [];
   for (let i = 0; i + 1 < gates.length; i += 2) lockX.push((gates[i] + gates[i + 1]) / 2);
-  const levels = G.canalLevels;
+  // canal pound levels west -> east: imported data measures them (landmarks.canal.levels), else the tuned spec values
+  const dataLevels = doc.landmarks?.canal?.levels;
+  const levels: readonly number[] = dataLevels && dataLevels.length === lockX.length + 1 ? dataLevels : G.canalLevels;
   const canalLevelAt = (x: number) => {
     let i = 0;
     while (i < lockX.length && x > lockX[i] + 13) i++;
     return levels[Math.min(levels.length - 1, i)];
   };
+  // Rock Creek level by z: imported data carries a level per vertex of the creek line (from the terrain), the
+  // knowledge-based map uses CREEK_LEVELS
+  const creekW = doc.waterways.find((w) => w.kind === 'stream');
+  let creekTable = CREEK_LEVELS;
+  if (creekW?.levels && creekW.levels.length === creekW.pts.length) {
+    const t = creekW.pts.map((p, i) => [p[1], creekW.levels![i]] as [number, number]).sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < t.length; i++) t[i][1] = Math.min(t[i][1], t[i - 1][1]); // never rising downstream (south)
+    creekTable = t.filter((q, i) => i === 0 || q[0] > t[i - 1][0] + 0.05);
+  }
   const creekLevelAt = (z: number) => {
-    const L = CREEK_LEVELS;
+    const L = creekTable;
     if (z <= L[0][0]) return L[0][1];
     for (let i = 1; i < L.length; i++) if (z <= L[i][0]) return lerp(L[i - 1][1], L[i][1], (z - L[i - 1][0]) / (L[i][0] - L[i - 1][0]));
     return L[L.length - 1][1];
@@ -187,7 +198,7 @@ function waterMaterial(color: number, waves: number, uTime: { value: number }): 
   return m;
 }
 
-export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, scene: THREE.Object3D): WaterMeshes {
+export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, scene: THREE.Object3D, holes: Holes): WaterMeshes {
   const uTime = { value: 0 };
   const riverMat = waterMaterial(COL.water, 0.16, uTime);
   const canalMat = waterMaterial(COL.canalWater, 0.015, uTime);
@@ -254,11 +265,13 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     buf.quad(north[i - 1][0], bed, north[i - 1][1], south[i - 1][0], bed, south[i - 1][1], south[i][0], bed, south[i][1], north[i][0], bed, north[i][1], COL.stone, 0, 1, 0);
     pb.quad(north[i - 1][0], bed, north[i - 1][1], south[i - 1][0], bed, south[i - 1][1], south[i][0], bed, south[i][1], north[i][0], bed, north[i][1]);
     // water-edge walls (face the water)
+    chunks.tag('wall');
     const toS = [south[i][0] - north[i][0], south[i][1] - north[i][1]];
     buf.wall(north[i - 1][0], north[i - 1][1], north[i][0], north[i][1], bed, bankA, bed, bankC, COL.stone, toS[0], toS[1]);
     buf.wall(south[i - 1][0], south[i - 1][1], south[i][0], south[i][1], bed, bankA, bed, bankC, COL.stone, -toS[0], -toS[1]);
     pb.quad(north[i - 1][0], bed, north[i - 1][1], north[i][0], bed, north[i][1], north[i][0], bankC, north[i][1], north[i - 1][0], bankA, north[i - 1][1]);
     pb.quad(south[i - 1][0], bed, south[i - 1][1], south[i][0], bed, south[i][1], south[i][0], bankC, south[i][1], south[i - 1][0], bankA, south[i - 1][1]);
+    chunks.tag('ground');
     // banks: north stone/grass, south coping + towpath
     const nb0 = northB[i - 1], nb1 = northB[i], sb0 = southB[i - 1], sb1 = southB[i];
     const nc0: Pt = [lerp(north[i - 1][0], nb0[0], 0.25), lerp(north[i - 1][1], nb0[1], 0.25)], nc1: Pt = [lerp(north[i][0], nb1[0], 0.25), lerp(north[i][1], nb1[1], 0.25)];
@@ -270,20 +283,29 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     buf.quad(sc0[0], bankA, sc0[1], sb0[0], bankA, sb0[1], sb1[0], bankC, sb1[1], sc1[0], bankC, sc1[1], shade(COL.towpath, (i % 3) * 0.02 + 0.97), 0, 1, 0);
     pb.quad(south[i - 1][0], bankA, south[i - 1][1], sb0[0], bankA, sb0[1], sb1[0], bankC, sb1[1], south[i][0], bankC, south[i][1]);
     // retaining walls at the corridor edges up (or down) to the land outside
-    for (const [e0, e1, sgn] of [[nb0, nb1, 1], [sb0, sb1, -1]] as [Pt, Pt, number][]) {
-      const ox = (e0[0] + e1[0]) / 2 - mx, oz = (e0[1] + e1[1]) / 2 - mz;
+    for (const [f0, f1, sgn] of [[nb0, nb1, 1], [sb0, sb1, -1]] as [Pt, Pt, number][]) {
+     // a stair climbing out of the corridor passes through its retaining wall: the wall stops either side of it
+     for (const [ta, tb] of segmentOutsideHoles(holes, f0[0], f0[1], f1[0], f1[1])) {
+      const e0: Pt = [lerp(f0[0], f1[0], ta), lerp(f0[1], f1[1], ta)], e1: Pt = [lerp(f0[0], f1[0], tb), lerp(f0[1], f1[1], tb)];
+      if (Math.hypot(e1[0] - e0[0], e1[1] - e0[1]) < 0.05) continue;
+      const ox = (f0[0] + f1[0]) / 2 - mx, oz = (f0[1] + f1[1]) / 2 - mz;
       const L = Math.hypot(ox, oz) || 1;
       const ux = ox / L, uz = oz / L;
       const t0 = outsideH(e0[0], e0[1], ux, uz), t1 = outsideH(e1[0], e1[1], ux, uz);
       const k0 = ras.kindAt(e0[0] + ux * 1.5, e0[1] + uz * 1.5);
       if (k0 & K.WATER) continue;
       const up = (t0 + t1) / 2 > bank;
+      chunks.tag('wall');
       buf.wall(e0[0], e0[1], e1[0], e1[1], Math.min(bankA, t0) - 0.3, Math.max(bankA, t0) + 0.25, Math.min(bankC, t1) - 0.3, Math.max(bankC, t1) + 0.25, shade(COL.stone, 0.92), up ? -ux : ux, up ? -uz : uz);
       buf.quad(e0[0], Math.max(bankA, t0) + 0.25, e0[1], e1[0], Math.max(bankC, t1) + 0.25, e1[1], e1[0] + ux * 0.45, Math.max(bankC, t1) + 0.25, e1[1] + uz * 0.45, e0[0] + ux * 0.45, Math.max(bankA, t0) + 0.25, e0[1] + uz * 0.45, COL.coping, 0, 1, 0);
       // outer face of the coping, down into the land (closes the gap to the apron)
       buf.wall(e0[0] + ux * 0.45, e0[1] + uz * 0.45, e1[0] + ux * 0.45, e1[1] + uz * 0.45, t0 - 0.4, Math.max(bankA, t0) + 0.25, t1 - 0.4, Math.max(bankC, t1) + 0.25, shade(COL.stone, 0.95), ux, uz);
       pb.quad(e0[0], Math.min(bankA, t0) - 0.3, e0[1], e1[0], Math.min(bankC, t1) - 0.3, e1[1], e1[0], Math.max(bankC, t1) + 0.25, e1[1], e0[0], Math.max(bankA, t0) + 0.25, e0[1]);
+      // the coping is solid: its top and its outer face toward the land
+      pb.quad(e0[0], Math.max(bankA, t0) + 0.25, e0[1], e1[0], Math.max(bankC, t1) + 0.25, e1[1], e1[0] + ux * 0.45, Math.max(bankC, t1) + 0.25, e1[1] + uz * 0.45, e0[0] + ux * 0.45, Math.max(bankA, t0) + 0.25, e0[1] + uz * 0.45);
+      pb.quad(e0[0] + ux * 0.45, t0 - 0.4, e0[1] + uz * 0.45, e1[0] + ux * 0.45, t1 - 0.4, e1[1] + uz * 0.45, e1[0] + ux * 0.45, Math.max(bankC, t1) + 0.25, e1[1] + uz * 0.45, e0[0] + ux * 0.45, Math.max(bankA, t0) + 0.25, e0[1] + uz * 0.45);
       void sgn;
+     }
     }
     // aprons under the jagged edge of the terrain mesh hole: ground geometry a little below the surface (so roads,
     // sidewalks and terrain that do exist stay on top), with physics so nothing falls through the gap
@@ -297,9 +319,15 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
         if (ras.kindAt(cx, cz) & K.WATER || ras.bandAt(cx, cz) === B.HOLE) continue;
         const y = (p: Pt) => ras.heightAt(p[0], p[1]) - (ras.bandAt(p[0], p[1]) === B.NONE ? APRON_DROP : 0.36);
         const ya0 = y(A0), yc0 = y(C0), yc1 = y(C1), ya1 = y(A1);
-        const g = chunks.buf('ground', cx, cz);
-        g.quad(A0[0], ya0, A0[1], C0[0], yc0, C0[1], C1[0], yc1, C1[1], A1[0], ya1, A1[1], shade(COL.grassBank, 0.96 + 0.04 * Math.sin(cx * 0.1)), 0, 1, 0);
-        phys.ground(cx, cz).quad(A0[0], ya0, A0[1], C0[0], yc0, C0[1], C1[0], yc1, C1[1], A1[0], ya1, A1[1]);
+        const g = chunks.buf('ground', cx, cz), pg = phys.ground(cx, cz);
+        const col = shade(COL.grassBank, 0.96 + 0.04 * Math.sin(cx * 0.1));
+        // (stairwells cut out: an apron spanning a stair's edge stood up inside it)
+        for (const [p, q, r] of [[[A0[0], ya0, A0[1]], [C0[0], yc0, C0[1]], [C1[0], yc1, C1[1]]], [[A0[0], ya0, A0[1]], [C1[0], yc1, C1[1]], [A1[0], ya1, A1[1]]]]) {
+          holes.clipTri(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2], (v) => {
+            g.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14], col, 0, 1, 0);
+            pg.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14]);
+          });
+        }
       }
     }
   }
@@ -321,6 +349,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     const c = P[best];
     const lvl = W.canalLevelAt(c[0]) + BANK_ABOVE;
     const buf = chunks.buf('ground', c[0], c[1]);
+    chunks.tag('lockGate');
     for (const s of [-1, 1]) {
       // leaf from the wall to the middle, angled upstream (west = along +d)
       const ax = c[0] + rx * CANAL_HALF * s, az = c[1] + rz * CANAL_HALF * s;
@@ -328,25 +357,67 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
       const mx = (ax + bx) / 2, mz = (az + bz) / 2;
       const L = Math.hypot(bx - ax, bz - az);
       buf.obox(mx, lvl - G.canalDepth - 1.4, mz, L / 2, 0.22, lvl + 0.35, (bx - ax) / L, (bz - az) / L, COL.darkWood, COL.wood, false);
+      const yLeaf0 = lvl - G.canalDepth - 1.4, yLeaf1 = lvl + 0.35;
+      phys.box(mx, (yLeaf0 + yLeaf1) / 2, mz, L / 2, (yLeaf1 - yLeaf0) / 2, 0.22, (bx - ax) / L, (bz - az) / L, 'lockGate');
       // balance beam on the bank
       const px = ax + rx * s * 0.6, pz = az + rz * s * 0.6;
       buf.obox(px - dx * 3, lvl + 0.55, pz - dz * 3, 3.2, 0.18, lvl + 0.85, dx, dz, COL.wood);
       buf.obox(px, lvl, pz, 0.25, 0.25, lvl + 0.6, dx, dz, COL.darkWood);
+      phys.box(px - dx * 3, lvl + 0.7, pz - dz * 3, 3.2, 0.15, 0.18, dx, dz, 'lockGate');
+      phys.box(px, lvl + 0.25, pz, 0.25, 0.35, 0.25, dx, dz, 'lockGate');
     }
   }
 
   // ---- footbridges over the canal (path bridges in the data)
   for (const f of doc.footways) {
     if (!f.bridge || f.kind === 'sidewalk' || f.kind === 'crossing' || f.pts.length < 2) continue;
-    const a = f.pts[0], c = f.pts[f.pts.length - 1];
-    const L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+    let a = f.pts[0], c = f.pts[f.pts.length - 1];
+    let L = Math.hypot(c[0] - a[0], c[1] - a[1]);
     const ux = (c[0] - a[0]) / L, uz = (c[1] - a[1]) / L;
-    const ya = ras.heightAt(a[0] - ux * 0.5, a[1] - uz * 0.5), yc = ras.heightAt(c[0] + ux * 0.5, c[1] + uz * 0.5);
+    const canalDist = (x: number, z: number) => { let d = Infinity; W.canalGrid.query(x, z, (_s, _p, dd) => { if (dd < d) d = dd; }); return d; };
+    // an end on a canal bank lands at the bank's height (the raster blends the bank into the land there, which left
+    // the deck end hanging 0.8 m above the bank)
+    const endY = (x: number, z: number) => (canalDist(x, z) <= CANAL_HALF + BANK_N ? W.canalLevelAt(x) + BANK_ABOVE : ras.heightAt(x, z));
+    // The north end: the data ends it on the narrow north bank, under the retaining wall up to the land (2.7 m at
+    // the 33rd St footbridge), so nobody could get on from the north. It runs on just over the wall's coping (which
+    // stays: the deck rests on it) and, where the land beyond is lower than that, a short ramp takes it down.
+    let landN = NaN;
+    let ramp: number[] | null = null;
+    {
+      const aN = a[1] <= c[1], p = aN ? a : c, ox = aN ? -ux : ux, oz = aN ? -uz : uz;
+      let eW = -1;
+      if (canalDist(p[0], p[1]) <= CANAL_HALF + BANK_N + 0.5) for (let e = 0; e <= 8; e += 0.05) if (canalDist(p[0] + ox * e, p[1] + oz * e) >= CANAL_HALF + BANK_N) { eW = e; break; }
+      if (eW >= 0) {
+        const wx = p[0] + ox * eW, wz = p[1] + oz * eW;
+        // the land 0.8 m outside the wall, as the corridor's wall takes it (across the deck's width: the coping's top
+        // follows it between the wall's segment ends)
+        const bank = W.canalLevelAt(wx) + BANK_ABOVE;
+        let out = -Infinity;
+        for (const sd of [-1.5, 0, 1.5]) out = Math.max(out, ras.heightAt(wx + ox * 0.8 - uz * sd, wz + oz * 0.8 + ux * sd));
+        if (out - bank > 0.5 && !(ras.kindAt(wx + ox * 1.2, wz + oz * 1.2) & (K.BUILDING | K.ROAD | K.WATER))) {
+          const top = Math.max(bank, out) + 0.25 + 0.08; // the coping's top, and a little
+          const ex = wx + ox * 0.75, ez = wz + oz * 0.75; // past the 0.45 m coping
+          landN = top - 0.05; // (the deck adds 0.05 to its ends)
+          if (aN) a = [ex, ez]; else c = [ex, ez];
+          L = Math.hypot(c[0] - a[0], c[1] - a[1]);
+          const land = ras.heightAt(ex + ox * 0.5, ez + oz * 0.5);
+          if (top - land > 0.25) {
+            const len = clamp((top - land) / 0.3, 1, 3); // no steeper than 0.3 (17 degrees)
+            const fx = ex + ox * len, fz = ez + oz * len;
+            ramp = [ex, top, ez, fx, ras.heightAt(fx, fz) - 0.02, fz];
+          }
+        }
+      }
+    }
+    const aIsNorth = a[1] <= c[1];
+    const ya = landN === landN && aIsNorth ? landN : endY(a[0] - ux * 0.5, a[1] - uz * 0.5);
+    const yc = landN === landN && !aIsNorth ? landN : endY(c[0] + ux * 0.5, c[1] + uz * 0.5);
     const mx = (a[0] + c[0]) / 2, mz = (a[1] + c[1]) / 2;
     const buf = chunks.buf('ground', mx, mz);
-    const pb = phys.ground(mx, mz);
+    const pb = phys.trimesh(mx, mz, 'deck'); // a deck over the towpath, not ground (map.heightAt reads ground)
     const segs = 10, hw = 1.4;
     const rx = -uz, rz = ux;
+    chunks.tag('decor'); // deck edges (the deck itself is in the trimesh)
     let prev: number[] | null = null;
     const wd: WalkDeck = { pts: [], hw, h: [] };
     walkDecks.push(wd);
@@ -364,13 +435,23 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
         for (const s of [0, 3]) {
           buf.wall(prev[s], prev[s + 2], cur[s], cur[s + 2], prev[s + 1] - 0.35, prev[s + 1], cur[s + 1] - 0.35, cur[s + 1], COL.darkWood, s ? rx : -rx, s ? rz : -rz);
           // railing: posts + top rail
+          chunks.tag('railing');
           buf.obox(prev[s], prev[s + 1], prev[s + 2], 0.06, 0.06, prev[s + 1] + 1.05, ux, uz, COL.rail);
           const tx = (prev[s] + cur[s]) / 2, tz = (prev[s + 2] + cur[s + 2]) / 2;
           const seg = Math.hypot(cur[s] - prev[s], cur[s + 2] - prev[s + 2]);
           buf.obox(tx, (prev[s + 1] + cur[s + 1]) / 2 + 0.95, tz, seg / 2 + 0.05, 0.05, (prev[s + 1] + cur[s + 1]) / 2 + 1.05, ux, uz, COL.rail);
+          chunks.tag('decor');
         }
       }
       prev = cur;
+    }
+    if (ramp) {
+      // the ramp from the north end down to the land (deck kind: map.heightAt without a height is the land under it)
+      const [x0, y0, z0, x1, y1, z1] = ramp;
+      const q0 = [x0 - rx * hw, z0 - rz * hw, x0 + rx * hw, z0 + rz * hw], q1 = [x1 - rx * hw, z1 - rz * hw, x1 + rx * hw, z1 + rz * hw];
+      buf.quad(q0[0], y0, q0[1], q0[2], y0, q0[3], q1[2], y1, q1[3], q1[0], y1, q1[1], COL.wood, 0, 1, 0);
+      pb.quad(q0[0], y0, q0[1], q0[2], y0, q0[3], q1[2], y1, q1[3], q1[0], y1, q1[1]);
+      for (const sd of [0, 2]) buf.wall(q0[sd], q0[sd + 1], q1[sd], q1[sd + 1], y0 - 0.35, y0, y1 - 0.05, y1, COL.darkWood, sd ? rx : -rx, sd ? rz : -rz);
     }
     // side rails keep people on: a thin slab per side and segment, following the arch (not one box down the middle)
     for (let q = 1; q < wd.pts.length; q++) {
@@ -378,7 +459,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
       const sl = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 2;
       for (const sd of [-1, 1]) {
         const cx = (p0[0] + p1[0]) / 2 + rx * (hw - 0.05) * sd, cz = (p0[1] + p1[1]) / 2 + rz * (hw - 0.05) * sd;
-        phys.box(cx, (y0 + y1 + 1.05) / 2, cz, sl + 0.02, (y1 + 1.05 - y0) / 2, 0.05, ux, uz);
+        phys.box(cx, (y0 + y1 + 1.05) / 2, cz, sl + 0.02, (y1 + 1.05 - y0) / 2, 0.05, ux, uz, 'railing');
       }
     }
   }
@@ -411,6 +492,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     const r = Math.hypot(fp.pts[0][0] - cx, fp.pts[0][1] - cz);
     const y = ras.heightAt(cx + r + 2, cz);
     const buf = chunks.buf('ground', cx, cz);
+    chunks.tag('decor'); // a flat granite pad and water jets
     // granite pad, a thin water film and a ring of jets
     for (let i = 0; i < 24; i++) {
       const a0 = (i / 24) * Math.PI * 2, a1 = ((i + 1) / 24) * Math.PI * 2;
@@ -429,14 +511,17 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     const y = ras.heightAt(cx, cz);
     const buf = chunks.buf('ground', cx, cz);
     const r = 4.2;
+    chunks.tag('fountain');
     buf.cyl(cx, y - 0.2, cz, r + 0.5, r + 0.5, 0.75, 20, COL.granite);
     for (let i = 0; i < 20; i++) {
       const a0 = (i / 20) * Math.PI * 2, a1 = ((i + 1) / 20) * Math.PI * 2;
       fw.tri(cx, y + 0.58, cz, cx + Math.cos(a0) * r, y + 0.58, cz + Math.sin(a0) * r, cx + Math.cos(a1) * r, y + 0.58, cz + Math.sin(a1) * r);
     }
     buf.cyl(cx, y + 0.5, cz, 0.8, 0.6, 0.9, 10, COL.granite);
+    chunks.tag('decor');
     buf.cyl(cx, y + 1.4, cz, 0.35, 0.05, 2.6, 6, COL.jet, false);
-    phys.cylinder(cx, y - 0.2, cz, r + 0.5, 0.75);
+    phys.cylinder(cx, y - 0.2, cz, r + 0.5, 0.75, 'fountain');
+    phys.cylinder(cx, y + 0.5, cz, 0.8, 0.9, 'fountain'); // the centre pedestal
   }
   {
     const m = new THREE.Mesh(fw.geometry(), creekMat);
@@ -513,6 +598,7 @@ export function buildPlazaAndPiers(doc: GeoDoc, ras: GeoRaster, chunks: RenderCh
       const cx = plaza.pts.reduce((s, v) => s + v[0], 0) / n, cz = plaza.pts.reduce((s, v) => s + v[1], 0) / n;
       const ox = mx - cx, oz = mz - cz;
       const nearWater = ras.kindAt(mx + ox * 0.08, mz + oz * 0.08) & K.WATER;
+      chunks.tag('decor'); // the plaza's edge skirt / quay face (the plaza surface edge collides)
       buf.wall(p[0], p[1], q[0], q[1], nearWater ? -2.5 : plazaH(p[0], p[1]) - 1.2, plazaH(p[0], p[1]), nearWater ? -2.5 : plazaH(q[0], q[1]) - 1.2, plazaH(q[0], q[1]), COL.granite, ox, oz);
     }
     const minX = Math.min(...plaza.pts.map((p) => p[0])), maxX = Math.max(...plaza.pts.map((p) => p[0]));
@@ -540,8 +626,9 @@ export function buildPlazaAndPiers(doc: GeoDoc, ras: GeoRaster, chunks: RenderCh
       const y = isPier ? 0.95 : Math.max(1.45, Math.min(2.2, ras.heightAt(mx - uz * 4, mz + ux * 4)));
       const buf = chunks.buf('ground', mx, mz);
       walkDecks.push({ pts: [a, c], hw: w / 2, h: [y, y] });
+      chunks.tag('pier');
       buf.obox(mx, y - 0.3, mz, L / 2 + 0.05, w / 2, y, ux, uz, COL.wood, COL.darkWood);
-      phys.box(mx, y - 0.15, mz, L / 2 + 0.05, 0.15, w / 2, ux, uz);
+      phys.box(mx, y - 0.15, mz, L / 2 + 0.05, 0.15, w / 2, ux, uz, 'pier');
       // planks
       const dec = chunks.buf('decal', mx, mz);
       for (let s = -L / 2; s < L / 2; s += 1.2) {
@@ -549,6 +636,7 @@ export function buildPlazaAndPiers(doc: GeoDoc, ras: GeoRaster, chunks: RenderCh
         dec.quad(px - uz * w / 2, y + 0.008, pz + ux * w / 2, px + uz * w / 2, y + 0.008, pz - ux * w / 2, px + uz * w / 2 + ux * 0.08, y + 0.008, pz - ux * w / 2 + uz * 0.08, px - uz * w / 2 + ux * 0.08, y + 0.008, pz + ux * w / 2 + uz * 0.08, COL.darkWood, 0, 1, 0);
       }
       // piles
+      chunks.tag('decor'); // under the deck, in the water
       for (const s of [-1, 1]) {
         const px = mx - uz * (w / 2 - 0.2) * s, pz = mz + ux * (w / 2 - 0.2) * s;
         buf.cyl(px, -2.2, pz, 0.16, 0.16, y + 2.2 - 0.3, 6, COL.darkWood, false);
@@ -558,9 +646,10 @@ export function buildPlazaAndPiers(doc: GeoDoc, ras: GeoRaster, chunks: RenderCh
       for (const s of [-1, 1]) {
         if (!isPier && !riverSide(s)) continue;
         const px = mx - uz * (w / 2 - 0.08) * s, pz = mz + ux * (w / 2 - 0.08) * s;
+        chunks.tag('railing');
         buf.obox(px, y + 0.95, pz, L / 2, 0.05, y + 1.05, ux, uz, COL.rail);
         buf.obox(px, y, pz, 0.05, 0.05, y + 1.0, ux, uz, COL.rail);
-        phys.box(px, y + 0.55, pz, L / 2, 0.5, 0.06, ux, uz);
+        phys.box(px, y + 0.55, pz, L / 2, 0.5, 0.06, ux, uz, 'railing');
       }
     }
     // a couple of boats on the piers
@@ -574,10 +663,13 @@ export function buildPlazaAndPiers(doc: GeoDoc, ras: GeoRaster, chunks: RenderCh
         const bx = (a[0] + c[0]) / 2 - uz * 3.2 * s, bz = (a[1] + c[1]) / 2 + ux * 3.2 * s;
         if (!(ras.kindAt(bx, bz) & K.WATER)) continue;
         const buf = chunks.buf('ground', bx, bz);
+        chunks.tag('boat');
         const col = COL.boatHull[(hsh + (s > 0 ? 1 : 0)) % COL.boatHull.length];
         const bl = Math.min(L * 0.7, 9) / 2;
         buf.obox(bx, -0.5, bz, bl, 1.3, 0.75, ux, uz, col, shade(col, 0.85), true);
         buf.obox(bx - ux * bl * 0.2, 0.75, bz - uz * bl * 0.2, bl * 0.35, 0.9, 1.7, ux, uz, lin(0xf2f2ee));
+        phys.box(bx, 0.125, bz, bl, 0.625, 1.3, ux, uz, 'boat');
+        phys.box(bx - ux * bl * 0.2, 1.225, bz - uz * bl * 0.2, bl * 0.35, 0.475, 0.9, ux, uz, 'boat');
       }
     }
   }

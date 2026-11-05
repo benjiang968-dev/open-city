@@ -1,8 +1,13 @@
 # Georgetown map: suspicious areas to look at (Milestone 3)
 
-The Georgetown map in `src/data/georgetown.json` is **not OpenStreetMap data**. Overpass could not be reached, so
-it was generated from a hand-written spec (`data/georgetown-spec.json`) based on general knowledge of the place.
-Expect it to be 20–80 m off in most places, and more in the spots listed in part 4.
+**Update 2026-11-05 (Stage 1):** `src/data/georgetown.json` is now **real data**: OpenStreetMap via Overture Maps
+(release 2026-10-21.0) and USGS 3DEP terrain, imported by `scripts/importOverture.mjs`. Part 0 below lists how it
+differs from the old knowledge-based map and the data problems found in the import. Parts 1-4 are the review of the
+old knowledge-based map (2026-11-04); they describe that map, which `npm run gen-georgetown` still produces.
+
+The knowledge-based map was generated from a hand-written spec (`data/georgetown-spec.json`) based on general
+knowledge of the place (Overpass could not be reached). It is 20–80 m off in most places, and more in the spots listed
+in part 4.
 
 This file lists every place where the 3D world built from that data (world generator v2, `src/systems/map/`)
 looked wrong during the review of 2026-11-04. For each place it says what was wrong, how bad it is and whether it
@@ -24,7 +29,134 @@ To take the review screenshots again, run `node scripts/previewShots.mjs --revie
 and compares the result with `heightAt` and `roadSurfaceAt`. It also checks the lanes, the props and how building
 footprints sit against the streets.
 
-Severity:
+
+## 0. Stage 1: the real map (2026-11-05)
+
+Same frame as before: origin 38.9065, -77.061, `lat = 38.9065 − z / 111013.7`, `lon = −77.061 + x / 86740.3`. The
+crop is -77.0726, 38.8986 to -77.0483, 38.9157 (2108 m x 1898 m; x -1006..1102, z -1021..877). The numbers below
+come from comparing the two JSON files (old: `src/data/georgetown.json` at commit 4133d32).
+
+### Stage 1 integration: places that still look or play wrong (2026-11-05, branch `s1-integrate`)
+
+The physics work (exact `heightAt`, colliders for everything drawn, stairs) met the real data for the first time in
+the integration. Fixed there: stair ends off the ground (65 of 86), lanes under overlapping road surfaces, the bridge
+abutment wall across K St. Still open:
+
+| Where (x, z / lat, lon) | What | Status |
+|---|---|---|
+| -349, 240 / 38.90434, -77.06502 | Two short stairs come off a canal footbridge deck behind its railing: not walkable from the deck (`stairs` #5, #6) | open |
+| -934, -24 / 38.90672, -77.07177 | A switchback stair (four pieces, two 90-degree turns): the `stairs` walk stops at the second turn (38.5 of 41.0 m) | open (a player can turn there; the scripted walk does not) |
+| 252, -770 / 38.91344, -77.05809 | A cluster of overlapping stair pieces at different heights: two of them are not walkable end to end (`stairs` #39, #43) | open |
+| 228, -888 / 38.91450, -77.05837 | A stair with a 69-degree bend mid-flight: the walk stops at the bend (29.1 of 35.4 m) | open |
+| 580, 786 / 38.89942, -77.05431; 378, 350 / 38.90335, -77.05664; -540, 310 / 38.90371, -77.06723 | Two road meshes overlap 0.5-1.1 m apart (Virginia Ave, the Rock Creek Parkway under the bridges, the Whitehurst Freeway's west end): the lower one is hidden inside the upper | lanes and walk nodes now lie on the upper (drawn) surface; the meshes still overlap |
+| 158, 433 / 38.90260, -77.05918 | A bridge abutment wall stood across K St under the Whitehurst Freeway's deck end (drawn on s1-realdata, solid with s1-physics): the gate drive crashed into it | fixed (abutments left out over roads) |
+| -648, 170 / 38.90497, -77.06847 (spawn) | The starting car hits the corner pole within 20 m of the spawn (`drive`: 120 -> 52 hp in 3 s); the `stairs` kerb test there finds the pavement 0.39 m below the road | open (carried over from s1-realdata) |
+| -352.6, 302.5 / 38.90378, -77.06507 | `fallthrough`: a dropped capsule rests 0.27 m above the ground, touching nothing the test's rays see | open (1 of 1,303 landings) |
+| -102, -1020 / 38.91569, -77.06218 (north edge); -276, 237 / 38.90437, -77.06418 (footbridge) | `physaudit` railing mismatches: rails drawn where the probe finds no collider, and footbridge rails drawn 1.1 m above a deck with no collider at that height | open (221 railing probe mismatches, 105 floor samples) |
+| everywhere on M St and Wisconsin Ave | 136 trees and 60 lamps, signal poles and sign posts stand within a person's reach of a walk link (they all collide since s1-physics; synthesized street trees are not moved to the kerb strip on real data) | open: no walkway is fully blocked |
+
+### What moved (old knowledge-based line → real line of the same name)
+
+Median and largest distance from the old line's vertices to the real street:
+
+| Street | median | max | Street | median | max |
+|---|---|---|---|---|---|
+| Francis Scott Key Bridge | 78 m | 238 m | M St NW | 18 m | 121 m |
+| R St NW | 78 m | 96 m | 33rd St NW | 17 m | 38 m |
+| Dumbarton St NW | 50 m | 54 m | Rock Creek and Potomac Parkway | 16 m | 179 m |
+| 37th St NW | 48 m | 594 m | 31st St NW | 16 m | 99 m |
+| I St NW | 45 m | 55 m | Prospect St NW | 15 m | 38 m |
+| 24th St NW | 42 m | 43 m | 29th St NW | 14 m | 19 m |
+| Water St NW | 40 m | 108 m | Wisconsin Ave NW | 12 m | 50 m |
+| Potomac St NW | 37 m | 43 m | P St NW | 12 m | 148 m |
+| O St NW | 35 m | 72 m | Whitehurst Freeway | 9 m | 47 m |
+| Canal Rd NW | 33 m | 35 m | Pennsylvania Ave NW | 6 m | 40 m |
+| 23rd St NW | 32 m | 101 m | Thomas Jefferson St NW | 5 m | 6 m |
+| New Hampshire Ave NW | 28 m | 44 m | 30th St NW | 4 m | 43 m |
+| N St NW | 23 m | 29 m | K St NW | 1 m | 36 m |
+| Q St NW | 19 m | 44 m | Washington Circle | 19 m | 35 m |
+
+- **Washington Circle:** centre moved 38 m east (old 908, 444; real 946, 439), radius 55 → 59 m. It is still one
+  closed one-way ring, now counter-clockwise from the data's geometry (Overture keeps no `junction` tag, and only some
+  ring pieces carry a one-way restriction, so the importer finds the ring as a loop of same-name pieces).
+- **C&O Canal:** old centre line 16 m (median) from the real one, at most 45 m. Its four locks are now the data's lock
+  chambers (39-49 m long); the pound levels come from the terrain: 11.0, 8.6, 4.0, 1.4, 0 m west to east (the old
+  tuned values were 5.2 to 2.0 m).
+- **Rock Creek:** the old line was 70 m off (median), up to 237 m. Its water level per vertex now comes from the
+  terrain (4.1 m at the north edge to 0 at the mouth).
+- **Potomac shore:** the real north shore lies 37-79 m further north west of Key Bridge (z 245-374 instead of
+  312-441) and 32-62 m further south east of 31st St.
+- **Terrain:** real minus old heights on a 50 m grid: median +2.3 m, 10th percentile -6.0 m, 90th +10.2 m, largest
+  28.5 m. M St at Wisconsin Ave is at 21.1 m (old 11.6), the Key Bridge landing 21.0 m (old 9.4), Washington Circle
+  21.5 m (old 16.5), R St at Wisconsin 61.1 m (old 58.6).
+- **Counts (old → new):** roads 71 → 1071 pieces, footways 969 → 2024, buildings 3986 (all synthesized) → 4713 (all
+  real footprints; 129 of them, from Esri Community Maps, in their own CC BY 4.0 file), POIs 711 → 1623 (categories
+  only, in their own CDLA-Permissive-2.0 file), parks 12 → 179, car parks 5 → 107, props 6473 → 8534 (real: trees,
+  lamps, benches, 83 signalled junctions, 89 all-way stops, 25 stop signs on one approach, bus stops; the rest flagged
+  synthesized).
+
+### Data problems found (with places)
+
+| Problem | Where (x, z / lat, lon) | What the import or the world does |
+|---|---|---|
+| Overture has no lane counts; 26 segments have a width | everywhere | Width measured from the mapped sidewalk lines either side for 393 pieces (`est: 2`), else a class estimate (`est: 1`); one width per street |
+| Washington Circle ring pieces mostly lack a one-way restriction | 946, 439 / 38.90255, -77.05009 | Ring found as a loop of same-name pieces, made one closed one-way counter-clockwise road |
+| K St underpass under Washington Circle and the Potomac Freeway tunnel under Virginia Ave | 1015, 459 / 38.90237, -77.0493; 605, 794 / 38.89935, -77.05403 | Tunnels (layer < 0) are in the data with their levels but not rendered; their approach ramps are pruned back to the street they leave (36 pieces) |
+| Bare-earth terrain keeps parts of bridges near their abutments | Key Bridge north end -707, 288 / 38.90391, -77.06915 | Junctions inside a bridge take heights interpolated along the bridge; ground under every deck is cut below the deck |
+| Key Bridge north end height is inferred | -707, 288 | The deck must clear the Whitehurst Freeway below. Fixed in review: the freeway's two carriageways (each at layer 1 for 28 m under the bridge, 8 m apart) took each other as a road beneath and ratcheted to 37 m, the bridge to 38 m. A deck no longer clears its own street's other carriageway; the bridge now peaks at 23.7 m (7 % up from the river span's 20 m, down to M St's 21.5 m) with the freeway at 16 m beneath it |
+| 22nd St NW lay exactly on the first crop edge | 1058, 300 / 38.9038, -77.0488 | Crop widened to -77.0483 so the street and its sidewalks are inside |
+| Kalorama (beyond Rock Creek) and the Virginia shore were cut mid-block by the rectangle | north-east of 960, -540 / 38.91136, -77.04993; south of the Potomac centre line | Masked: dropped and turned into woodland (natural edges: the Rock Creek valley, the river) |
+| Juarez Circle pieces do not close into a loop inside the crop | 660, 800 / 38.89929, -77.05339 | Left as plain roads |
+| Driveways into garages, alleys under buildings | 51 pieces | Service roads cut where they enter a footprint (39 cut, 18 dropped); 85 alleys narrowed to the gap between buildings (at least 2.6 m) |
+| Overlapping building footprints from two sources | 13 | The smaller one dropped when 60 % or more lies inside a larger one |
+| Places: 8606 in the download, most offices on upper floors | | 1838 kept: confidence 0.55+, offices 0.8+ and at most 2 per building, categories only |
+| Rock Creek is `waterway=river` in OSM | | Written as the map's `stream` (the world's creek model) |
+| North-west and south-east crop edges | north of S St west of Wisconsin; H St to Virginia Ave | Still a straight cut through the street grid (no natural edge there). Streets that leave the map end in map-edge exits (traffic drives off and is recycled out of sight) |
+| Stop signs: Overture keeps only `highway=stop`, not `stop=all` or the direction | 89 on a junction vertex, 25 on one approach (e.g. O St at Wisconsin Ave, -249, -213 / 38.90842, -77.06387; 35th St at M St, -691, 161 / 38.90505, -77.06897) | A stop sign mapped on the junction vertex is taken as an all-way stop (P St at 27th-31st, K St under the Whitehurst Freeway); one mapped on an approach stops only that approach, which then gives way (before: every one was an all-way stop, so M St and Wisconsin Ave traffic stopped at alleys) |
+| Places with a Foursquare (Apache-2.0) source | 708 of 8606 places in the download box | Dropped (no NOTICE file shipped); the importer stops on any place licence other than CDLA-Permissive-2.0 or CC0-1.0 |
+| Building footprints from Esri Community Maps (CC BY 4.0) | 129 in the crop, mostly Foggy Bottom and the waterfront | Kept in their own file `georgetown-buildings-ccby.json` (CC BY 4.0), not in the ODbL file; the importer stops on an unknown building source licence |
+| One-way pieces that lead nowhere once the tunnels are pruned | Potomac Freeway portal approach 593, 768 / 38.89958, -77.05416, and a few service pieces | No lanes in those directions (traffic drove in and circled at the end); the surface stays drivable. Traffic lanes with no legal move out fell from 48 to 39; the rest are two-way dead ends (cars turn round) and roads leaving the map |
+| A bridge deck ending a few metres before its street's next junction | K St over Rock Creek, 367, 439 / 38.90255, -77.05677 | The deck had to clear its own at-grade continuation (8 m away) and stood 6 m above it: a wall. Roads one short piece from a deck end no longer count as passing under it, and the junction beside a raised deck end rises up to 3 m to meet it |
+| Washington Circle's arc runs over the Pennsylvania Ave / K St junction west of the ring | 878, 420 / 38.90272, -77.05088 | The arc kept its own terrain profile there and stood 0.36 m above the junction's flat plateau (a step across the carriageway); a road crossing another junction's plateau now takes its height |
+| Key Bridge north end and the Whitehurst Freeway west end levels | -792, 197 / 38.90473, -77.07013 | Fixed in review (see the row above): the freeway's west end runs at 16-17 m into M St / Canal Rd (16.8 m) with no drop; it is no longer among the worst grade samples (144 % before; the map's worst is now 64 %, at the Q St bridge's east end, 803, -461). Parapets stand in the gore where the freeway splits from its ramp to Canal Rd (-793, 186) |
+| The Rock Creek / K St / Whitehurst Freeway / Potomac Freeway interchanges | 330-620, 320-800 / 38.8988-38.9036, -77.0572 to -77.0539 | Many ramps at different levels with few bridge flags; the worst road-smoothness numbers are here (see DEVLOG) |
+
+### Scale check (1:1)
+
+Measured on the real map (data widths and the world generator's numbers in `TUNING.geo`), against typical Georgetown
+values:
+
+| | game / data | real Georgetown | verdict |
+|---|---|---|---|
+| traffic lane | 3.3 m (`geo.laneWidth`); primary roads 13.5 m for 4 lanes (3.4 m) | 3.0-3.6 m | ok |
+| residential street | 9.5 m median kerb to kerb, measured from the mapped sidewalks | 9-10.5 m with parking | ok (the 4.75 m half includes the parking strip; narrow streets park on one kerb) |
+| one-way residential | 8 m, one lane plus parking | 7.5-9 m | ok |
+| sidewalk | 3.0 m (`geo.sidewalkWidth`) | 2.4-4.5 m (brick) | ok |
+| kerb | 0.15 m (`geo.kerbHeight`) | 0.15-0.18 m (6-7 in) | ok |
+| storey | facades 3.2 m (ground floor 3.3-4.2 m); data height / levels median 3.6 m (roof included) | 3.0-3.8 m | ok |
+| rowhouse | 3 storeys median, 96 % of houses 2-4 storeys, about 10 m | 2-4 storeys | ok |
+| door | about 1.1 x 2.2 m panel, 2.6 m with the transom | 0.9-1.0 x 2.1-2.4 m plus transom | slightly wide, left as is |
+| person | player capsule 1.8 m; people 1.75 m tall | 1.5-1.9 m | ok |
+| cars (colliders) | hatchback 1.7 x 3.7 m, sedan 1.84 x 4.5 m, pickup 2.0 x 5.1 m | 1.7 x 4.0, 1.8 x 4.8, 2.0 x 5.5 m | 5-10 % short, left as is |
+| Washington Circle | ring radius 59 m, 4 lanes | about 60 m | ok (the old map had 55 m) |
+
+The only outliers that needed a fix were road widths (the class estimate was 1-4 m too narrow on M St, K St and
+Pennsylvania Ave; widths are now measured from the mapped sidewalk lines where they exist) and alleys (narrowed to the
+gap between the buildings either side).
+
+### Crop edges
+
+- **Natural edges:** the Potomac in the south-west (the Virginia shore and Roosevelt Island are dropped and become
+  woods), the Rock Creek valley in the north-east (Kalorama beyond it becomes woods), Dumbarton Oaks and Montrose Park
+  along the north edge east of Wisconsin Ave.
+- **Cuts through the street grid (still open):** the west edge at the Georgetown University campus and Foxhall Rd, the
+  north edge west of Wisconsin Ave (Burleith, north of S St), the east edge at 22nd St and the south-east corner in
+  Foggy Bottom (H St to Virginia Ave). There is no natural feature to end on there. Streets that cross these edges end
+  in map-edge exits (traffic leaves and is recycled out of sight); blocks are cut where the rectangle cuts them
+  (buildings mostly outside the crop are dropped). Growing the map to the next natural edges (Glover-Archbold Park in
+  the west, the Kennedy Center / Potomac in the south-east) is Stage 7 work.
+
+Severity (parts 1-3, the knowledge-based map):
 
 - **high:** breaks driving or walking (you fall through, hit an invisible wall, or a car is launched).
 - **medium:** clearly visible, or wrong by more than 5 cm where things get placed.

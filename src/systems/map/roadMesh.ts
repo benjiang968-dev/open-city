@@ -5,7 +5,8 @@
 import { TUNING } from '../../tuning';
 import type { GeoDoc } from './geoDoc';
 import { SegGrid, clamp, pointInPoly } from './geoDoc';
-import { lin, shade, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
+import { lin, shade, type Holes, type MeshBuf, type PhysBuf, type PhysChunks, type RenderChunks } from './meshKit';
+import { SURF, surf } from '../render/surfaces';
 import { pointAtS, type REdge, type RNode, type RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
 
@@ -13,25 +14,27 @@ const G = TUNING.geo;
 
 // ----------------------------------------------------------------------------------------- art constants
 const DH = 0.012; // m decals float above the surface (plus polygon offset)
+const MIN_SECTION = 0.6; // m: shortest gap between cross-sections along a road
+const DEAD_END_CAP = 1.5; // m of carriageway drawn beyond a dead end's last section
 /** m of extra paving from the back of the sidewalk to the building line (the data sets buildings 1 m back). */
 export const FRONTAGE = 1.0;
 const SKIRT = 0.9; // m skirts reach below sidewalk / road edges
 const WEST_END_X = 380; // m: east of this, concrete sidewalks instead of brick
 export const COL = {
-  asphalt: lin(0x4b4e54),
-  asphaltMain: lin(0x45484d),
-  asphaltFreeway: lin(0x50535a),
-  sett: lin(0x7d7268),
-  brickWalk: lin(0xa86a55),
-  concreteWalk: lin(0xbcb7ad),
-  kerb: lin(0xa3a29c),
-  skirt: lin(0x7a7268),
-  deck: lin(0xa9a69e),
-  deckUnder: lin(0x8e8b84),
-  white: lin(0xeeeee6),
-  yellow: lin(0xe5b52f),
-  rail: lin(0x5b5550),
-  pit: lin(0x5a4a3a),
+  asphalt: surf(SURF.ASPHALT, lin(0x4b4e54)),
+  asphaltMain: surf(SURF.ASPHALT, lin(0x45484d)),
+  asphaltFreeway: surf(SURF.ASPHALT, lin(0x50535a)),
+  sett: surf(SURF.SETT, lin(0x7d7268)),
+  brickWalk: surf(SURF.BRICK_PAVER, lin(0xa86a55)),
+  concreteWalk: surf(SURF.CONCRETE_SLAB, lin(0xbcb7ad)),
+  kerb: surf(SURF.GRANITE, lin(0xa3a29c)),
+  skirt: surf(SURF.CONCRETE, lin(0x7a7268)),
+  deck: surf(SURF.CONCRETE, lin(0xa9a69e)),
+  deckUnder: surf(SURF.CONCRETE, lin(0x8e8b84)),
+  white: surf(SURF.PAINT, lin(0xeeeee6)),
+  yellow: surf(SURF.PAINT, lin(0xe5b52f)),
+  rail: surf(SURF.RAIL, lin(0x5b5550)),
+  pit: surf(SURF.SOIL, lin(0x5a4a3a)),
 };
 
 export interface Cross {
@@ -48,8 +51,12 @@ export function sections(e: REdge, s0: number, s1: number): Cross[] {
   const a = pointAtS(e, s0);
   out.push({ s: s0, x: a.x, z: a.z, rx: -a.uz, rz: a.ux });
   const P = e.pts, c = e.cum;
+  let last = s0;
   for (let k = 1; k < P.length - 1; k++) {
-    if (c[k] <= s0 + 0.05 || c[k] >= s1 - 0.05) continue;
+    // vertices closer than MIN_SECTION to the previous section (or the end) are skipped: on a curve two mitred sections
+    // a few cm apart put the inner offset lines (kerb, inner lanes) a few cm backwards (real data has such vertex pairs)
+    if (c[k] <= last + MIN_SECTION || c[k] >= s1 - MIN_SECTION) continue;
+    last = c[k];
     let ux = P[k][0] - P[k - 1][0], uz = P[k][1] - P[k - 1][1];
     let vx = P[k + 1][0] - P[k][0], vz = P[k + 1][1] - P[k][1];
     const lu = Math.hypot(ux, uz) || 1, lv = Math.hypot(vx, vz) || 1;
@@ -72,8 +79,9 @@ const inRanges = (r: [number, number, number][], side: number, s: number) => r.s
 // ======================================================================================================
 /** Write road, junction and sidewalk bands (exact heights) into the raster. Decks only set kind flags. */
 export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number, number][] }[]) {
-  const h = ras.h!, band = ras.band, k = ras.k;
+  const h = ras.h!, base = ras.t!, band = ras.band, k = ras.k;
   const kerb = G.kerbHeight;
+  const own = new Float32Array(band.length).fill(1e9); // distance of each road cell to its road's centre line
   for (const e of net.edges) {
     const s0 = e.trimA, s1 = e.L - e.trimB;
     if (s1 - s0 < 0.05) continue;
@@ -99,7 +107,18 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       const hw = e.hw;
       if (e.deck) {
         const W = hw + G.sidewalkWidth;
-        ras.fillQuad(p.x - p.rx * W, p.z - p.rz * W, p.x + p.rx * W, p.z + p.rz * W, q.x + q.rx * W, q.z + q.rz * W, q.x - q.rx * W, q.z - q.rz * W, (o) => { k[o] |= K.DECK | K.ROAD; });
+        // natural ground may not reach the deck's underside (a bridge abutment in a hillside, a bump in the real
+        // terrain under a span): it is cut down to below the deck, base and working heights both (blending rebuilds
+        // natural cells from the base)
+        const th = G.deckThickness + (e.freeway ? 0.3 : 0) + G.deckGroundGap;
+        ras.fillQuad(p.x - p.rx * W, p.z - p.rz * W, p.x + p.rx * W, p.z + p.rz * W, q.x + q.rx * W, q.z + q.rz * W, q.x - q.rx * W, q.z - q.rz * W, (o, x, z) => {
+          k[o] |= K.DECK | K.ROAD;
+          if (band[o] !== B.NONE) return;
+          const t = clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0, 1);
+          const under = hp + (hq - hp) * t - th;
+          if (base[o] > under) base[o] = under;
+          if (h[o] > under) h[o] = under;
+        });
         continue;
       }
       // kerb lines (a real step: sidewalk on that side, kerb not dropped) for the step-distance raster
@@ -108,6 +127,11 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       const kL = kerbed(-1), kR = kerbed(1);
       const kerbDist = (x: number, z: number, side: number) => segDistN(x, z, p.x + p.rx * hw * side, p.z + p.rz * hw * side, q.x + q.rx * hw * side, q.z + q.rz * hw * side);
       ras.fillQuad(p.x - p.rx * hw, p.z - p.rz * hw, p.x + p.rx * hw, p.z + p.rz * hw, q.x + q.rx * hw, q.z + q.rz * hw, q.x - q.rx * hw, q.z - q.rz * hw, (o, x, z) => {
+        // where two carriageways overlap (dual carriageways, slip roads, driveways at a kerb), the cell belongs to the
+        // road whose centre line is nearer, so each road's lanes read their own surface
+        const d = segDistN(x, z, p.x, p.z, q.x, q.z);
+        if (band[o] === B.ROAD && own[o] < d) return;
+        own[o] = d;
         const t = clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0, 1);
         h[o] = hp + (hq - hp) * t;
         band[o] = B.ROAD;
@@ -132,8 +156,24 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       }
     }
   }
+  // dead ends (a driveway or alley that just stops): a short flat cap of carriageway beyond the last section, so the
+  // road surface (and heightAt) does not stop exactly at the last lane point
+  for (const c of deadEndCaps(net)) {
+    ras.fillQuad(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], (o) => {
+      if (band[o] === B.ROAD) return;
+      h[o] = c[8];
+      band[o] = B.ROAD;
+      k[o] = (k[o] & ~(K.WATER | K.PARK | K.WALK)) | K.ROAD;
+    });
+  }
   for (const n of net.nodes) {
     if (n.outline.length < 6) continue;
+    // a junction inside a bridge (every arm a deck) is part of the deck, not the ground: only its kind flags go into
+    // the raster (its surface is in the deck index; writing its height would lift the street underneath)
+    if (isDeckNode(n)) {
+      ras.fillPoly(n.outline, (o) => { k[o] |= K.DECK | K.ROAD; });
+      continue;
+    }
     // distance to the nearest sidewalk corner kerb (the steps around this junction)
     const pathDist = (x: number, z: number, P: number[]) => {
       let d = Infinity;
@@ -157,6 +197,55 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       });
     }
   }
+  // grade separations the data does not mark as bridges: stretches of an at-grade road whose surface is not the one the
+  // raster ended up with (another road owns those cells at a different height) are flagged for the deck index
+  let flagged = 0;
+  for (const e of net.edges) {
+    if (e.deck || e.L < 0.05) continue;
+    // the whole edge, plateaus included (a neighbouring junction's plateau may have taken those cells)
+    const X = sections(e, 0, e.L);
+    const ov = new Uint8Array(X.length);
+    let anyOv = false;
+    for (let i = 1; i < X.length; i++) {
+      const p = X[i - 1], q = X[i];
+      for (const u of [0.25, 0.75]) for (const f of [-0.7, 0, 0.7]) {
+        const x = p.x + (q.x - p.x) * u + (p.rx + q.rx) * 0.5 * e.hw * f, z = p.z + (q.z - p.z) * u + (p.rz + q.rz) * 0.5 * e.hw * f;
+        const ii = Math.round(x - ras.x0), jj = Math.round(z - ras.z0);
+        if (ii < 0 || jj < 0 || ii >= ras.nx || jj >= ras.nz) continue;
+        const want = net.profAt(e, p.s + (q.s - p.s) * u);
+        if (Math.abs(h[jj * ras.nx + ii] - want) > G.overlayTolerance) { ov[i] = 1; anyOv = true; }
+      }
+    }
+    if (anyOv) { e.overlay = ov; flagged++; }
+  }
+  void flagged;
+
+}
+
+/**
+ * Flat caps beyond the open end of at-grade roads that stop at a dead end inside the map: [ax, az, bx, bz, cx, cz,
+ * dx, dz, y, outward nx, nz] (quad left-end, right-end, right-out, left-out).
+ */
+export function deadEndCaps(net: RoadNet): number[][] {
+  const out: number[][] = [];
+  for (const e of net.edges) {
+    if (e.deck) continue;
+    for (const atStart of [true, false]) {
+      const n = atStart ? e.a : e.b;
+      if (n.arms.length !== 1) continue;
+      const q = pointAtS(e, atStart ? 0 : e.L);
+      const ux = atStart ? -q.ux : q.ux, uz = atStart ? -q.uz : q.uz; // outward
+      const rx = -uz * e.hw, rz = ux * e.hw;
+      const L = DEAD_END_CAP, y = atStart ? e.prof[0] : e.prof[e.prof.length - 1];
+      out.push([q.x + rx, q.z + rz, q.x - rx, q.z - rz, q.x - rx + ux * L, q.z - rz + uz * L, q.x + rx + ux * L, q.z + rz + uz * L, y, ux, uz]);
+    }
+  }
+  return out;
+}
+
+/** A junction whose every arm is a bridge deck (real data splits bridges where ramps join): it is part of the deck. */
+export function isDeckNode(n: RNode): boolean {
+  return n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
 }
 
 /** Distance from a point to a segment (no allocation: the step raster calls this for every road cell). */
@@ -184,12 +273,22 @@ export interface NetMeshInfo {
   crossings: { x: number; z: number; ux: number; uz: number; len: number; edge: number }[];
 }
 
-export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, phys: PhysChunks): NetMeshInfo {
+export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, phys: PhysChunks, holes: Holes): NetMeshInfo {
+  /** A sidewalk quad (render and physics) with the stairwells cut out of it. */
+  const paveQuad = (buf: MeshBuf, pb: PhysBuf, ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number, dx: number, dy: number, dz: number, col: number) => {
+    for (const [p, q, r] of [[[ax, ay, az], [bx, by, bz], [cx, cy, cz]], [[ax, ay, az], [cx, cy, cz], [dx, dy, dz]]]) {
+      holes.clipTri(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2], (v) => {
+        buf.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14], col, 0, 1, 0);
+        pb.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14]);
+      });
+    }
+  };
   const kerb = G.kerbHeight, sw = G.sidewalkWidth;
   const edgeGrid = new SegGrid(32);
   for (const e of net.edges) edgeGrid.addLine(e.pts, e.id, e.hw + sw + 2);
 
   // ---------------------------------------------------------------- surfaces
+  chunks.tag('ground');
   for (const e of net.edges) {
     const s0 = e.trimA, s1 = e.L - e.trimB;
     if (s1 - s0 < 0.05) continue;
@@ -200,7 +299,9 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
       const hp = net.profAt(e, p.s), hq = net.profAt(e, q.s);
       const mx = (p.x + q.x) / 2, mz = (p.z + q.z) / 2;
       const buf = chunks.buf('ground', mx, mz);
-      const pb = phys.ground(mx, mz);
+      // a deck's carriageway, kerbs and sidewalks are deck colliders (map.heightAt without a height is the ground
+      // under the bridge, surfaceIndex.ts)
+      const pb = e.deck ? phys.trimesh(mx, mz, 'deck') : phys.ground(mx, mz);
       const hw = e.hw;
       const Lpx = p.x - p.rx * hw, Lpz = p.z - p.rz * hw, Rpx = p.x + p.rx * hw, Rpz = p.z + p.rz * hw;
       const Lqx = q.x - q.rx * hw, Lqz = q.z - q.rz * hw, Rqx = q.x + q.rx * hw, Rqz = q.z + q.rz * hw;
@@ -219,15 +320,19 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
           const ox1 = q.x + q.rx * (hw + sw + fill) * side, oz1 = q.z + q.rz * (hw + sw + fill) * side;
           const ik = dropped ? 0.01 : kerb;
           if (!dropped) {
-            buf.wall(ex0, ez0, ex1, ez1, hp, hp + kerb, hq, hq + kerb, COL.kerb, -nx, -nz);
-            pb.quad(ex0, hp, ez0, ex1, hq, ez1, ex1, hq + kerb, ez1, ex0, hp + kerb, ez0);
+            chunks.tag('kerb');
+            if (!holes.inside((ex0 + ex1) / 2, (ez0 + ez1) / 2)) {
+              buf.wall(ex0, ez0, ex1, ez1, hp, hp + kerb, hq, hq + kerb, COL.kerb, -nx, -nz);
+              pb.quad(ex0, hp, ez0, ex1, hq, ez1, ex1, hq + kerb, ez1, ex0, hp + kerb, ez0);
+            }
           }
           const wc = walkCol(mx);
-          buf.quad(ex0, hp + ik, ez0, ox0, hp + kerb, oz0, ox1, hq + kerb, oz1, ex1, hq + ik, ez1, wc, 0, 1, 0);
-          pb.quad(ex0, hp + ik, ez0, ox0, hp + kerb, oz0, ox1, hq + kerb, oz1, ex1, hq + ik, ez1);
+          paveQuad(buf, pb, ex0, hp + ik, ez0, ox0, hp + kerb, oz0, ox1, hq + kerb, oz1, ex1, hq + ik, ez1, wc);
+          chunks.tag('decor'); // skirts hang below a surface whose edge collides
           if (!e.deck) buf.wall(ox0, oz0, ox1, oz1, hp + kerb - SKIRT, hp + kerb, hq + kerb - SKIRT, hq + kerb, COL.skirt, nx, nz);
           if (side < 0) outerL = hw + sw; else outerR = hw + sw;
         } else if (!e.deck) {
+          chunks.tag('decor');
           buf.wall(ex0, ez0, ex1, ez1, hp - SKIRT, hp, hq - SKIRT, hq, COL.skirt, nx, nz);
         }
       }
@@ -237,18 +342,33 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
         const kL = outerL > hw ? kerb : 0, kR = outerR > hw ? kerb : 0;
         const aLx = p.x - p.rx * outerL, aLz = p.z - p.rz * outerL, bLx = q.x - q.rx * outerL, bLz = q.z - q.rz * outerL;
         const aRx = p.x + p.rx * outerR, aRz = p.z + p.rz * outerR, bRx = q.x + q.rx * outerR, bRz = q.z + q.rz * outerR;
+        chunks.tag('deck');
         buf.wall(aLx, aLz, bLx, bLz, hp - th, hp + kL, hq - th, hq + kL, COL.deck, -(p.rx + q.rx) / 2, -(p.rz + q.rz) / 2);
         buf.wall(aRx, aRz, bRx, bRz, hp - th, hp + kR, hq - th, hq + kR, COL.deck, (p.rx + q.rx) / 2, (p.rz + q.rz) / 2);
+        // the deck's edges collide too (where the ground beside a deck end is near deck height nothing slips under)
+        const pd = phys.trimesh(mx, mz, 'deck');
+        pd.quad(aLx, hp - th, aLz, bLx, hq - th, bLz, bLx, hq + kL, bLz, aLx, hp + kL, aLz);
+        pd.quad(aRx, hp - th, aRz, bRx, hq - th, bRz, bRx, hq + kR, bRz, aRx, hp + kR, aRz);
         buf.quad(aLx, hp - th, aLz, aRx, hp - th, aRz, bRx, hq - th, bRz, bLx, hq - th, bLz, COL.deckUnder, 0, -1, 0);
       }
     }
   }
 
+  // ---------------------------------------------------------------- dead-end caps (see rasterizeNet)
+  for (const c of deadEndCaps(net)) {
+    const mx = (c[0] + c[4]) / 2, mz = (c[1] + c[5]) / 2, y = c[8];
+    chunks.buf('ground', mx, mz).quad(c[2], y, c[3], c[0], y, c[1], c[6], y, c[7], c[4], y, c[5], COL.asphalt, 0, 1, 0);
+    phys.ground(mx, mz).quad(c[2], y, c[3], c[0], y, c[1], c[6], y, c[7], c[4], y, c[5]);
+    chunks.tag('decor'); // the skirt hangs below the cap's edge
+    chunks.buf('ground', mx, mz).wall(c[6], c[7], c[4], c[5], y - SKIRT, y, y - SKIRT, y, COL.skirt, c[9], c[10]);
+  }
+
   // ---------------------------------------------------------------- junctions and corners
   for (const n of net.nodes) {
+    const deckNode = isDeckNode(n);
     if (n.outline.length >= 6) {
       const buf = chunks.buf('ground', n.x, n.z);
-      const pb = phys.ground(n.x, n.z);
+      const pb = deckNode ? phys.trimesh(n.x, n.z, 'deck') : phys.ground(n.x, n.z);
       const O = n.outline, m = O.length / 2;
       const col = junctionCol(n);
       for (let i = 0; i < m; i++) {
@@ -257,12 +377,23 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
         pb.tri(n.x, n.h, n.z, O[i * 2], n.h, O[i * 2 + 1], O[j * 2], n.h, O[j * 2 + 1]);
       }
     }
-    for (const c of n.corners) cornerMesh(n, c.pts, c.outward, c.armA.edge.deck && c.armB.edge.deck ? sw : sw + FRONTAGE);
+    for (const c of n.corners) { const dk = c.armA.edge.deck && c.armB.edge.deck; cornerMesh(n, c.pts, c.outward, dk ? sw : sw + FRONTAGE, dk); }
+    if (deckNode) {
+      // underside of a junction inside a bridge
+      const O = n.outline, m = O.length / 2, th = G.deckThickness;
+      const buf = chunks.buf('ground', n.x, n.z);
+      for (let i = 0; i < m; i++) {
+        const j = (i + 1) % m;
+        buf.tri(n.x, n.h - th, n.z, O[j * 2], n.h - th, O[j * 2 + 1], O[i * 2], n.h - th, O[i * 2 + 1], COL.deckUnder, 0, -1, 0);
+      }
+      continue;
+    }
     for (const path of n.kerbs) {
       const buf = chunks.buf('ground', n.x, n.z);
       for (let i = 2; i < path.length; i += 2) {
         const ax = path[i - 2], az = path[i - 1], bx = path[i], bz = path[i + 1];
         const mx = (ax + bx) / 2 - n.x, mz = (az + bz) / 2 - n.z;
+        chunks.tag('decor');
         buf.wall(ax, az, bx, bz, n.h - SKIRT, n.h, n.h - SKIRT, n.h, COL.skirt, mx, mz);
       }
     }
@@ -272,9 +403,9 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
     for (const a of n.arms) if (a.edge.hw > (best?.hw ?? 0)) best = a.edge;
     return best ? roadCol(best) : COL.asphalt;
   }
-  function cornerMesh(n: RNode, P: number[], N: number[], sw: number) {
+  function cornerMesh(n: RNode, P: number[], N: number[], sw: number, deck: boolean) {
     const buf = chunks.buf('ground', n.x, n.z);
-    const pb = phys.ground(n.x, n.z);
+    const pb = deck ? phys.trimesh(n.x, n.z, 'deck') : phys.ground(n.x, n.z);
     const y0 = n.h, y1 = n.h + kerb;
     const wc = walkCol(n.x);
     for (let i = 2; i < P.length; i += 2) {
@@ -282,10 +413,11 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
       const anx = N[i - 2], anz = N[i - 1], bnx = N[i], bnz = N[i + 1];
       const aox = ax + anx * sw, aoz = az + anz * sw, box = bx + bnx * sw, boz = bz + bnz * sw;
       const hx = (anx + bnx) / 2, hz = (anz + bnz) / 2;
+      chunks.tag('kerb');
       buf.wall(ax, az, bx, bz, y0, y1, y0, y1, COL.kerb, -hx, -hz);
       pb.quad(ax, y0, az, bx, y0, bz, bx, y1, bz, ax, y1, az);
-      buf.quad(ax, y1, az, aox, y1, aoz, box, y1, boz, bx, y1, bz, wc, 0, 1, 0);
-      pb.quad(ax, y1, az, aox, y1, aoz, box, y1, boz, bx, y1, bz);
+      paveQuad(buf, pb, ax, y1, az, aox, y1, aoz, box, y1, boz, bx, y1, bz, wc);
+      chunks.tag('decor');
       buf.wall(aox, aoz, box, boz, y1 - SKIRT, y1, y1 - SKIRT, y1, COL.skirt, hx, hz);
     }
   }

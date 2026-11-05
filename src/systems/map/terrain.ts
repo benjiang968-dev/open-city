@@ -3,7 +3,8 @@
 // (grass, earth, river banks, the Rock Creek valley) with matching static physics.
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, pointInPoly } from './geoDoc';
-import { lin, mixc, shade, type RenderChunks, type PhysChunks } from './meshKit';
+import { lin, mixc, shade, type Holes, type RenderChunks, type PhysChunks } from './meshKit';
+import { SURF, surf } from '../render/surfaces';
 
 /** Kind flags stored per 1 m cell. */
 export const K = {
@@ -35,17 +36,17 @@ const BAND_DIP = 0.3; // m the terrain mesh sits below road/sidewalk surfaces
 const BLEND_CELL = 4; // m, coarse grid used to blend terrain into road bands
 const BLEND_RADIUS = 4; // coarse cells (box blur radius, applied twice)
 const COL = {
-  grass: lin(0x7fae5a),
-  grassDry: lin(0x9db467),
-  park: lin(0x6aa64c),
-  cemetery: lin(0x5f9446),
-  yard: lin(0x7ea558),
-  earth: lin(0x8a7357),
-  mud: lin(0x7d7158),
-  sand: lin(0xc9b98f),
-  bed: lin(0x5d6a55),
-  outer: lin(0x6f9650),
-  outerFar: lin(0x56794a),
+  grass: surf(SURF.TERRAIN, lin(0x7fae5a)),
+  grassDry: surf(SURF.TERRAIN, lin(0x9db467)),
+  park: surf(SURF.TERRAIN, lin(0x6aa64c)),
+  cemetery: surf(SURF.TERRAIN, lin(0x5f9446)),
+  yard: surf(SURF.TERRAIN, lin(0x7ea558)),
+  earth: surf(SURF.TERRAIN, lin(0x8a7357)),
+  mud: surf(SURF.TERRAIN, lin(0x7d7158)),
+  sand: surf(SURF.TERRAIN, lin(0xc9b98f)),
+  bed: surf(SURF.TERRAIN, lin(0x5d6a55)),
+  outer: surf(SURF.TERRAIN, lin(0x6f9650)),
+  outerFar: surf(SURF.TERRAIN, lin(0x56794a)),
 };
 
 export class GeoRaster {
@@ -295,7 +296,7 @@ export class GeoRaster {
 }
 
 /** Terrain mesh on a 5 m grid sampled from the raster (dipped under bands, holes in the canal corridor). */
-export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, cemetery: Pt[] | null, waterLevelAt: (x: number, z: number) => number) {
+export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, cemetery: Pt[] | null, waterLevelAt: (x: number, z: number) => number, holes: Holes) {
   const st = MESH_STEP;
   const nx = Math.floor((ras.nx - 1) / st) + 1, nz = Math.floor((ras.nz - 1) / st) + 1;
   const n = nx * nz;
@@ -309,11 +310,13 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
       const o = at(i, j), v = j * nx + i;
       const b = ras.band[o];
       vb[v] = b;
-      vy[v] = hq[o] * 0.01 - (b === B.ROAD || b === B.FLAT || b === B.BUILDING ? BAND_DIP : 0);
+      vy[v] = hq[o] * 0.01 - (b === B.ROAD || b === B.FLAT ? BAND_DIP : 0);
     }
   // A natural vertex next to a road / sidewalk vertex may not stand above that band's surface: in a cutting (the
   // Parkway under the Rock Creek banks) the 5 m triangle between them otherwise pokes up to 0.8 m through the
-  // carriageway (a ridge cars hit). The bank then starts rising one mesh step further out.
+  // carriageway (a ridge cars hit). The bank then starts rising one mesh step further out. A vertex under a building
+  // is capped the same way (it is no longer dipped: the terrain under buildings is kept as the floor of the gaps
+  // between houses, and a dip made a 0.3 m trough along every wall the raster's building band overhangs).
   {
     const cap = new Float32Array(n).fill(Infinity);
     for (let j = 0; j < nz; j++)
@@ -326,7 +329,7 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
             const ii = i + di, jj = j + dj;
             if (ii < 0 || jj < 0 || ii >= nx || jj >= nz) continue;
             const u = jj * nx + ii;
-            if (vb[u] === B.NONE && top < cap[u]) cap[u] = top;
+            if ((vb[u] === B.NONE || vb[u] === B.BUILDING) && top < cap[u]) cap[u] = top;
           }
       }
     for (let v = 0; v < n; v++) if (vy[v] > cap[v]) vy[v] = cap[v];
@@ -371,9 +374,11 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
     if (ba === B.HOLE || bb === B.HOLE || bc === B.HOLE) return false; // the canal corridor and its aprons cover this
     // deep under the river / canal / creek water (opaque water hides it)
     if (vy[a] < -0.9 && vy[b] < -0.9 && vy[c] < -0.9) return false;
-    // fully under roads / sidewalks / buildings: hidden, unless it is the only ground over a strip of natural cells
-    // (a gap narrower than the 5 m mesh between a sidewalk and a building, an alley): then keep it (dipped)
-    const covered = (q: number) => q === B.ROAD || q === B.FLAT || q === B.BUILDING;
+    // fully under roads / sidewalks: hidden, unless it is the only ground over a strip of natural cells (a gap
+    // narrower than the 5 m mesh between a sidewalk and a building, an alley): then keep it (dipped). Under buildings
+    // it stays (dipped): the gaps between neighbouring houses (0.3-1 m slots, the raster marks them as building) had
+    // no floor at all, and a player walking in fell to the safety floor.
+    const covered = (q: number) => q === B.ROAD || q === B.FLAT;
     if (covered(ba) && covered(bb) && covered(bc)) return coversNatural(i, j, tri, flip);
     return true;
   };
@@ -393,8 +398,12 @@ export function buildTerrainMesh(ras: GeoRaster, chunks: RenderChunks, phys: Phy
         const [a, b, c, ax, az, bx, bz, cx, cz] = T[t];
         if (!keepTri(a, b, c, i, j, t, flip)) continue;
         kept[(j * (nx - 1) + i) * 2 + t] = 1;
-        emitSmooth(buf, ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz, vc[a], vc[b], vc[c], nx, vy, st, ras.x0, ras.z0);
-        pb.tri(ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz);
+        // stairwells cut out (render and physics): pieces keep the triangle's smooth shading and vertex colours
+        holes.clipTri(ax, vy[a], az, bx, vy[b], bz, cx, vy[c], cz, (v) => {
+          const col = (k: number) => mixc(mixc(vc[a], vc[b], v[k + 4] / Math.max(1e-6, v[k + 3] + v[k + 4])), vc[c], v[k + 5]);
+          emitSmooth(buf, v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14], col(0), col(6), col(12), nx, vy, st, ras.x0, ras.z0);
+          pb.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14]);
+        });
         tris++;
       }
     }

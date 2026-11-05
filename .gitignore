@@ -6,3 +6,4 @@ data/osm/*.osm
 data/osm/*.osm.gz
 screenshots/*.svg
 screenshots/dbg-*.png
+data/overture/

@@ -12,7 +12,7 @@
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import * as zlib from 'node:zlib';
 
@@ -38,6 +38,12 @@ const args = { map: 'src/data/georgetown.json', out: 'screenshots/24-map-preview
 }
 
 const doc = JSON.parse(readFileSync(args.map, 'utf8'));
+// real data: places and CC BY 4.0 footprints live in companion files next to the main file (their own licences)
+if (doc.meta?.companions) {
+  const near = (f) => JSON.parse(readFileSync(join(dirname(args.map), f), 'utf8'));
+  doc.pois = near(doc.meta.companions.pois).pois;
+  doc.buildings = doc.buildings.concat(near(doc.meta.companions.buildings).buildings);
+}
 const B = doc.meta.bounds;
 const W = B.x1 - B.x0, H = B.z1 - B.z0;
 const k = args.width / W; // px per metre
@@ -148,7 +154,7 @@ function contours(interval) {
   const minor = [], major = [];
   const v = (ix, iz) => h.data[iz * h.nx + ix];
   const xs = (ix) => h.x0 + ix * h.spacing, zs = (iz) => h.z0 + iz * h.spacing;
-  const lo = Math.ceil(Math.min(...h.data) / interval) * interval, hi = Math.max(...h.data);
+  const lo = Math.ceil(h.data.reduce((a, b) => Math.min(a, b)) / interval) * interval, hi = h.data.reduce((a, b) => Math.max(a, b));
   for (let level = Math.max(interval, lo); level <= hi; level += interval) {
     const out = level % (interval * 5) === 0 ? major : minor;
     for (let iz = 0; iz < h.nz - 1; iz++) {

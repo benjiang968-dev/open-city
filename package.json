@@ -10,6 +10,8 @@
     "shot": "node scripts/shot.mjs",
     "import-osm": "node scripts/importOsm.mjs",
     "gen-georgetown": "node scripts/georgetownFromSpec.mjs",
+    "import-overture": "node scripts/importOverture.mjs",
+    "fetch-overture": "python3 -I scripts/fetchOverture.py",
     "preview-map": "node scripts/previewMap.mjs",
     "deploy": "npm run build && gh-pages -d dist --dotfiles"
   },

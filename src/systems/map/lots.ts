@@ -5,11 +5,12 @@ import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, pointInPoly } from './geoDoc';
 import { lin, type PhysChunks, type RenderChunks } from './meshKit';
-import { pointAtS, type REdge, type RoadNet } from './roadNet';
+import { SURF, surf } from '../render/surfaces';
+import { plateauFade, pointAtS, type REdge, type RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
 
 const G = TUNING.geo;
-const COL = { asphalt: lin(0x55585d), kerb: lin(0xa3a29c), line: lin(0xeeeee6), skirt: lin(0x7a7268) };
+const COL = { asphalt: surf(SURF.ASPHALT, lin(0x55585d)), kerb: surf(SURF.GRANITE, lin(0xa3a29c)), line: surf(SURF.PAINT, lin(0xeeeee6)), skirt: surf(SURF.CONCRETE, lin(0x7a7268)) };
 const ENTRANCE_W = 7.5; // m
 
 export interface GeoLot {
@@ -29,9 +30,12 @@ interface LotPlan {
   bx: number;
   bz: number;
   entrance: { x: number; z: number; y: number; edge: REdge | null; side: number; s: number; polyEdge: number };
+  /** m from the street's kerb to the lot edge at the entrance */
+  gap: number;
 }
 
-export function rasterizeLots(doc: GeoDoc, ras: GeoRaster, net: RoadNet): LotPlan[] {
+/** Plan every car park (surface plane, entrance, dropped kerb on the street) before the road raster is written. */
+export function planLots(doc: GeoDoc, ras: GeoRaster, net: RoadNet): LotPlan[] {
   const plans: LotPlan[] = [];
   for (const lot of doc.parking) {
     const P = lot.pts;
@@ -69,8 +73,55 @@ export function rasterizeLots(doc: GeoDoc, ras: GeoRaster, net: RoadNet): LotPla
       a += best.y - (a + bx * best.x + bz * best.z);
       if (best.edge) best.edge.cuts.push([best.side, best.s - ENTRANCE_W / 2, best.s + ENTRANCE_W / 2]);
     } else best = { x: mx, z: mz, y: a + bx * mx + bz * mz, edge: null, side: 0, s: 0, polyEdge: -1 };
-    const plan: LotPlan = { lot, a, bx, bz, entrance: best };
+    const plan: LotPlan = { lot, a, bx, bz, entrance: best, gap: bd };
     plans.push(plan);
+  }
+  return plans;
+}
+
+/**
+ * Parking aisles and service roads inside a car park take the car park's surface (the lot is one plane; the aisle
+ * followed the terrain and ran up to half a metre above or below it), blended over TUNING.geo.conformBlend outside.
+ * Call before the road raster and meshes are built.
+ */
+export function conformToLots(net: RoadNet, plans: LotPlan[]) {
+  if (net.synthetic) return;
+  for (const e of net.edges) {
+    if (e.deck || (e.cls !== 'service' && e.cls !== 'road')) continue;
+    const n = e.pts.length, c = e.cum;
+    const target = new Float32Array(n).fill(NaN);
+    let any = false;
+    for (let k = 0; k < n; k++) {
+      const p = e.pts[k];
+      for (const pl of plans) {
+        if (!pointInPoly(p[0], p[1], pl.lot.pts)) continue;
+        target[k] = pl.a + pl.bx * p[0] + pl.bz * p[1];
+        any = true;
+        break;
+      }
+    }
+    if (!any) continue;
+    const out = Float32Array.from(e.prof);
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= e.trimA + 0.01 || s >= e.L - e.trimB - 0.01) continue;
+      let bd = Infinity, hv = 0;
+      for (let q = 0; q < n; q++) if (!Number.isNaN(target[q]) && Math.abs(c[q] - s) < bd) { bd = Math.abs(c[q] - s); hv = target[q]; }
+      if (bd > G.conformBlend) continue;
+      const w = (0.5 + 0.5 * Math.cos((Math.PI * bd) / G.conformBlend)) * plateauFade(e, s, Math.max(1, Math.min(G.plateauEase, (e.L - e.trimA - e.trimB) * 0.3)));
+      out[k] = e.prof[k] + (hv - e.prof[k]) * w;
+    }
+    e.prof = out;
+  }
+}
+
+/** Car park surfaces and entrance aprons into the raster (after the road raster: roads keep their cells). */
+export function rasterizeLots(plans: LotPlan[], ras: GeoRaster): LotPlan[] {
+  for (const plan of plans) {
+    const { lot, a, bx, bz } = plan;
+    const P = lot.pts;
+    const best = plan.entrance;
+    const bd = plan.gap;
     const h = ras.h!, band = ras.band, k = ras.k;
     ras.fillRing(P, (o, x, z) => {
       if (band[o] === B.ROAD || band[o] === B.FLAT) return;
@@ -133,10 +184,12 @@ export function buildLots(plans: LotPlan[], ras: GeoRaster, chunks: RenderChunks
         const ya = H(ax, az), yb = H(bx, bz), kk = G.kerbHeight;
         const iax = ax + nx * 0.5, iaz = az + nz * 0.5, ibx = bx + nx * 0.5, ibz = bz + nz * 0.5;
         buf.quad(ax, ya + kk, az, bx, yb + kk, bz, ibx, yb + kk, ibz, iax, ya + kk, iaz, COL.kerb, 0, 1, 0);
+        chunks.tag('kerb');
         buf.wall(iax, iaz, ibx, ibz, ya, ya + kk, yb, yb + kk, COL.kerb, nx, nz);
         pb.quad(ax, ya + kk, az, bx, yb + kk, bz, ibx, yb + kk, ibz, iax, ya + kk, iaz);
         pb.quad(iax, ya, iaz, ibx, yb, ibz, ibx, yb + kk, ibz, iax, ya + kk, iaz);
       }
+      chunks.tag('decor'); // skirt below the kerbed edge (the edge collides)
       buf.wall(p[0], p[1], q[0], q[1], H(p[0], p[1]) - 1, H(p[0], p[1]) + G.kerbHeight, H(q[0], q[1]) - 1, H(q[0], q[1]) + G.kerbHeight, COL.skirt, -nx, -nz);
     }
     // entrance apron
@@ -183,7 +236,9 @@ export function buildLots(plans: LotPlan[], ras: GeoRaster, chunks: RenderChunks
         const cu = u + SW / 2, cv = r.v0 + SL / 2;
         if (!inside(u, r.v0) || !inside(u + SW, r.v0) || !inside(u, r.v0 + SL) || !inside(u + SW, r.v0 + SL)) continue;
         const x = mx + ux * cu + vx * cv, z = mz + uz * cu + vz * cv;
-        if (nearEntrance(x, z)) continue;
+        if (nearEntrance(x, z) || ras.kindAt(x, z) & K.ROAD) continue; // not on an aisle that crosses the lot
+        // nor where something else in the lot's outline sets the surface (a footway, a kerb): the car would float or sink
+        if (Math.abs(H(x, z) - ras.heightAt(x, z)) > G.stallSurfaceTol) continue;
         // nose into the bay: forward = from the aisle into the row = -dir * v
         const fx = -r.dir * vx, fz = -r.dir * vz;
         stalls.push(x, H(x, z), z, Math.atan2(fx, fz));

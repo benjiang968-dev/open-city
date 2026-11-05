@@ -69,11 +69,12 @@ export function createPlayer(w: World, x: number, z: number): PlayerState {
   w.scene.add(rig.root);
   const body = w.physics.createRigidBody(R.RigidBodyDesc.kinematicPositionBased().setTranslation(x, w.city.heightAt(x, z) + P.capsuleHalfHeight + P.capsuleRadius + 0.05, z));
   const collider = w.physics.createCollider(R.ColliderDesc.capsule(P.capsuleHalfHeight, P.capsuleRadius).setCollisionGroups(GROUPS.player), body);
-  const cc = w.physics.createCharacterController(0.04);
+  const cc = w.physics.createCharacterController(P.ccOffset);
   cc.setUp({ x: 0, y: 1, z: 0 });
-  cc.enableAutostep(0.45, 0.25, true);
-  cc.enableSnapToGround(0.4);
-  cc.setMaxSlopeClimbAngle((50 * Math.PI) / 180);
+  cc.enableAutostep(P.autostepHeight, P.autostepMinWidth, true);
+  cc.enableSnapToGround(P.snapToGround);
+  cc.setMaxSlopeClimbAngle((P.maxSlopeDeg * Math.PI) / 180);
+  cc.setMinSlopeSlideAngle((P.minSlopeSlideDeg * Math.PI) / 180);
   cc.setApplyImpulsesToDynamicBodies(true);
   return {
     mesh: rig.root, rig, body, collider, cc, vy: 0, grounded: true, facing: 0, walkPhase: 0, vehicle: null, prompt: '', lastVehicleId: -1,
@@ -185,7 +186,7 @@ export function updatePlayer(w: World, dt: number): void {
   const ix = Math.sin(p.facing) * fwdIn, iz = Math.cos(p.facing) * fwdIn;
   const len = Math.abs(fwdIn) + Math.abs(turn) * 0.3; // a little leg movement when turning on the spot
   if (p.grounded) {
-    p.vy = -1;
+    p.vy = P.groundedVy;
     if (act.jump(inp)) p.vy = P.jumpVelocity;
   } else p.vy -= P.gravity * dt;
   move.set(ix * speed * dt, p.vy * dt, iz * speed * dt);

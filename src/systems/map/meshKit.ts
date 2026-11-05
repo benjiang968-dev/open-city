@@ -3,6 +3,8 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { GROUPS } from '../../physicsGroups';
+import { PROP_COLLIDERS, PROP_KIND, SolidTags, type ColliderPart, type PropColliderName, type SolidKind, type SolidRecorder } from '../objects/solidKinds';
+import { inferSurface } from '../render/palette';
 
 // ------------------------------------------------------------------------------------------ colours
 /** sRGB hex (0xRRGGBB) to packed LINEAR bytes, which is what three.js expects in vertex colours. */
@@ -14,17 +16,17 @@ for (let i = 0; i < 256; i++) {
 export function lin(hex: number): number {
   return (S2L[(hex >> 16) & 255] << 16) | (S2L[(hex >> 8) & 255] << 8) | S2L[hex & 255];
 }
-/** Scale a packed linear colour (f > 1 brightens, clamped). */
+/** Scale a packed linear colour (f > 1 brightens, clamped). Keeps the surface tag (render/surfaces.ts). */
 export function shade(c: number, f: number): number {
   const r = Math.min(255, Math.round(((c >> 16) & 255) * f));
   const g = Math.min(255, Math.round(((c >> 8) & 255) * f));
   const b = Math.min(255, Math.round((c & 255) * f));
-  return (r << 16) | (g << 8) | b;
+  return (c & 0x7f000000) | (r << 16) | (g << 8) | b;
 }
-/** Mix two packed linear colours. */
+/** Mix two packed linear colours (the surface tag of `a` is kept). */
 export function mixc(a: number, b: number, t: number): number {
   const m = (s: number) => Math.round(((a >> s) & 255) * (1 - t) + ((b >> s) & 255) * t);
-  return (m(16) << 16) | (m(8) << 8) | m(0);
+  return (a & 0x7f000000) | (m(16) << 16) | (m(8) << 8) | m(0);
 }
 
 // ------------------------------------------------------------------------------------------ mesh buffer
@@ -38,15 +40,22 @@ export class MeshBuf {
   col: Uint8Array;
   uv: Float32Array | null;
   ex: Uint8Array | null;
+  /** Surface id per vertex (top byte of the colour, render/surfaces.ts surf()): the aSurf attribute. */
+  srf: Uint8Array;
   n = 0;
   /** Current facade attributes (tileA, tileB, altBay, seed) for buffers that carry them. */
   exA = 0; exB = 0; exC = 255; exD = 0;
   /** Current uv mode: if set, uvFn computes uv per vertex. */
   uvFn: ((x: number, y: number, z: number, out: Float32Array, o: number) => void) | null = null;
+  /** Audit mode: drawn boxes, cylinders and walls are recorded (null = off). */
+  rec: SolidRecorder | null = null;
+  /** Nesting depth of primitive calls (only the outermost call is recorded: a box's own walls are not). */
+  private recDepth = 0;
   constructor(withUv = false, withEx = false, cap = 4096) {
     this.pos = new Float32Array(cap * 3);
     this.nor = new Int8Array(cap * 3);
     this.col = new Uint8Array(cap * 3);
+    this.srf = new Uint8Array(cap);
     this.uv = withUv ? new Float32Array(cap * 2) : null;
     this.ex = withEx ? new Uint8Array(cap * 4) : null;
   }
@@ -57,6 +66,7 @@ export class MeshBuf {
     const p = new Float32Array(cap * 3); p.set(this.pos); this.pos = p;
     const n = new Int8Array(cap * 3); n.set(this.nor); this.nor = n;
     const c = new Uint8Array(cap * 3); c.set(this.col); this.col = c;
+    const sf = new Uint8Array(cap); sf.set(this.srf); this.srf = sf;
     if (this.uv) { const u = new Float32Array(cap * 2); u.set(this.uv); this.uv = u; }
     if (this.ex) { const e = new Uint8Array(cap * 4); e.set(this.ex); this.ex = e; }
   }
@@ -68,6 +78,7 @@ export class MeshBuf {
     this.pos[o] = x; this.pos[o + 1] = y; this.pos[o + 2] = z;
     this.nor[o] = Math.round(nx * 127); this.nor[o + 1] = Math.round(ny * 127); this.nor[o + 2] = Math.round(nz * 127);
     this.col[o] = (c >> 16) & 255; this.col[o + 1] = (c >> 8) & 255; this.col[o + 2] = c & 255;
+    this.srf[i] = (c >>> 24) & 127;
     if (this.uv) {
       if (this.uvFn) this.uvFn(x, y, z, this.uv, i * 2);
       else { this.uv[i * 2] = u; this.uv[i * 2 + 1] = v; }
@@ -96,21 +107,27 @@ export class MeshBuf {
   }
   /** Vertical wall from (ax,az) to (bx,bz), bottom ya0/yb0, top ya1/yb1, facing (outward) side hint. */
   wall(ax: number, az: number, bx: number, bz: number, ya0: number, ya1: number, yb0: number, yb1: number, c: number, hx: number, hz: number) {
+    if (this.rec && this.recDepth === 0) this.rec.wall(ax, az, bx, bz, ya0, ya1, yb0, yb1, hx, hz);
     this.quad(ax, ya0, az, bx, yb0, bz, bx, yb1, bz, ax, ya1, az, c, hx, 0, hz);
   }
   /** Axis-aligned box (no bottom face). sideC defaults to c. */
   box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, c: number, sideC = c) {
+    if (this.rec && this.recDepth === 0) this.rec.obox((x0 + x1) / 2, (z0 + z1) / 2, y0, y1, (x1 - x0) / 2, (z1 - z0) / 2, 1, 0);
+    this.recDepth++;
     this.quad(x0, y1, z0, x1, y1, z0, x1, y1, z1, x0, y1, z1, c, 0, 1, 0);
     this.wall(x0, z1, x1, z1, y0, y1, y0, y1, sideC, 0, 1);
     this.wall(x1, z0, x0, z0, y0, y1, y0, y1, sideC, 0, -1);
     this.wall(x1, z1, x1, z0, y0, y1, y0, y1, sideC, 1, 0);
     this.wall(x0, z0, x0, z1, y0, y1, y0, y1, sideC, -1, 0);
+    this.recDepth--;
   }
   /**
    * Box centred at (cx, cz), from y0 to y1, half extents hx (along heading) and hz (across), rotated so its local +x
    * points along (ux, uz). Optional bottom.
    */
   obox(cx: number, y0: number, cz: number, hx: number, hz: number, y1: number, ux: number, uz: number, c: number, sideC = c, bottom = false) {
+    if (this.rec && this.recDepth === 0) this.rec.obox(cx, cz, y0, y1, hx, hz, ux, uz);
+    this.recDepth++;
     const vx = -uz, vz = ux; // local +z
     const ax = cx - ux * hx - vx * hz, az = cz - uz * hx - vz * hz;
     const bx = cx + ux * hx - vx * hz, bz = cz + uz * hx - vz * hz;
@@ -122,10 +139,12 @@ export class MeshBuf {
     this.wall(bx, bz, qx, qz, y0, y1, y0, y1, sideC, ux, uz);
     this.wall(qx, qz, dx, dz, y0, y1, y0, y1, sideC, vx, vz);
     this.wall(dx, dz, ax, az, y0, y1, y0, y1, sideC, -ux, -uz);
+    this.recDepth--;
   }
   /** Upright cylinder / cone frustum with flat-shaded sides (and a top cap if r1 > 0). */
   cyl(cx: number, y0: number, cz: number, r0: number, r1: number, h: number, segs: number, c: number, cap = true) {
     const y1 = y0 + h;
+    if (this.rec && this.recDepth === 0) this.rec.cyl(cx, cz, y0, y1, r0, r1);
     for (let i = 0; i < segs; i++) {
       const a0 = (i / segs) * Math.PI * 2, a1 = ((i + 1) / segs) * Math.PI * 2;
       const c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
@@ -137,6 +156,7 @@ export class MeshBuf {
   }
   /** Pyramid (spire) on a square base centred at (cx,cz) with half size hs, rotated to axis (ux,uz). */
   pyramid(cx: number, y0: number, cz: number, hs: number, h: number, ux: number, uz: number, c: number) {
+    if (this.rec && this.recDepth === 0) this.rec.obox(cx, cz, y0, y0 + h, hs, hs, ux, uz);
     const vx = -uz, vz = ux;
     const P = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b]) => [cx + ux * a * hs + vx * b * hs, cz + uz * a * hs + vz * b * hs]);
     for (let i = 0; i < 4; i++) {
@@ -152,12 +172,27 @@ export class MeshBuf {
     g.setAttribute('position', new THREE.BufferAttribute(this.pos.slice(0, n * 3), 3));
     g.setAttribute('normal', new THREE.BufferAttribute(this.nor.slice(0, n * 3), 3, true));
     g.setAttribute('color', new THREE.BufferAttribute(this.col.slice(0, n * 3), 3, true));
+    g.setAttribute('aSurf', new THREE.BufferAttribute(surfaces(this.srf, this.col, n), 1, false));
     if (this.uv) g.setAttribute('uv', new THREE.BufferAttribute(this.uv.slice(0, n * 2), 2));
     if (this.ex) g.setAttribute('aFac', new THREE.BufferAttribute(this.ex.slice(0, n * 4), 4, false));
     g.computeBoundingSphere();
     g.computeBoundingBox();
     return g;
   }
+}
+
+/** Surface ids for n vertices: the tagged ones as given, untagged ones inferred from their palette colour. */
+function surfaces(srf: Uint8Array, col: Uint8Array, n: number): Uint8Array {
+  const out = srf.slice(0, n);
+  const cache = new Map<number, number>();
+  for (let i = 0; i < n; i++) {
+    if (out[i]) continue;
+    const c = (col[i * 3] << 16) | (col[i * 3 + 1] << 8) | col[i * 3 + 2];
+    let s = cache.get(c);
+    if (s === undefined) cache.set(c, (s = inferSurface(c)));
+    out[i] = s;
+  }
+  return out;
 }
 
 // ------------------------------------------------------------------------------------------ render chunks
@@ -172,6 +207,8 @@ export class RenderChunks {
   readonly nx: number;
   readonly nz: number;
   bufs = new Map<string, MeshBuf>();
+  /** Audit mode recorder shared by every buffer except decals (null = off). */
+  rec: SolidRecorder | null = null;
   constructor(size: number, bounds: { x0: number; z0: number; x1: number; z1: number }, margin: number) {
     this.size = size;
     this.x0 = bounds.x0 - margin;
@@ -187,8 +224,15 @@ export class RenderChunks {
   buf(layer: Layer, x: number, z: number): MeshBuf {
     const k = `${layer}:${this.key(x, z)}`;
     let b = this.bufs.get(k);
-    if (!b) this.bufs.set(k, (b = new MeshBuf(layer === 'facade', layer === 'facade')));
+    if (!b) {
+      this.bufs.set(k, (b = new MeshBuf(layer === 'facade', layer === 'facade')));
+      if (layer !== 'decal') b.rec = this.rec;
+    }
     return b;
+  }
+  /** Audit mode: the kind stamped on what is drawn from now on (no-op when the recorder is off). */
+  tag(kind: SolidKind): void {
+    if (this.rec) this.rec.tag(kind);
   }
 }
 
@@ -212,7 +256,8 @@ export class PhysBuf {
 
 /**
  * Static colliders grouped into one fixed body per physics chunk (like the grid city: a single body with thousands of
- * colliders made the player's CCD expensive). Ground triangles collect per chunk and become one trimesh each.
+ * colliders made the player's CCD expensive). Triangles collect per chunk and kind and become one trimesh each
+ * (terrain + roads, stair ramps, parapets...). Every collider is tagged with its solid kind (solidKinds.ts).
  */
 export class PhysChunks {
   readonly R: typeof RAPIER;
@@ -220,7 +265,23 @@ export class PhysChunks {
   readonly size: number;
   bodies = new Map<number, RAPIER.RigidBody>();
   tris = new Map<number, PhysBuf>();
+  /** chunk key per trimesh buffer key */
+  private trisChunk = new Map<number, number>();
+  /** kind per trimesh buffer key */
+  private trisKind = new Map<number, SolidKind>();
+  private kindSlots = new Map<SolidKind, number>();
   colliders = 0;
+  /** Collider handle -> solid kind (read by the audit and the F4 view). */
+  readonly tags = new SolidTags();
+  /**
+   * Kinds whose trimesh triangles are handed back by finishTrimeshes (the walking surfaces map.heightAt reads, see
+   * surfaceIndex.ts): kind -> list of xyz triangle soups. Empty unless a kind is registered with keepTriangles.
+   */
+  readonly kept = new Map<SolidKind, Float32Array[]>();
+  /** Keep the triangles of these kinds when the trimeshes are built (finishTrimeshes). */
+  keepTriangles(...kinds: SolidKind[]) {
+    for (const k of kinds) if (!this.kept.has(k)) this.kept.set(k, []);
+  }
   constructor(R: typeof RAPIER, world: RAPIER.World, size: number) {
     this.R = R;
     this.world = world;
@@ -235,25 +296,38 @@ export class PhysChunks {
     if (!b) this.bodies.set(k, (b = this.world.createRigidBody(this.R.RigidBodyDesc.fixed())));
     return b;
   }
-  /** Ground triangles near (x,z) (they become part of that chunk's trimesh). */
+  /** Ground triangles near (x,z) (they become part of that chunk's ground trimesh). */
   ground(x: number, z: number): PhysBuf {
-    const k = this.key(x, z);
+    return this.trimesh(x, z, 'ground');
+  }
+  /** Triangles of one kind near (x, z): one trimesh per chunk and kind. */
+  trimesh(x: number, z: number, kind: SolidKind): PhysBuf {
+    const ck = this.key(x, z);
+    let slot = this.kindSlots.get(kind);
+    if (slot === undefined) this.kindSlots.set(kind, (slot = this.kindSlots.size));
+    const k = ck * 64 + slot;
     let b = this.tris.get(k);
-    if (!b) this.tris.set(k, (b = new PhysBuf()));
+    if (!b) {
+      this.tris.set(k, (b = new PhysBuf()));
+      this.trisChunk.set(k, ck);
+      this.trisKind.set(k, kind);
+    }
     return b;
   }
-  private add(desc: RAPIER.ColliderDesc, x: number, z: number, friction = 0.7) {
-    this.world.createCollider(desc.setFriction(friction).setCollisionGroups(GROUPS.static), this.body(x, z));
+  private add(desc: RAPIER.ColliderDesc, x: number, z: number, kind: SolidKind, friction = 0.7): RAPIER.Collider {
+    const c = this.world.createCollider(desc.setFriction(friction).setCollisionGroups(GROUPS.static), this.body(x, z));
+    this.tags.set(c.handle, kind);
     this.colliders++;
+    return c;
   }
   /** Oriented box: centre (cx, cy, cz), half extents (hx along (ux,uz), hy up, hz across). */
-  box(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ux = 1, uz = 0) {
+  box(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ux = 1, uz = 0, kind: SolidKind = 'untagged') {
     const yaw = Math.atan2(-uz, ux);
     const d = this.R.ColliderDesc.cuboid(hx, hy, hz).setTranslation(cx, cy, cz).setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) });
-    this.add(d, cx, cz);
+    this.add(d, cx, cz, kind);
   }
   /** Vertical prism over a convex footprint (x, z pairs), from y0 to y1: a convex hull collider. */
-  prism(pts: ArrayLike<number>, y0: number, y1: number) {
+  prism(pts: ArrayLike<number>, y0: number, y1: number, kind: SolidKind = 'untagged') {
     const n = pts.length / 2;
     const v = new Float32Array(n * 6);
     let cx = 0, cz = 0;
@@ -263,11 +337,39 @@ export class PhysChunks {
       cx += pts[i * 2] / n; cz += pts[i * 2 + 1] / n;
     }
     const d = this.R.ColliderDesc.convexHull(v);
-    if (d) this.add(d, cx, cz);
+    if (d) this.add(d, cx, cz, kind);
     return !!d;
   }
-  cylinder(cx: number, y0: number, cz: number, r: number, h: number) {
-    this.add(this.R.ColliderDesc.cylinder(h / 2, r).setTranslation(cx, y0 + h / 2, cz), cx, cz);
+  /** Convex hull of arbitrary points (x, y, z triples): ramps under steps, rails, canopies. */
+  hull(pts: ArrayLike<number>, kind: SolidKind): boolean {
+    const n = pts.length / 3;
+    let cx = 0, cz = 0;
+    for (let i = 0; i < n; i++) { cx += pts[i * 3] / n; cz += pts[i * 3 + 2] / n; }
+    const d = this.R.ColliderDesc.convexHull(pts instanceof Float32Array ? pts : Float32Array.from(pts));
+    if (d) this.add(d, cx, cz, kind);
+    return !!d;
+  }
+  cylinder(cx: number, y0: number, cz: number, r: number, h: number, kind: SolidKind = 'untagged') {
+    this.add(this.R.ColliderDesc.cylinder(h / 2, r).setTranslation(cx, y0 + h / 2, cz), cx, cz, kind);
+  }
+  /**
+   * A prop's colliders from the registry (PROP_COLLIDERS), for a prop drawn at (x, y, z) turned by yaw about +y
+   * (three.js makeRotationY: local +x -> (cos yaw, -sin yaw)) and scaled sxz across, sy up.
+   */
+  placeProp(name: PropColliderName, x: number, y: number, z: number, yaw = 0, sxz = 1, sy = 1) {
+    const kind = PROP_KIND[name];
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    for (const p of PROP_COLLIDERS[name] as readonly ColliderPart[]) {
+      const px = x + (p.c[0] * c + p.c[2] * s) * sxz, pz = z + (-p.c[0] * s + p.c[2] * c) * sxz;
+      if (p.shape === 'box') this.box(px, y + p.c[1] * sy, pz, p.h[0] * sxz, p.h[1] * sy, p.h[2] * sxz, c, -s, kind);
+      else this.cylinder(px, y + p.c[1] * sy, pz, p.r * sxz, p.h * sy, kind);
+    }
+  }
+  /** The triangles of one kind collected so far (views, valid until more are added): heights at build time. */
+  soupsOf(kind: SolidKind): Float32Array[] {
+    const out: Float32Array[] = [];
+    for (const [k, b] of this.tris) if (this.trisKind.get(k) === kind && b.n >= 3) out.push(b.pos.subarray(0, b.n * 3));
+    return out;
   }
   /** Build every accumulated trimesh. Returns the number of triangles. */
   finishTrimeshes(): number {
@@ -275,15 +377,131 @@ export class PhysChunks {
     for (const [k, b] of this.tris) {
       if (b.n < 3) continue;
       const verts = b.pos.slice(0, b.n * 3);
+      this.kept.get(this.trisKind.get(k)!)?.push(verts);
       const idx = new Uint32Array(b.n);
       for (let i = 0; i < b.n; i++) idx[i] = i;
       const d = this.R.ColliderDesc.trimesh(verts, idx, 0 as RAPIER.TriMeshFlags);
-      const x = (Math.floor(k / 4096) - 1000 + 0.5) * this.size, z = ((k % 4096) - 1000 + 0.5) * this.size;
-      this.world.createCollider(d.setFriction(0.9).setCollisionGroups(GROUPS.static), this.body(x, z));
-      this.colliders++;
+      const ck = this.trisChunk.get(k)!;
+      const x = (Math.floor(ck / 4096) - 1000 + 0.5) * this.size, z = ((ck % 4096) - 1000 + 0.5) * this.size;
+      this.add(d, x, z, this.trisKind.get(k)!, 0.9);
       total += b.n / 3;
     }
     this.tris.clear();
+    this.trisChunk.clear();
+    this.trisKind.clear();
     return total;
   }
+}
+
+// ------------------------------------------------------------------------------------------ holes (stairwells)
+/**
+ * Convex footprints (x, z rings) cut out of the ground and sidewalk geometry, render and physics alike: a stair that
+ * climbs a bank or runs down beside a street sits in its own stairwell instead of under the pavement.
+ */
+export class Holes {
+  readonly polys: Float32Array[] = [];
+  private readonly box: number[] = [];
+  add(ring: ArrayLike<number>) {
+    const p = Float32Array.from(ring);
+    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+    for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); z0 = Math.min(z0, p[i + 1]); z1 = Math.max(z1, p[i + 1]); }
+    // counter-clockwise (x right, z down) so the outward side of edge i is to its right
+    let a = 0;
+    for (let i = 0, j = p.length - 2; i < p.length; j = i, i += 2) a += (p[j] - p[i]) * (p[j + 1] + p[i + 1]);
+    if (a < 0) { const r = new Float32Array(p.length); for (let i = 0; i < p.length; i += 2) { r[i] = p[p.length - 2 - i]; r[i + 1] = p[p.length - 1 - i]; } this.polys.push(r); }
+    else this.polys.push(p);
+    this.box.push(x0, z0, x1, z1);
+  }
+  get empty() { return this.polys.length === 0; }
+  /** Index of a hole whose box overlaps [x0, x1] x [z0, z1], from `from` on; -1 if none. */
+  next(x0: number, z0: number, x1: number, z1: number, from: number): number {
+    const B = this.box;
+    for (let i = from; i < this.polys.length; i++) if (B[i * 4] < x1 && B[i * 4 + 2] > x0 && B[i * 4 + 1] < z1 && B[i * 4 + 3] > z0) return i;
+    return -1;
+  }
+  inside(x: number, z: number): boolean {
+    for (let i = this.next(x, z, x, z, 0); i >= 0; i = this.next(x, z, x, z, i + 1)) if (inConvex(this.polys[i], x, z)) return true;
+    return false;
+  }
+  /**
+   * Triangle a-b-c minus every hole: calls emit with the pieces (x, y, z triples and barycentric weights of a, b, c
+   * per vertex, so colours or normals can be interpolated). No hole near: emits the triangle itself.
+   */
+  clipTri(ax: number, ay: number, az: number, bx: number, by: number, bz: number, cx: number, cy: number, cz: number,
+    emit: (v: number[]) => void) {
+    const x0 = Math.min(ax, bx, cx), x1 = Math.max(ax, bx, cx), z0 = Math.min(az, bz, cz), z1 = Math.max(az, bz, cz);
+    // vertex: x, y, z, wa, wb, wc
+    let pieces: number[][][] = [[[ax, ay, az, 1, 0, 0], [bx, by, bz, 0, 1, 0], [cx, cy, cz, 0, 0, 1]]];
+    for (let h = this.next(x0, z0, x1, z1, 0); h >= 0; h = this.next(x0, z0, x1, z1, h + 1)) {
+      const P = this.polys[h];
+      const out: number[][][] = [];
+      for (let piece of pieces) {
+        for (let i = 0; i < P.length && piece.length >= 3; i += 2) {
+          const j = (i + 2) % P.length;
+          const ex = P[j] - P[i], ez = P[j + 1] - P[i + 1];
+          // outward normal of a counter-clockwise ring in x-right z-down: (ez, -ex) points out... test with a sign
+          const side = (v: number[]) => (v[0] - P[i]) * ez - (v[2] - P[i + 1]) * ex;
+          const outside = clipPoly(piece, side, 1);
+          if (outside.length >= 3) out.push(outside);
+          piece = clipPoly(piece, side, -1);
+        }
+        // what is left of the piece is inside the hole: dropped
+      }
+      pieces = out;
+      if (!pieces.length) return;
+    }
+    for (const p of pieces) for (let k = 1; k + 1 < p.length; k++) emit([...p[0], ...p[k], ...p[k + 1]]);
+  }
+}
+function inConvex(P: Float32Array, x: number, z: number): boolean {
+  for (let i = 0; i < P.length; i += 2) {
+    const j = (i + 2) % P.length;
+    if ((x - P[i]) * (P[j + 1] - P[i + 1]) - (z - P[i + 1]) * (P[j] - P[i]) > 0) return false;
+  }
+  return true;
+}
+/** Part of a convex polygon where sign * side(v) > 0 (strictly outside / inside one edge line). */
+function clipPoly(poly: number[][], side: (v: number[]) => number, sign: number): number[][] {
+  const out: number[][] = [];
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length];
+    const fa = side(a) * sign, fb = side(b) * sign;
+    if (fa > 0) out.push(a);
+    if ((fa > 0) !== (fb > 0) && fa !== fb) {
+      const t = fa / (fa - fb);
+      out.push(a.map((va, k) => va + (b[k] - va) * t));
+    }
+  }
+  return out;
+}
+
+/** Pieces [t0, t1] of segment a-b (t from 0 at a to 1 at b) that lie outside every hole. */
+export function segmentOutsideHoles(holes: Holes, ax: number, az: number, bx: number, bz: number): [number, number][] {
+  let parts: [number, number][] = [[0, 1]];
+  const x0 = Math.min(ax, bx), x1 = Math.max(ax, bx), z0 = Math.min(az, bz), z1 = Math.max(az, bz);
+  for (let h = holes.next(x0, z0, x1, z1, 0); h >= 0; h = holes.next(x0, z0, x1, z1, h + 1)) {
+    const P = holes.polys[h];
+    // the part of the line inside the convex hole: intersect the half-planes
+    let tin = -Infinity, tout = Infinity;
+    for (let i = 0; i < P.length; i += 2) {
+      const j = (i + 2) % P.length;
+      const ex = P[j] - P[i], ez = P[j + 1] - P[i + 1];
+      const fa = (ax - P[i]) * ez - (az - P[i + 1]) * ex, fb = (bx - P[i]) * ez - (bz - P[i + 1]) * ex; // <= 0 inside
+      if (fa > 0 && fb > 0) { tin = Infinity; break; }
+      if (fa > 0 || fb > 0) {
+        const t = fa / (fa - fb);
+        if (fa > 0) tin = Math.max(tin, t); else tout = Math.min(tout, t);
+      }
+    }
+    const a = Math.max(0, tin), b = Math.min(1, tout);
+    if (!(b > a)) continue;
+    const next: [number, number][] = [];
+    for (const [p, q] of parts) {
+      if (b <= p || a >= q) { next.push([p, q]); continue; }
+      if (a > p) next.push([p, a]);
+      if (b < q) next.push([b, q]);
+    }
+    parts = next;
+  }
+  return parts;
 }

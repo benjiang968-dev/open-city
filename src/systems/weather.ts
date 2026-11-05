@@ -170,7 +170,11 @@ export function updateWeather(w: World, dt: number): void {
     dn.skyTop.lerp(grey.setRGB(0.85, 0.88, 1), s.flash * 0.8);
   }
 
-  // wet roads get shiny and dark; snow whitens the ground
+  // wet roads get shiny and dark, with puddles; snow whitens what faces up (the world materials read these, render/look.ts)
+  if (w.look) {
+    w.look.uniforms.uWet.value = L.wet * (1 - s.snowCover);
+    w.look.uniforms.uSnow.value = s.snowCover;
+  }
   for (const m of w.city.groundMats) {
     m.roughness = 0.95 - 0.55 * L.wet * (1 - s.snowCover);
     const wetDark = 1 - 0.25 * L.wet;
