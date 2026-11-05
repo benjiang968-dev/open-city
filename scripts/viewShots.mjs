@@ -66,6 +66,10 @@
 //  aerial   190 m up over the waterfront, looking north-east at M St and Wisconsin Ave (the rep block in the middle).
 //  spawn    what the game shows on start: the player at the spawn (Key Bridge end of M St) with the normal follow
 //           camera (the player visible; HUD still left out).
+// Extra views (only when named; not in the default list): the M St / Wisconsin Ave junction, where the overlap probe
+// (viewExperiments.js zfight) finds markings under another road surface:
+//  junction      from the south-west corner pavement (x=-182, z=157.5) at eye height, looking north-east across it.
+//  junction-top  45 m above the junction (abs), looking down at it steeply.
 import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
@@ -88,6 +92,8 @@ export const VIEWS = {
   'road-far': { pos: [-300, 1.7, 147.3], look: [-80, 1.7, 145.4], fov: 62, hideTraffic: true, lookRel: [-300, 147.3], at: [22.243, 22.243] },
   aerial: { pos: [-420, 190, 380], look: [-200, 21, 140], fov: 55, abs: true },
   spawn: { player: true },
+  junction: { pos: [-182, 1.7, 157.5], look: [-150, 0.5, 141], fov: 62, extra: true },
+  'junction-top': { pos: [-157, 66, 172], look: [-157, 21, 146], fov: 55, abs: true, hideTraffic: true, extra: true },
 };
 
 const args = process.argv.slice(2);
@@ -107,7 +113,7 @@ const outDir = resolve(opt('out', 'screenshots'));
 const expFile = opt('exp', null);
 const jsonOut = opt('json', null);
 const map = opt('map', '');
-const views = args.length ? args : Object.keys(VIEWS).filter((v) => v !== 'spawn');
+const views = args.length ? args : Object.keys(VIEWS).filter((v) => v !== 'spawn' && !VIEWS[v].extra);
 for (const v of views) if (!VIEWS[v.split('@')[0]]) throw new Error(`unknown view ${v} (try --list)`);
 const exp = expFile ? await readFile(expFile, 'utf8') : null;
 

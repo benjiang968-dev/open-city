@@ -188,6 +188,8 @@ if (variant === 'texinfo') {
     };
     let samples = 0, covered = 0, gg0 = 0, gg5 = 0, gg30 = 0, ggDiff = 0, dg = 0, dgBelow = 0, dd = 0, decalSamples = 0;
     const pairs = {}, where = [];
+    // markings under the top ground surface: how deep (cm bins) and where (0.5 m cells, the deepest first)
+    const below = { 'under 0.5 cm': 0, '0.5-2 cm': 0, '2-5 cm': 0, '5-20 cm': 0, 'over 20 cm': 0 }, belowAt = new Map();
     const step = 0.2;
     for (let x = x0 + step / 2; x < x1; x += step) for (let z = z0 + step / 2; z < z1; z += step) {
       samples++;
@@ -210,7 +212,13 @@ if (variant === 'texinfo') {
       if (D.length) {
         decalSamples++;
         const lift = D[0].y - top.y;
-        if (lift < 0) dgBelow++; else if (lift < 0.005) dg++;
+        if (lift < 0) {
+          dgBelow++;
+          const d = -lift;
+          below[d < 0.005 ? 'under 0.5 cm' : d < 0.02 ? '0.5-2 cm' : d < 0.05 ? '2-5 cm' : d < 0.2 ? '5-20 cm' : 'over 20 cm']++;
+          const k = `${(Math.floor(x * 2) / 2).toFixed(1)},${(Math.floor(z * 2) / 2).toFixed(1)}`;
+          belowAt.set(k, Math.max(belowAt.get(k) ?? 0, d));
+        } else if (lift < 0.005) dg++;
         if (D.length > 1 && D[0].y - D[1].y < 0.003) dd++;
       }
     }
@@ -220,6 +228,8 @@ if (variant === 'texinfo') {
       groundOverlapWithin3cmPct: pc(gg0 + gg5 + gg30, covered), exactCoplanarPct: pc(gg0, covered), gapUnder5mmPct: pc(gg5, covered), gap5to30mmPct: pc(gg30, covered),
       differentSurfaceOnTopPct: pc(ggDiff, covered), surfacePairs: pairs, examples: where,
       decalSamples, decalLiftUnder5mmPct: pc(dg, decalSamples), decalBelowGroundPct: pc(dgBelow, decalSamples), decalOnDecalWithin3mmPct: pc(dd, decalSamples),
+      decalBelowDepth: below,
+      decalBelowWorst: [...belowAt.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, d]) => `${k} ${(d * 100).toFixed(1)} cm`),
     };
   }
   window.__vsNote = JSON.stringify({ tris: { ground: tris.ground.length, decal: tris.decal.length }, boxes: out });
