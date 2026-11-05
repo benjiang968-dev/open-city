@@ -315,7 +315,8 @@ browser, so a proxy would be rehosting Google content, which 3.2.3 (a) forbids.
      Map Tiles API enabled.
   3. A key restricted to the GitHub Pages referrer and to Map Tiles API only, hard daily quota caps, a budget
      alert, and a separate project.
-  4. Google logo bottom-left plus live aggregated tile attribution, visually separate from our own credits.
+  4. Google logo bottom-left plus live aggregated tile attribution, not overlapping and clearly disassociated
+     from our own credits (section 5).
   5. A terms page and privacy notice for the site with the wording 3.2.2 (a) requires.
   6. No caching, no offline, no screenshots or measurements fed back into the game.
   7. The owner accepts a new dependency (`3d-tiles-renderer`).
