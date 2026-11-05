@@ -821,6 +821,7 @@ const RAW = {
     stallWidth: 2.6, // m: painted parking bay width in car parks
     stallLength: 5.2, // m: parking bay length
     lotAisle: 6.6, // m: aisle between bay rows
+    stopArmSnap: 30, // m: a stop sign mapped on one approach (data 'stop_arm') belongs to the nearest junction this close, on the arm pointing at it
     stallSurfaceTol: 0.2, // m: a car park bay whose plane height is further than this from the ground (a footway or kerb inside the lot outline sets the surface there) is left out, so parked cars never float or sink
   },
 

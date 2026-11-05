@@ -9,7 +9,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../../tuning';
 import { poiName } from '../../data/poiNames';
 import type { GeoDoc, Pt } from './geoDoc';
-import { hashStr, pointInPoly } from './geoDoc';
+import { hashStr, loadGeoDoc, pointInPoly } from './geoDoc';
 import { buildGeorgetownWorld, type GeoQuality, type GeoRoadPoly, type GeoWorld } from './georgetownWorld';
 import { SIGN_CATS } from './facades';
 import { K } from './terrain';
@@ -78,9 +78,7 @@ function classOf(highway: string, name: string): RoadClass {
 
 /** Fetch the map data (only when this map is picked: loadMap imports this module on demand). */
 export async function loadGeorgetownDoc(): Promise<GeoDoc> {
-  const res = await fetch(new URL('../../data/georgetown.json', import.meta.url).href);
-  if (!res.ok) throw new Error(`Georgetown map data: HTTP ${res.status}`);
-  return (await res.json()) as GeoDoc;
+  return loadGeoDoc();
 }
 
 // ======================================================================================================
@@ -183,7 +181,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
           id: edges.length, from: dir === 1 ? P.nodeA : P.nodeB, to: dir === 1 ? P.nodeB : P.nodeA, pts, cum, len: cum[cum.length - 1],
           trimStart: dir === 1 ? tA : tB, trimEnd: dir === 1 ? tB : tA, speed, cls, name: P.name || null, roadId: P.roadId,
           lane: k, lanesSameDir: offs.length, offset: dir === 1 ? off : -off, oneway: P.oneway !== 0, roundabout: ring,
-          bridge: P.deck, halfWidth: hw, twin: -1, left: -1, right: -1,
+          bridge: P.deck, halfWidth: hw, twin: -1, left: -1, right: -1, stopSign: J[dir === 1 ? P.nodeB : P.nodeA].stopEdges.includes(P.edge),
           parking: k === 0 && (dir === 1 ? parkR : parkL),
         };
         edges.push(e);

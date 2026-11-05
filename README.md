@@ -49,21 +49,29 @@ Scenarios live in `scripts/scenarios.mjs` (handling, life, taxi, chat, police, b
 
 ## Map data
 
-Map data © OpenStreetMap contributors (ODbL), via the Overture Maps Foundation; places © Overture Maps Foundation
-(CDLA-Permissive-2.0); building heights include USGS 3DEP lidar, Microsoft ML Buildings and Esri Community Maps
-contributions; terrain: AWS Terrain Tiles (USGS 3DEP). The same line is in the pause menu (`meta.attribution`).
+Real map data: © OpenStreetMap contributors via Overture Maps Foundation (release 2026-10-21.0), ODbL 1.0; places ©
+Overture Maps Foundation, CDLA-Permissive-2.0; some building footprints © Esri Community Maps contributors, CC BY 4.0;
+building heights include USGS 3DEP lidar and Microsoft ML Buildings; elevation: USGS 3DEP via AWS Terrain Tiles. The
+same line is in the pause menu (`meta.attribution`).
 
-`src/data/georgetown.json` (Georgetown and the Potomac waterfront, Washington DC, about 2.1 km x 1.9 km at 1:1) is a
-derivative database of OpenStreetMap data, made available under the Open Database License: see
-`src/data/georgetown.LICENSE.md` and https://www.openstreetmap.org/copyright. Real street, river, canal and park names
-are kept; business names never: places carry a category only and the game invents a name from `src/data/poiNames.ts`.
-Street furniture the data lacks (street trees on shopping streets, lamps, benches, bins, hydrants, woodland trees) is
-synthesized and flagged in the file.
+The Georgetown map (Georgetown and the Potomac waterfront, Washington DC, about 2.1 km x 1.9 km at 1:1) ships as
+three files with their own licences (`src/data/georgetown.LICENSE.md`):
+
+- `src/data/georgetown.json`: a derivative database of OpenStreetMap data under the Open Database License (ODbL 1.0,
+  https://www.openstreetmap.org/copyright);
+- `src/data/georgetown-places.json`: place categories and positions (CDLA-Permissive-2.0; places with an Apache-2.0
+  source are left out);
+- `src/data/georgetown-buildings-ccby.json`: the building footprints that come from Esri Community Maps (CC BY 4.0).
+
+Real street, river, canal and park names are kept; business names never: places carry a category only and the game
+invents a name from `src/data/poiNames.ts`. Street furniture the data lacks (street trees on shopping streets, lamps,
+benches, bins, hydrants, woodland trees) is synthesized and flagged in the file.
 
 Rebuild it with `npm run import-overture` (`scripts/importOverture.mjs`): it reads Overture Maps release 2026-10-21.0
 and the terrain tiles from the cache in `data/overture/` (gitignored), downloading them first with
 `scripts/fetchOverture.py` when the cache is missing (needs Python with `pyarrow` and `shapely`; set
-`OVERTURE_PYTHON` to that interpreter, see the top of the script). `npm run preview-map` draws the result to
+`OVERTURE_PYTHON` to that interpreter, see the top of the script; a cache from before 2026-11-05 lacks place sources:
+re-fetch with `--only place --force`). `npm run preview-map` draws the result to
 `screenshots/24-map-preview.png`.
 
 Fallbacks: `npm run gen-georgetown` regenerates the older hand-authored approximation from `data/georgetown-spec.json`

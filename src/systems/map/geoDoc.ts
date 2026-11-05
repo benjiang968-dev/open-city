@@ -92,6 +92,8 @@ export interface GeoDoc {
     bounds: { x0: number; z0: number; x1: number; z1: number };
     origin: { lat: number; lon: number };
     metresPerDegree: { lat: number; lon: number };
+    /** Real data: places and CC BY 4.0 building footprints ship in their own files (own licences), see loadGeoDoc. */
+    companions?: { pois: string; buildings: string };
   };
   roads: GeoRoad[];
   footways: GeoFootway[];
@@ -105,6 +107,30 @@ export interface GeoDoc {
   landmarks: { canal?: { waterways: string[]; water: string[]; levels?: number[]; locks?: { name: string; x: number; z: number; length: number }[] }; towpath?: string[] } | null;
   props: GeoProp[];
   heights: GeoHeights;
+}
+
+/**
+ * Fetch the Georgetown map data: src/data/georgetown.json and, for real data, its companion files (licensed apart from
+ * the ODbL main file): the places (CDLA-Permissive-2.0) become `pois`, and the Esri Community Maps footprints
+ * (CC BY 4.0) join `buildings`. The knowledge-based map (npm run gen-georgetown) is one file with no companions.
+ */
+export async function loadGeoDoc(): Promise<GeoDoc> {
+  const get = async (url: string) => {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Georgetown map data: HTTP ${res.status} for ${url}`);
+    return res.json();
+  };
+  const doc = (await get(new URL('../../data/georgetown.json', import.meta.url).href)) as GeoDoc;
+  if (doc.meta.companions) {
+    // (static URLs so the build bundles them; the names match meta.companions written by scripts/importOverture.mjs)
+    const [places, ccby] = await Promise.all([
+      get(new URL('../../data/georgetown-places.json', import.meta.url).href) as Promise<{ pois: GeoPoi[] }>,
+      get(new URL('../../data/georgetown-buildings-ccby.json', import.meta.url).href) as Promise<{ buildings: GeoBuilding[] }>,
+    ]);
+    doc.pois = places.pois;
+    doc.buildings = doc.buildings.concat(ccby.buildings);
+  }
+  return doc;
 }
 
 // ------------------------------------------------------------------------------------------- helpers

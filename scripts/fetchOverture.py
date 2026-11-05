@@ -47,7 +47,7 @@ TYPES = {
     'building': ('buildings', ['id', 'subtype', 'class', 'height', 'min_height', 'num_floors', 'min_floor', 'level', 'is_underground', 'has_parts',
                                'roof_shape', 'roof_height', 'facade_material', 'roof_material', 'sources', 'geometry', 'bbox'], True),
     'building_part': ('buildings', ['id', 'building_id', 'height', 'min_height', 'num_floors', 'min_floor', 'level', 'geometry', 'bbox'], True),
-    'place': ('places', ['id', 'categories', 'basic_category', 'taxonomy', 'confidence', 'operating_status', 'geometry', 'bbox'], True),
+    'place': ('places', ['id', 'categories', 'basic_category', 'taxonomy', 'confidence', 'operating_status', 'sources', 'geometry', 'bbox'], True),
     'water': ('base', ['id', 'names', 'subtype', 'class', 'level', 'is_intermittent', 'source_tags', 'sources', 'geometry', 'bbox'], False),
     'land_use': ('base', ['id', 'names', 'subtype', 'class', 'level', 'surface', 'source_tags', 'sources', 'geometry', 'bbox'], False),
     'infrastructure': ('base', ['id', 'names', 'subtype', 'class', 'level', 'height', 'surface', 'source_tags', 'sources', 'geometry', 'bbox'], False),

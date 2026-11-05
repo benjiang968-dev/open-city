@@ -5,6 +5,8 @@
 //    keeps coming, up to its longest green; cars stop on red and on amber when they can; left turns on green give way
 //    to oncoming traffic (and clear on amber);
 //  - stop signs (all-way): a full stop, then first come, first served;
+//  - a stop sign on some approaches only (a side street at a main road, real data): those approaches stop fully, then
+//    give way to every other approach as a minor road;
 //  - uncontrolled: the lower road class gives way; between equal roads a short pause and first come, first served;
 //  - roundabout (Washington Circle): entering cars yield to cars circulating toward their entry; circulating cars never
 //    stop at the ring's nodes;
@@ -109,6 +111,8 @@ export interface NodeCtl {
   /** Approaches: groups of in-lanes from the same neighbour on the same road. */
   apCount: number;
   apRank: Int8Array;
+  /** Per approach: 1 = a stop sign on this approach only (minor: full stop, then give way). */
+  apStop: Uint8Array;
   apHeading: Float32Array;
   majorRank: number;
   // ---- signals ----
@@ -259,7 +263,7 @@ export function createJunctions(map: CityMap): JunctionState {
     const m0 = mvIn.length;
     // approaches
     const apKeys: string[] = [];
-    const apRankL: number[] = [], apHeadL: number[] = [];
+    const apRankL: number[] = [], apHeadL: number[] = [], apStopL: number[] = [];
     for (const id of node.in) {
       const e = edges[id];
       const key = `${e.from}|${e.roadId}`;
@@ -269,9 +273,17 @@ export function createJunctions(map: CityMap): JunctionState {
         apKeys.push(key);
         apRankL.push(rankOf(e));
         apHeadL.push(laneSample(e, stopLine(e), LA).heading);
+        apStopL.push(0);
       } else apRankL[ap] = Math.max(apRankL[ap], rankOf(e));
+      if (e.stopSign) apStopL[ap] = 1;
       edgeAp[id] = ap;
     }
+    // stop signs on some approaches only: those rank below every approach without one (the side street gives way)
+    if (apStopL.some((s) => s) && apStopL.some((s) => !s) && !node.signals && !node.stop) {
+      let low = 127;
+      for (let a = 0; a < apRankL.length; a++) if (!apStopL[a]) low = Math.min(low, apRankL[a]);
+      for (let a = 0; a < apRankL.length; a++) if (apStopL[a]) apRankL[a] = Math.min(apRankL[a], low - 1);
+    } else apStopL.fill(0);
     for (const id of node.in) {
       const a = edges[id];
       edgeM0[id] = mvIn.length;
@@ -353,7 +365,7 @@ export function createJunctions(map: CityMap): JunctionState {
     }
     // ---- control ----
     const apCount = apKeys.length;
-    const apRank = Int8Array.from(apRankL), apHeading = Float32Array.from(apHeadL);
+    const apRank = Int8Array.from(apRankL), apHeading = Float32Array.from(apHeadL), apStop = Uint8Array.from(apStopL);
     const majorRank = apCount ? Math.max(...apRankL) : 0;
     let kind = CTL_NONE;
     if (node.roundabout && (node.in.some((i) => edges[i].roundabout) || node.out.some((i) => edges[i].roundabout))) kind = CTL_RING;
@@ -386,7 +398,7 @@ export function createJunctions(map: CityMap): JunctionState {
       for (let p = 0; p < phases; p++) if (!(pedPhase && p === phases - 1) && apRankL.some((r, a) => apPhase[a] === p && r === majorRank)) greensL[p] = SG.green;
     }
     const ctl: NodeCtl = {
-      id: node.id, kind, m0, nm, conflict, apCount, apRank, apHeading, majorRank,
+      id: node.id, kind, m0, nm, conflict, apCount, apRank, apStop, apHeading, majorRank,
       phases, pedPhase, apPhase, greens: Float32Array.from(greensL), phase: 0, stage: 0, t: 0, checkT: 0,
     };
     ctls.push(ctl);
@@ -466,16 +478,32 @@ function phaseDemand(w: World, J: JunctionState, c: NodeCtl, phase: number, near
     const o = t[i];
     if (o.phase === 'turn' || o.respawnWanted) continue;
     const e = edges[o.edge];
-    if (e.to !== c.id) continue;
-    const ap = J.edgeAp[o.edge];
+    // on an approach, or waiting before a lane into it too short to stop on (holdAhead: the Key Bridge north end, a
+    // few metres before M St): the detector loop reaches back over the short lane
+    let ap = -1;
+    if (e.to === c.id) ap = J.edgeAp[o.edge];
+    else if (o.next >= 0 && J.shortLane[o.next] && edges[o.next].to === c.id) ap = J.edgeAp[o.next];
+    else continue;
     if (ap < 0 || c.apPhase[ap] !== phase) continue;
     const rem = stopLine(e) - o.s;
     if (rem > near || (moving && o.speed < 1 && rem > 8)) continue;
     return true;
   }
   if (J.playerEdge >= 0) {
-    const e = edges[J.playerEdge], ap = J.edgeAp[J.playerEdge];
-    if (e.to === c.id && ap >= 0 && c.apPhase[ap] === phase && stopLine(e) - J.playerS < near) return true;
+    const e = edges[J.playerEdge];
+    if (stopLine(e) - J.playerS < near) {
+      if (e.to === c.id) { const ap = J.edgeAp[J.playerEdge]; if (ap >= 0 && c.apPhase[ap] === phase) return true; }
+      else {
+        // (the player's next lane is unknown: any short lane from the junction ahead into this one calls its phase)
+        const out = w.city.roads.nodes[e.to].out;
+        for (let k = 0; k < out.length; k++) {
+          const n = out[k];
+          if (!J.shortLane[n] || edges[n].to !== c.id) continue;
+          const ap = J.edgeAp[n];
+          if (ap >= 0 && c.apPhase[ap] === phase) return true;
+        }
+      }
+    }
   }
   return false;
 }
@@ -694,6 +722,7 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
   let mode = 0; // 1: yield to straight/right moves of other approaches that may go; 2: (minor road) yield to every bigger road
   if (k === CTL_SIGNALS) mode = myType === MOVE_LEFT || myType === MOVE_UTURN ? 1 : 0;
   else if (k === CTL_PRIORITY) mode = c.apRank[myAp] < c.majorRank ? 2 : myType === MOVE_LEFT || myType === MOVE_UTURN ? 1 : 0;
+  if (k === CTL_PRIORITY && mode === 2 && c.apStop[myAp] && (!atLine || car.stopT < TT.stopSignWait)) return HOLD_STOP; // a stop sign: a full stop first
   if (k === CTL_PRIORITY && mode === 2 && atLine && car.stopT < TT.yieldPause) return HOLD_YIELD;
   if (mode) {
     const patient = !(atLine && car.waitT > TT.maxYieldWait);

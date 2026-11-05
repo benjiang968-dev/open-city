@@ -24,7 +24,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { inflateSync } from 'node:zlib';
 import { clipArea, clipPolyline, clipRingSH, centroid, distPointSeg2, lineLength, pointInRing, sampleLine, signedArea, simplify, toJson, SegGrid, STREET_WORD, BUSINESS_WORD } from './importOsm.mjs';
 
@@ -41,8 +41,15 @@ const ORIGIN = { lat: 38.9065, lon: -77.061 };
 const CACHE = 'data/overture';
 const DEFAULT_OUT = 'src/data/georgetown.json';
 const FORMAT = 'open-city-osm-1';
-const ATTRIBUTION = 'Map data: © OpenStreetMap contributors (ODbL), via Overture Maps Foundation (release {release}); places © Overture Maps Foundation (CDLA-Permissive-2.0); building heights include USGS 3DEP lidar, Microsoft ML Buildings and Esri Community Maps contributions; terrain: AWS Terrain Tiles (USGS 3DEP).';
-const LICENCE = 'src/data/georgetown.json is a derivative database of OpenStreetMap data and is made available under the Open Database License (ODbL 1.0, https://opendatacommons.org/licenses/odbl/1-0/). Overture places: CDLA-Permissive-2.0. Terrain: USGS 3DEP (public domain) via AWS Terrain Tiles. Street furniture flagged synth and all business names in the game are invented, not data.';
+const ATTRIBUTION = 'Real map data: © OpenStreetMap contributors via Overture Maps Foundation (release {release}), ODbL 1.0; places © Overture Maps Foundation, CDLA-Permissive-2.0; some building footprints © Esri Community Maps contributors, CC BY 4.0; building heights include USGS 3DEP lidar and Microsoft ML Buildings; elevation: USGS 3DEP via AWS Terrain Tiles.';
+const LICENCE = 'src/data/georgetown.json is a derivative database of OpenStreetMap data and is made available under the Open Database License (ODbL 1.0, https://opendatacommons.org/licenses/odbl/1-0/). Its companion files are licensed separately: georgetown-places.json (place categories and positions, Overture places: CDLA-Permissive-2.0, https://cdla.dev/permissive-2-0/) and georgetown-buildings-ccby.json (Esri Community Maps building footprints: CC BY 4.0, https://creativecommons.org/licenses/by/4.0/). Terrain: USGS 3DEP (public domain) via AWS Terrain Tiles. Street furniture flagged synth and all business names in the game are invented, not data. See src/data/georgetown.LICENSE.md.';
+/** Companion files written next to the main JSON (their own licences: see LICENCE). */
+const PLACES_FILE = 'georgetown-places.json';
+const CCBY_FILE = 'georgetown-buildings-ccby.json';
+/** Source licences the import accepts (anything else stops it, so nothing with unknown terms is shipped). */
+const PLACE_LICENCES = new Set(['CDLA-Permissive-2.0', 'CC0-1.0']); // Apache-2.0 (Foursquare) records are dropped: no NOTICE shipped
+const BUILDING_ODBL = new Set(['ODbL-1.0']);
+const ESRI_CCBY = /^Creative Commons by Attribution \(CC BY 4\.0\)/;
 const SIZE_TARGET = 3 * 1024 * 1024;
 
 // ======================================================================================= import constants
@@ -99,6 +106,7 @@ const SIDEWALK_PROBE = [2, 20]; // m from a road's centre line searched for a pa
 const SIDEWALK_ASSUMED = 3.4; // m, sidewalk width assumed when measuring a carriageway from its sidewalk lines (Georgetown: 3-4 m)
 const SIDEWALK_MIN_COVER = 0.25; // share of a road's length that needs a sidewalk alongside for sidewalk=separate
 const SIGNAL_SNAP = 28; // m: signal / stop nodes snap to the nearest junction this close (tagged on approaches)
+const STOP_AT_NODE = 3; // m: a stop sign this close to a junction vertex is tagged on the junction (an all-way stop); further out it is on one approach
 const TOWPATH_DIST = 26; // m from the canal for a path to count as towpath
 const CREEK_NAME = /^Rock Creek$/;
 const CANAL_NAME = /Chesapeake and Ohio Canal/;
@@ -660,6 +668,7 @@ for (const f of D.infrastructure) {
 
 // ============================================================================================= buildings
 const buildings = [];
+const ccbyIds = new Set(); // building ids whose footprint is Esri Community Maps (CC BY 4.0)
 const bGrid = new SegGrid(30); // outlines of written buildings, data = { b, ring, c, area }
 {
   const partH = new Map(); // building id -> highest part
@@ -749,6 +758,11 @@ const bGrid = new SegGrid(30); // outlines of written buildings, data = { b, rin
     const sub = r.p.subtype;
     const type = r.cls ?? (sub === 'residential' ? 'house' : sub === 'commercial' ? 'commercial' : sub === 'education' ? 'school' : sub === 'religious' ? 'church' : sub === 'outbuilding' ? 'shed' : sub === 'medical' ? 'hospital' : sub === 'civic' ? 'civic' : 'yes');
     const b = { id: uniqueId(shortId(r.p.id, 'b')), h: r1(r.h), type, levels: Math.max(1, Math.min(60, levels)) };
+    // footprint licence: OSM / Microsoft (ODbL) in the main file; Esri Community Maps geometry (CC BY 4.0) in its own
+    // file (a CC BY 4.0 footprint inside an ODbL database would need a waiver we cannot rely on)
+    const src = r.p.sources ?? [];
+    for (const s of src) if (s.license && !BUILDING_ODBL.has(s.license) && !ESRI_CCBY.test(s.license)) throw new Error(`building ${r.p.id}: unknown source licence ${s.license}`);
+    if (src.some((s) => s.dataset === 'Esri Community Maps') && !src.some((s) => s.dataset === 'OpenStreetMap')) ccbyIds.add(b.id);
     if (r.src === 'neighbours' || r.src === 'class') b.est = 1;
     if (r.p.min_height > 0.5) b.minH = r1(r.p.min_height);
     if (r.p.roof_shape && r.p.roof_shape !== 'flat') b.roof = r.p.roof_shape;
@@ -969,6 +983,11 @@ const pois = [];
   for (const { f, p } of list) {
     const [x, y] = fwd(f.geometry.coordinates);
     if (!inRect(x, y)) continue;
+    if (!p.sources) throw new Error('places have no sources (an old cache): run python3 -I scripts/fetchOverture.py --only place --force');
+    const lic = p.sources.map((s) => s.license);
+    if (lic.includes('Apache-2.0')) { drop('place with an Apache-2.0 (Foursquare) source'); continue; }
+    const bad = lic.find((l) => !PLACE_LICENCES.has(l));
+    if (bad) throw new Error(`place ${p.id}: unknown source licence ${bad}`);
     const m = poiCat(p);
     if (!m) { const k = p.taxonomy?.primary ?? p.basic_category ?? 'none'; unmapped.set(k, (unmapped.get(k) ?? 0) + 1); continue; }
     const isOffice = m.cat.startsWith('office=');
@@ -1014,7 +1033,10 @@ for (const f of D.land) {
   else if (p.class === 'tree_row' && f.geometry?.type === 'LineString') sampleLine(f.geometry.coordinates.map(fwd), 8, (x, y) => { if (inRect(x, y)) realProps.push([x, y, 'tree']); });
 }
 // signals and stop signs sit on a junction node (the world generator reads them by node coordinates): mapped on the
-// approach nodes, they snap to the nearest junction vertex (a vertex shared by roads with 3+ arms)
+// approach nodes, they snap to the nearest junction vertex (a vertex shared by roads with 3+ arms). A stop sign mapped on
+// the junction vertex itself is an all-way stop ('stop' on the node); one mapped on an approach (the side street at a
+// main road: Wisconsin Ave at O St) stops that approach only and stays where it is ('stop_arm'): the world generator
+// gives it to the nearest junction's arm in its direction
 {
   const arms = new Map(); // output key -> arm count
   const where = new Map();
@@ -1027,6 +1049,7 @@ for (const f of D.land) {
   const jg = new SegGrid(SIGNAL_SNAP);
   for (const q of jn) jg.addLine([[q[0], -q[1]], [q[0], -q[1]]], q);
   const placed = new Map();
+  const armStops = []; // [junction key, x, y] of stop signs on one approach
   let unsnapped = 0;
   for (const rp of realProps) {
     if (rp[2] !== 'signals' && rp[2] !== 'stop') continue;
@@ -1034,11 +1057,14 @@ for (const f of D.land) {
     jg.query(rp[0] - SIGNAL_SNAP, rp[1] - SIGNAL_SNAP, rp[0] + SIGNAL_SNAP, rp[1] + SIGNAL_SNAP, (s) => { const d = Math.hypot(s.ax - rp[0], s.ay - rp[1]); if (d < bd) { bd = d; best = s.data; } return true; });
     if (!best) { unsnapped++; continue; }
     const k = `${best[0]},${best[1]}`;
+    if (rp[2] === 'stop' && bd > STOP_AT_NODE) { armStops.push([k, rp[0], rp[1]]); continue; }
     if (placed.get(k) === 'signals') continue;
     placed.set(k, rp[2]);
   }
   for (const [k, kind] of placed) { const q = where.get(k); props.push([q[0], q[1], kind]); }
-  stats.signals = { junctionsWithSignals: [...placed.values()].filter((v) => v === 'signals').length, withStop: [...placed.values()].filter((v) => v === 'stop').length, notNearAJunction: unsnapped };
+  let onArms = 0;
+  for (const [k, x, y] of armStops) if (!placed.has(k)) { props.push([r1(x), r1(-y), 'stop_arm']); onArms++; } // (signals or an all-way stop there win)
+  stats.signals = { junctionsWithSignals: [...placed.values()].filter((v) => v === 'signals').length, allWayStops: [...placed.values()].filter((v) => v === 'stop').length, stopSignsOnOneApproach: onArms, notNearAJunction: unsnapped };
 }
 for (const rp of realProps) if (rp[2] !== 'signals' && rp[2] !== 'stop') props.push([r1(rp[0]), r1(-rp[1]), rp[2]]);
 
@@ -1393,7 +1419,8 @@ const landmarks = {
   canal: { waterways: canalW.pts ? [canalW.id] : [], water: water.filter((w) => w.kind === 'canal' || w.kind === 'lock').map((w) => w.id), levels: canalInfo?.levels ?? [], locks: canalInfo?.locks ?? [] },
   towpath,
 };
-const counts = { roads: roads.length, footways: footways.length, buildings: buildings.length, pois: pois.length, water: water.length, waterways: waterways.length, parks: parks.length, parking: parking.length, bridges: bridges.length, props: props.length };
+const odblBuildings = buildings.filter((b) => !ccbyIds.has(b.id)), ccbyBuildings = buildings.filter((b) => ccbyIds.has(b.id));
+const counts = { roads: roads.length, footways: footways.length, buildings: buildings.length, buildingsCcBy: ccbyBuildings.length, pois: pois.length, water: water.length, waterways: waterways.length, parks: parks.length, parking: parking.length, bridges: bridges.length, props: props.length };
 const W = rect.x1 - rect.x0, H = rect.y1 - rect.y0;
 const doc = {
   meta: {
@@ -1410,20 +1437,34 @@ const doc = {
     bounds: { x0: r1(rect.x0), z0: r1(-rect.y1), x1: r1(rect.x1), z1: r1(-rect.y0) },
     winding: 'outer rings counter-clockwise on a north-up map (negative shoelace area in raw x,z), holes the other way; rings do not repeat the first point',
     units: { maxspeed: 'km/h', h: 'm', width: 'm kerb to kerb', heights: 'm above the Potomac surface (river level 0)' },
-    notes: 'ids: g/b/p + the first 12 hex digits of the Overture GERS id (stable across releases), .n when one feature became several pieces (split by bridge/tunnel/level/subclass rules or the crop). Road and path vertices at Overture connectors are kept and identical in every way that meets there, so graphs can be built by matching coordinates. Roads: lanes are estimates by class; width is the data width, else measured from the sidewalk lines either side (est: 2), else a class estimate (est: 1); sidewalk=separate where mapped sidewalks run alongside. Washington Circle is one closed road with junction=roundabout. Buildings: h from Overture height (OSM or USGS lidar), building parts or floors, else the median of neighbours of the same kind or a class default (est: 1). POIs: category only (OSM key=value from the Overture taxonomy), b = building id. Props: [x, z, kind] real, [x, z, kind, 1] synthesized. landmarks.canal.levels: canal water levels west to east between the locks (lock_gate props mark both ends of each chamber); waterways creek.levels: Rock Creek water level per vertex. heights: grid of terrain heights relative to the river, data[iz * nx + ix] at (x0 + ix * spacing, z0 + iz * spacing).',
+    notes: 'ids: g/b/p + the first 12 hex digits of the Overture GERS id (stable across releases), .n when one feature became several pieces (split by bridge/tunnel/level/subclass rules or the crop). Road and path vertices at Overture connectors are kept and identical in every way that meets there, so graphs can be built by matching coordinates. Roads: lanes are estimates by class; width is the data width, else measured from the sidewalk lines either side (est: 2), else a class estimate (est: 1); sidewalk=separate where mapped sidewalks run alongside. Washington Circle is one closed road with junction=roundabout. Buildings: h from Overture height (OSM or USGS lidar), building parts or floors, else the median of neighbours of the same kind or a class default (est: 1). POIs: category only (OSM key=value from the Overture taxonomy), b = building id. Props: [x, z, kind] real, [x, z, kind, 1] synthesized; signals and stop sit exactly on a junction node (stop: an all-way stop), stop_arm is a stop sign on one approach where it was mapped (that approach stops, the others have priority). landmarks.canal.levels: canal water levels west to east between the locks (lock_gate props mark both ends of each chamber); waterways creek.levels: Rock Creek water level per vertex. heights: grid of terrain heights relative to the river, data[iz * nx + ix] at (x0 + ix * spacing, z0 + iz * spacing).',
     simplify: { line: SIMPLIFY_LINE, area: SIMPLIFY_AREA, building: SIMPLIFY_BUILDING },
     attribution: ATTRIBUTION.replace('{release}', release.release),
     licence: LICENCE,
     generator: { script: 'scripts/importOverture.mjs', fetch: 'scripts/fetchOverture.py' },
     generatedAt: new Date().toISOString(),
     counts,
+    // the loader (geoDoc.ts loadGeoDoc) reads these next to this file: pois come from the first, buildings are the
+    // union of both
+    companions: { pois: PLACES_FILE, buildings: CCBY_FILE },
   },
-  roads, footways, buildings, pois, water, waterways, parks, parking, bridges, landmarks, props,
+  roads, footways, buildings: odblBuildings, pois: [], water, waterways, parks, parking, bridges, landmarks, props,
   heights: heights.grid,
+};
+const companionMeta = (licence, attribution, what) => ({ format: FORMAT, companionOf: basename(args.out), what, licence, attribution, source: doc.meta.source, generatedAt: doc.meta.generatedAt, frame: doc.meta.frame, origin: doc.meta.origin });
+const placesDoc = {
+  meta: companionMeta('CDLA-Permissive-2.0 (https://cdla.dev/permissive-2-0/). Records with an Apache-2.0 (Foursquare) source are left out.', '© Overture Maps Foundation, places release ' + release.release + ' (CDLA-Permissive-2.0)', 'place categories and positions (no names): the map\'s pois'),
+  pois,
+};
+const ccbyDoc = {
+  meta: companionMeta('CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)', 'Building footprints © Esri Community Maps contributors (CC BY 4.0), via Overture Maps Foundation release ' + release.release, 'building footprints whose geometry comes from Esri Community Maps (heights estimated as in the main file)'),
+  buildings: ccbyBuildings,
 };
 const text = toJson(doc);
 mkdirSync(dirname(args.out) || '.', { recursive: true });
 writeFileSync(args.out, text);
+writeFileSync(join(dirname(args.out), PLACES_FILE), toJson(placesDoc));
+writeFileSync(join(dirname(args.out), CCBY_FILE), toJson(ccbyDoc));
 const bytes = Buffer.byteLength(text);
 
 // ============================================================================================= report
@@ -1435,7 +1476,8 @@ L.push(`  crop ${CROP.minlon},${CROP.minlat} .. ${CROP.maxlon},${CROP.maxlat} = 
 L.push(`  roads ${roads.length} (${km(roads)} km): ${by(roads, (r) => r.highway).map(([k, v]) => `${k} ${v}`).join(', ')}`);
 L.push(`    one-way ${roads.filter((r) => r.oneway).length}, bridge pieces ${roads.filter((r) => r.bridge).length}, tunnel ${roads.filter((r) => r.tunnel).length}, layers ${by(roads.filter((r) => r.layer), (r) => r.layer).map(([k, v]) => `${k}:${v}`).join(' ')}, width from data ${roads.filter((r) => !r.est).length}, from sidewalks ${stats.widthFromSidewalks}, sidewalk=separate ${roads.filter((r) => r.sidewalk === 'separate').length}`);
 L.push(`  footways ${footways.length} (${km(footways)} km): ${by(footways, (f) => f.kind).map(([k, v]) => `${k} ${v}`).join(', ')}; towpath pieces ${towpath.length}`);
-L.push(`  buildings ${buildings.length}: heights ${JSON.stringify(stats.heights)}; overlaps kept (5-60%) ${stats.overlapsKept}`);
+L.push(`  buildings ${buildings.length}: heights ${JSON.stringify(stats.heights)}; overlaps kept (5-60%) ${stats.overlapsKept}; ${ccbyBuildings.length} Esri Community Maps footprints (CC BY 4.0) -> ${CCBY_FILE}`);
+L.push(`  companion files: ${PLACES_FILE} (${pois.length} places, CDLA-Permissive-2.0), ${CCBY_FILE} (${ccbyBuildings.length} buildings, CC BY 4.0)`);
 L.push(`  pois ${pois.length}: ${by(pois, (p) => p.cat).slice(0, 12).map(([k, v]) => `${k} ${v}`).join(', ')}`);
 L.push(`    unmapped categories (skipped): ${stats.poiUnmapped.slice(0, 12).map(([k, v]) => `${k} ${v}`).join(', ')}`);
 L.push(`  water ${water.length}: ${by(water, (w) => w.kind).map(([k, v]) => `${k} ${v}`).join(', ')}; waterways ${waterways.map((w) => `${w.name} ${Math.round(lineLength(w.pts))} m`).join(', ')}`);

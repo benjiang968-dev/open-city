@@ -81,6 +81,8 @@ export interface Arm {
   /** sidewalk on the arm's n side (toward the next arm, increasing angle) and m side */
   swN: boolean;
   swM: boolean;
+  /** A stop sign on this approach only (data 'stop_arm'): it gives way to the junction's other arms. */
+  stop?: boolean;
 }
 export interface Lane {
   dir: 1 | -1; // 1: travels along the edge's pts order
@@ -331,6 +333,21 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const n = nodeAt.get(key(p[0], p[1]));
     if (!n) continue;
     if (p[2] === 'signals') n.signals = true; else n.stop = true;
+  }
+  // a stop sign on one approach (where it was mapped): the nearest junction's arm in its direction
+  for (const p of doc.props) {
+    if (p[2] !== 'stop_arm') continue;
+    let best: RNode | null = null, bd = G.stopArmSnap;
+    for (const n of nodes) {
+      if (n.arms.length < 3) continue;
+      const d = Math.hypot(n.x - p[0], n.z - p[1]);
+      if (d < bd) { bd = d; best = n; }
+    }
+    if (!best || best.signals || best.stop || bd < 0.5) continue;
+    const dx = (p[0] - best.x) / bd, dz = (p[1] - best.z) / bd;
+    let arm: Arm | null = null, dot = -2;
+    for (const A of best.arms) { const d = A.ux * dx + A.uz * dz; if (d > dot) { dot = d; arm = A; } }
+    if (arm) arm.stop = true;
   }
 
   // ---- junction geometry
@@ -780,6 +797,7 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
     }
   }
   conformOverlaps(net);
+  if (!net.synthetic) conformToPlateaus(net);
   // roundabout and other loops: nothing special (nodes carry heights)
   void nodes;
 }
@@ -854,6 +872,70 @@ function conformOverlaps(net: RoadNet) {
       if (bestD > G.conformBlend) continue;
       // fade out toward the flat junction plateaus too (the road must still leave each plateau at its height)
       const ease = Math.max(1, Math.min(G.plateauEase, (A.L - A.trimA - A.trimB) * 0.3));
+      const w = (0.5 + 0.5 * Math.cos((Math.PI * bestD) / G.conformBlend)) * plateauFade(A, s, ease);
+      out[k] = A.prof[k] + (hv - A.prof[k]) * w;
+    }
+    A.prof = out;
+  }
+}
+
+/**
+ * A road whose carriageway runs over another junction's flat plateau (not one of its own ends): Washington Circle's
+ * arc past the Pennsylvania Ave / K St junction west of the ring, a slip road past a junction it does not join. The
+ * plateau is flat at its node's height and the road followed its own smoothed terrain, so the two surfaces met in a
+ * 0.36 m step across the carriageway. Within G.gradeSeparation the road takes the plateau's height where its centre
+ * or either kerb is inside the plateau outline, blended in over G.conformBlend metres (as conformOverlaps).
+ */
+function conformToPlateaus(net: RoadNet) {
+  const cell = 40;
+  const grid = new Map<number, RNode[]>();
+  const gk = (i: number, j: number) => (i + 2000) * 4000 + (j + 2000);
+  for (const n of net.nodes) {
+    if (n.outline.length < 6 || n.raised || n.arms.some((a) => a.edge.deck)) continue;
+    let r = 0;
+    for (let i = 0; i < n.outline.length; i += 2) r = Math.max(r, Math.hypot(n.outline[i] - n.x, n.outline[i + 1] - n.z));
+    for (let i = Math.floor((n.x - r) / cell); i <= Math.floor((n.x + r) / cell); i++)
+      for (let j = Math.floor((n.z - r) / cell); j <= Math.floor((n.z + r) / cell); j++) (grid.get(gk(i, j)) ?? grid.set(gk(i, j), []).get(gk(i, j))!).push(n);
+  }
+  const inOutline = (x: number, z: number, O: number[]) => {
+    let ins = false;
+    for (let i = 0, j = O.length - 2; i < O.length; j = i, i += 2) {
+      const xi = O[i], zi = O[i + 1], xj = O[j], zj = O[j + 1];
+      if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) ins = !ins;
+    }
+    return ins;
+  };
+  for (const A of net.edges) {
+    if (A.deck) continue;
+    const n = A.pts.length, c = A.cum;
+    const target = new Float32Array(n).fill(NaN);
+    let any = false;
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      const p = A.pts[k];
+      const list = grid.get(gk(Math.floor(p[0] / cell), Math.floor(p[1] / cell)));
+      if (!list) continue;
+      const q = pointAtS(A, s);
+      const kx = -q.uz * A.hw, kz = q.ux * A.hw; // to a kerb
+      for (const N of list) {
+        if (N === A.a || N === A.b || Math.abs(N.h - A.prof[k]) > G.gradeSeparation) continue;
+        if (inOutline(p[0], p[1], N.outline) || inOutline(p[0] + kx, p[1] + kz, N.outline) || inOutline(p[0] - kx, p[1] - kz, N.outline)) { target[k] = N.h; any = true; break; }
+      }
+    }
+    if (!any) continue;
+    const out = Float32Array.from(A.prof);
+    const ease = Math.max(1, Math.min(G.plateauEase, (A.L - A.trimA - A.trimB) * 0.3));
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      let bestD = Infinity, hv = 0;
+      for (let q = 0; q < n; q++) {
+        if (Number.isNaN(target[q])) continue;
+        const d = Math.abs(c[q] - s);
+        if (d < bestD) { bestD = d; hv = target[q]; }
+      }
+      if (bestD > G.conformBlend) continue;
       const w = (0.5 + 0.5 * Math.cos((Math.PI * bestD) / G.conformBlend)) * plateauFade(A, s, ease);
       out[k] = A.prof[k] + (hv - A.prof[k]) * w;
     }

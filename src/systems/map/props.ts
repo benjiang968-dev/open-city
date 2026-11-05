@@ -198,11 +198,12 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
   const sigSpots: { x: number; y: number; z: number; ux: number; uz: number; len: number; heads: number[]; node: number }[] = [];
   const stopSpots: { x: number; y: number; z: number; ux: number; uz: number }[] = [];
   for (const n of net.nodes) {
-    if (!n.signals && !n.stop) continue;
+    if (!n.signals && !n.stop && !n.arms.some((A) => A.stop)) continue;
     if (n.roundabout) continue;
     for (const A of n.arms) {
       const nIn = inbound(A);
       if (!nIn) continue;
+      if (!n.signals && !n.stop && !A.stop) continue; // a stop sign on some approaches only
       const e = A.edge;
       const s = Math.min(e.L / 2, A.trim + (n.signals ? 2.5 : 1.5));
       const q = pointAtS(e, A.atStart ? s : e.L - s);

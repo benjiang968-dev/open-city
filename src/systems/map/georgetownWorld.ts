@@ -81,7 +81,10 @@ export interface GeoJunction {
   y: number;
   degree: number;
   signals: boolean;
+  /** An all-way stop. */
   stop: boolean;
+  /** Road edges (GeoRoadPoly.edge) whose approach alone has a stop sign: they give way to the other arms. */
+  stopEdges: number[];
   roundabout: boolean;
   /** Junction surface outline (x, z pairs). Empty for dead ends / map edges. */
   outline: Float32Array;
@@ -276,7 +279,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   // ---------------------------------------------------------------- exports for the graph builder
   const roadPolys = net.edges.map((e) => exportEdge(net, e));
   const junctions: GeoJunction[] = net.nodes.map((n) => ({
-    id: n.id, x: n.x, z: n.z, y: n.h, degree: n.arms.length, signals: n.signals, stop: n.stop, roundabout: n.roundabout, outline: Float32Array.from(n.outline),
+    id: n.id, x: n.x, z: n.z, y: n.h, degree: n.arms.length, signals: n.signals, stop: n.stop, stopEdges: n.arms.filter((A) => A.stop).map((A) => A.edge.id), roundabout: n.roundabout, outline: Float32Array.from(n.outline),
   }));
   const decks: GeoDeck[] = net.edges.filter((e) => e.deck).map((e) => ({ roadId: e.road.id, edge: e.id, name: e.name, layer: e.layer, centre: centreOf(net, e), halfWidth: e.hw }));
   const deckIdx = buildDeckIndex(net, [...water.walkDecks, ...pierDecks]);
