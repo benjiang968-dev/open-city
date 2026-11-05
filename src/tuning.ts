@@ -840,12 +840,12 @@ const RAW = {
     hemiDay: 0.12, // hemisphere fill by day (the sky environment does most of it)
     hemiNight: 0.32, // at night (city glow and moonlight)
     shadowRadius: 2.2, // soft shadow filter radius (shadow map texels) on Medium/High
-    shadowBias: -0.0004,
-    shadowNormalBias: 0.035,
-    interiorDay: 0.35,
+    shadowBias: -0.0004, // depth bias of the sun's shadow cascades (against acne on lit faces)
+    shadowNormalBias: 0.035, // offset along the normal (m-ish, scaled by texel size) against acne at grazing sun
+    interiorDay: 0.35, // daylight reaching window interiors, relative (window glass, render/facadeMaterial.ts)
     lampLightRange: 24, // m: reach of the real lights at the street lamps nearest the camera (render/nightLights.ts)
     lampLightIntensity: 55, // candela-like intensity of one lamp at full night
-    lampLightsMax: 10, // the most lamp lights any preset uses (TUNING.quality.*.lampLights) // daylight reaching window interiors, relative (window glass, render/facadeMaterial.ts)
+    lampLightsMax: 10, // the most lamp lights any preset uses (TUNING.quality.*.lampLights)
   },
 
   debug: {
