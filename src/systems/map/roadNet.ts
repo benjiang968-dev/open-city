@@ -140,7 +140,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
   const isNode = (p: Pt) => { const k = key(p[0], p[1]); return isEnd.has(k) || (count.get(k) ?? 0) > 1; };
 
   // ---- roundabouts (Washington Circle; real data may hold more than one): snap each ring to a true circle
-  const ringOf = new Map<GeoRoad, { x: number; z: number; r: number }>();
+  const ringOf = new Map<GeoRoad, { x: number; z: number; r: number; sense: number }>();
   for (const ring of roads) {
     if (ring.junction !== 'roundabout') continue;
     const closed = ring.pts.length > 3 && ring.pts[0][0] === ring.pts[ring.pts.length - 1][0] && ring.pts[0][1] === ring.pts[ring.pts.length - 1][1];
@@ -153,7 +153,10 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     }
     cx /= W || 1; cz /= W || 1;
     const r = P.reduce((s, p) => s + Math.hypot(p[0] - cx, p[1] - cz), 0) / P.length;
-    ringOf.set(ring, { x: cx, z: cz, r });
+    // which way the ring runs: +1 when atan2(z - cz, x - cx) grows along it (shoelace sign in x, z)
+    let area = 0;
+    for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; area += a[0] * b[1] - b[0] * a[1]; }
+    ringOf.set(ring, { x: cx, z: cz, r, sense: area >= 0 ? 1 : -1 });
   }
 
   // ---- edges
@@ -176,11 +179,9 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
       // resample along the circle between the end angles (direction of travel follows the data)
       const a0 = Math.atan2(raw[0][1] - ringC.z, raw[0][0] - ringC.x);
       let a1 = Math.atan2(raw[raw.length - 1][1] - ringC.z, raw[raw.length - 1][0] - ringC.x);
-      const mid = Math.atan2(raw[1][1] - ringC.z, raw[1][0] - ringC.x);
-      // pick the sweep direction that passes the second point
+      // sweep the way the whole ring runs (a piece with only its two end points has no second point to tell)
       const norm = (v: number) => { while (v < 0) v += Math.PI * 2; while (v >= Math.PI * 2) v -= Math.PI * 2; return v; };
-      const ccw = norm(mid - a0) < norm(a1 - a0);
-      let sweep = ccw ? norm(a1 - a0) : -norm(a0 - a1);
+      let sweep = ringC.sense > 0 ? norm(a1 - a0) : -norm(a0 - a1);
       if (Math.abs(sweep) < 1e-6) sweep = Math.PI * 2;
       a1 = a0 + sweep;
       const n = Math.max(2, Math.ceil((Math.abs(sweep) * ringC.r) / 3));
@@ -253,7 +254,10 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     };
     for (const e of edges) {
       if (!e.swL && !e.swR) continue;
-      const dataHw = Math.max(1, e.road.lanes ?? 2) * G.laneWidth / 2;
+      // the data's sidewalk lines run along the middle of the sidewalk: the knowledge-based map draws them 1.5 m
+      // from the kerb; real (imported) data anywhere from about 1 to 5 m beyond the kerb
+      const dataHw = e.road.width ? e.hw : Math.max(1, e.road.lanes ?? 2) * G.laneWidth / 2;
+      const offs = doc.meta.synthetic ? [1.5] : [1, 2, 3, 4, 5];
       let hitL = 0, hitR = 0, tot = 0;
       for (let k = 1; k < e.pts.length - 1; k++) {
         const p = e.pts[k];
@@ -262,10 +266,9 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
         let ux = q[0] - p[0], uz = q[1] - p[1];
         const L = Math.hypot(ux, uz) || 1; ux /= L; uz /= L;
         const rx = -uz, rz = ux;
-        const o = dataHw + 1.5;
         tot++;
-        if (near(p[0] - rx * o, p[1] - rz * o, 1.6)) hitL++;
-        if (near(p[0] + rx * o, p[1] + rz * o, 1.6)) hitR++;
+        if (offs.some((d) => near(p[0] - rx * (dataHw + d), p[1] - rz * (dataHw + d), doc.meta.synthetic ? 1.6 : 0.8))) hitL++;
+        if (offs.some((d) => near(p[0] + rx * (dataHw + d), p[1] + rz * (dataHw + d), doc.meta.synthetic ? 1.6 : 0.8))) hitR++;
       }
       if (tot >= 2) { e.swL = hitL / tot > 0.3; e.swR = hitR / tot > 0.3; }
     }
@@ -576,6 +579,52 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       e.prof[k] = S[k] + corrA * wA + corrB * wB;
     }
   };
+  // nodes inside a bridge (every arm a deck: real data splits a bridge where ramps join or its level changes) do not
+  // stand on the ground: the terrain under them is a river, a street below, or a DEM with the deck half removed (a
+  // 12 m mound at the Key Bridge abutment). Their heights are interpolated between the bridge's ends on land (a
+  // Laplacian over the deck graph, weighted by length; ends at the map edge or dead ends float with their neighbour),
+  // then the deck profiles raise them where they must clear what passes beneath.
+  {
+    const inside = nodes.filter((n) => n.arms.length >= 1 && n.arms.every((a) => a.edge.deck) && n.arms.some((a) => a.edge.a !== a.edge.b));
+    if (inside.length) {
+      const free = new Set(inside);
+      const hasAnchor = new Set<RNode>();
+      // a group of inside nodes with no land node at all keeps its terrain heights
+      const seen = new Set<RNode>();
+      for (const s of inside) {
+        if (seen.has(s)) continue;
+        const comp: RNode[] = [];
+        const st = [s];
+        seen.add(s);
+        let anchored = false;
+        while (st.length) {
+          const n = st.pop()!;
+          comp.push(n);
+          for (const a of n.arms) {
+            const m = a.edge.a === n ? a.edge.b : a.edge.a;
+            if (!free.has(m)) { anchored = true; continue; }
+            if (!seen.has(m)) { seen.add(m); st.push(m); }
+          }
+        }
+        if (anchored) for (const n of comp) hasAnchor.add(n);
+      }
+      for (let it = 0; it < 400; it++) {
+        let change = 0;
+        for (const n of inside) {
+          if (!hasAnchor.has(n)) continue;
+          let s = 0, w = 0;
+          for (const a of n.arms) {
+            const m = a.edge.a === n ? a.edge.b : a.edge.a;
+            if (m === n) continue;
+            const ww = 1 / Math.max(1, a.edge.L);
+            s += m.h * ww; w += ww;
+          }
+          if (w > 0) { const v = s / w; change = Math.max(change, Math.abs(v - n.h)); n.h = v; }
+        }
+        if (change < 0.005) break;
+      }
+    }
+  }
   // pass 1: at-grade
   const ground = new Map<REdge, Float32Array>();
   for (const e of atGrade) { const S = groundProfile(e); ground.set(e, S); shape(e, S); }

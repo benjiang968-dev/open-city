@@ -72,7 +72,7 @@ const inRanges = (r: [number, number, number][], side: number, s: number) => r.s
 // ======================================================================================================
 /** Write road, junction and sidewalk bands (exact heights) into the raster. Decks only set kind flags. */
 export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number, number][] }[]) {
-  const h = ras.h!, band = ras.band, k = ras.k;
+  const h = ras.h!, base = ras.t!, band = ras.band, k = ras.k;
   const kerb = G.kerbHeight;
   for (const e of net.edges) {
     const s0 = e.trimA, s1 = e.L - e.trimB;
@@ -99,7 +99,18 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       const hw = e.hw;
       if (e.deck) {
         const W = hw + G.sidewalkWidth;
-        ras.fillQuad(p.x - p.rx * W, p.z - p.rz * W, p.x + p.rx * W, p.z + p.rz * W, q.x + q.rx * W, q.z + q.rz * W, q.x - q.rx * W, q.z - q.rz * W, (o) => { k[o] |= K.DECK | K.ROAD; });
+        // natural ground may not reach the deck's underside (a bridge abutment in a hillside, a bump in the real
+        // terrain under a span): it is cut down to below the deck, base and working heights both (blending rebuilds
+        // natural cells from the base)
+        const th = G.deckThickness + (e.freeway ? 0.3 : 0) + G.deckGroundGap;
+        ras.fillQuad(p.x - p.rx * W, p.z - p.rz * W, p.x + p.rx * W, p.z + p.rz * W, q.x + q.rx * W, q.z + q.rz * W, q.x - q.rx * W, q.z - q.rz * W, (o, x, z) => {
+          k[o] |= K.DECK | K.ROAD;
+          if (band[o] !== B.NONE) return;
+          const t = clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0, 1);
+          const under = hp + (hq - hp) * t - th;
+          if (base[o] > under) base[o] = under;
+          if (h[o] > under) h[o] = under;
+        });
         continue;
       }
       // kerb lines (a real step: sidewalk on that side, kerb not dropped) for the step-distance raster

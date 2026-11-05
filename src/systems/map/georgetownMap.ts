@@ -381,10 +381,23 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
    * `heading`, the piece of `street` whose lane there points closest to it.
    */
   function streetSpot(street: string, cross: string, along: number, lane: 1 | -1, heading?: number): { edge: number; s: number } | null {
-    const node = nodes.find((n) => {
-      const names = new Set([...n.in, ...n.out].map((i) => edges[i].name));
-      return names.has(street) && names.has(cross);
+    // the junction of `street` with `cross` (a name prefix: real data spells "Washington Circle NW"); if they never
+    // meet (Key Bridge lands on ramps), the junction of `street` nearest the cross road
+    const crossOf = (n: string | null) => !!n && (n === cross || n.startsWith(`${cross} `));
+    let node = nodes.find((n) => {
+      const names = [...n.in, ...n.out].map((i) => edges[i].name);
+      return names.includes(street) && names.some(crossOf);
     });
+    if (!node) {
+      let bd = 80;
+      for (const n of nodes) {
+        if (!n.junction || ![...n.in, ...n.out].some((i) => edges[i].name === street)) continue;
+        for (const e of edges) {
+          if (!crossOf(e.name)) continue;
+          for (let k = 0; k < e.pts.length; k += 9) { const d = Math.hypot(e.pts[k] - n.x, e.pts[k + 2] - n.z); if (d < bd) { bd = d; node = n; } }
+        }
+      }
+    }
     if (!node) return null;
     // the poly of `street` leaving that node that is long enough, preferring straight on
     const cand = polys.map((P, pi) => ({ P, pi })).filter(({ P }) => P.name === street && (P.nodeA === node.id || P.nodeB === node.id) && !P.deck);
@@ -525,17 +538,19 @@ function checkOneWays(doc: GeoDoc, polys: GeoRoadPoly[], edges: LaneEdge[], lane
 
 /** Washington Circle: a one-way ring whose lanes run counter-clockwise seen from above (US right-hand traffic). */
 function checkRing(polys: GeoRoadPoly[], roadById: Map<string, GeoDoc['roads'][number]>, edges: LaneEdge[], lanes: { fwd: number[]; bwd: number[] }[]) {
-  let cx = 0, cz = 0, n = 0, ccw = 0, cw = 0, ringEdges = 0;
+  let n = 0, ccw = 0, cw = 0, ringEdges = 0;
   const ringNodes = new Set<number>();
+  // one centre per ring (real data has Washington Circle and Sheridan Circle)
+  const centre = new Map<string, { x: number; z: number; n: number }>();
   polys.forEach((P, pi) => {
     if (roadById.get(P.roadId)?.junction !== 'roundabout') return;
     ringNodes.add(P.nodeA);
     ringNodes.add(P.nodeB);
-    for (let i = 0; i < P.centre.length; i += 3) { cx += P.centre[i]; cz += P.centre[i + 2]; n++; }
+    const c = centre.get(P.roadId) ?? centre.set(P.roadId, { x: 0, z: 0, n: 0 }).get(P.roadId)!;
+    for (let i = 0; i < P.centre.length; i += 3) { c.x += P.centre[i]; c.z += P.centre[i + 2]; c.n++; n++; }
     ringEdges += lanes[pi].fwd.length + lanes[pi].bwd.length;
   });
   if (!n) return { ringEdges: 0, ringNodes: 0, spokes: 0, ccw: 0, cw: 0, problem: 'no roundabout in the data' };
-  cx /= n; cz /= n;
   const spokeRoads = new Set<string>();
   for (const e of edges) {
     if (!e.roundabout) {
@@ -543,6 +558,8 @@ function checkRing(polys: GeoRoadPoly[], roadById: Map<string, GeoDoc['roads'][n
       continue;
     }
     // sign of (point - centre) x travel in a north-up view (x right, north = -z): positive = counter-clockwise
+    const c = centre.get(e.roadId)!;
+    const cx = c.x / c.n, cz = c.z / c.n;
     const k = Math.floor(e.pts.length / 6) * 3;
     const px = e.pts[k] - cx, pn = -(e.pts[k + 2] - cz);
     const tx = e.pts[k + 3] - e.pts[k], tn = -(e.pts[k + 5] - e.pts[k + 2]);

@@ -95,7 +95,8 @@ const ABBREV = [[/\bStreet\b/g, 'St'], [/\bAvenue\b/g, 'Ave'], [/\bRoad\b/g, 'Rd
 /** Service roads of these kinds belong to a property or a car park: their names are never kept. */
 const UNNAMED_SERVICE = new Set(['drive-through', 'parking_aisle', 'driveway']);
 const STREET_CLASSES = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential', 'living_street']);
-const SIDEWALK_BAND = [0.5, 9]; // m beyond the estimated kerb where a separate sidewalk counts as this road's
+const SIDEWALK_PROBE = [2, 20]; // m from a road's centre line searched for a parallel mapped sidewalk
+const SIDEWALK_ASSUMED = 3.4; // m, sidewalk width assumed when measuring a carriageway from its sidewalk lines (Georgetown: 3-4 m)
 const SIDEWALK_MIN_COVER = 0.25; // share of a road's length that needs a sidewalk alongside for sidewalk=separate
 const SIGNAL_SNAP = 28; // m: signal / stop nodes snap to the nearest junction this close (tagged on approaches)
 const TOWPATH_DIST = 26; // m from the canal for a path to count as towpath
@@ -117,6 +118,11 @@ const SYNTH = {
   clearReal: { tree: 5, lamp: 12, bench: 20, bin: 20, hydrant: 40 }, // m: no synth prop of a kind this close to a real one
   clearAny: 2.5, // m from any other prop
   shopsPer100m: 2.5, // POIs (shops, food, drink) within 30 m per 100 m of street that make it a shopping street
+  woodTreeStep: 8, // m grid (jittered) of trees in woods (the Rock Creek valley, the edges)
+  parkTreeStep: 17, // m grid in parks and lawns, of which parkTreeShare are planted
+  parkTreeShare: 0.45,
+  cemeteryTreeStep: 15,
+  maxParkTrees: 9000,
 };
 
 // =================================================================================================== main
@@ -420,26 +426,67 @@ for (const pc of footRaw) {
   }
 }
 
-// ---- sidewalk=separate where mapped sidewalks run alongside (per road; the world generator decides per side)
+// ---- sidewalks alongside: sidewalk=separate where mapped sidewalks run beside a street, and the kerb-to-kerb width
+// measured from them where they run on both sides (a sidewalk line is drawn along the middle of its sidewalk, so the
+// carriageway is the distance between the two lines less one sidewalk width; one side only: twice the distance to it,
+// less a sidewalk). Measured widths replace the class estimate (est: 2) when they are plausible.
 {
   const g = new SegGrid(25);
   for (const f of footways) if (f.kind === 'sidewalk') g.addLine(f.pts.map(([x, z]) => [x, -z]), f);
+  /** distance (m) from (x, y) along the normal to the first sidewalk running parallel to (ux, uy), or 0 */
+  const probe = (x, y, nx, ny, ux, uy) => {
+    for (let o = SIDEWALK_PROBE[0]; o <= SIDEWALK_PROBE[1]; o += 0.5) {
+      const px = x + nx * o, py = y + ny * o;
+      let hit = false;
+      g.query(px - 0.7, py - 0.7, px + 0.7, py + 0.7, (sg) => {
+        if (distPointSeg2(px, py, sg.ax, sg.ay, sg.bx, sg.by) > 0.49) return true;
+        const dx = sg.bx - sg.ax, dy = sg.by - sg.ay, L = Math.hypot(dx, dy) || 1;
+        if (Math.abs((dx * ux + dy * uy) / L) < 0.85) return true;
+        hit = true;
+        return false;
+      });
+      if (hit) return o;
+    }
+    return 0;
+  };
+  let measured = 0;
   for (const r of roads) {
     if (r.tunnel || r.service || r.highway === 'motorway' || r.highway.endsWith('_link')) { r.sidewalk = 'no'; continue; }
     const pts = r.pts.map(([x, z]) => [x, -z]);
-    const hw = r.width / 2;
-    let n = 0, hit = 0;
-    sampleLine(pts, 6, (x, y, ux, uy) => {
+    const L = lineLength(pts);
+    const dl = [], dr = [];
+    let n = 0, s = 0;
+    sampleLine(pts, 5, (x, y, ux, uy) => {
+      s += 5;
+      if (L > 30 && (s < 10 || s > L - 10)) return; // junction corners: the cross street's sidewalks
       n++;
-      for (const side of [-1, 1]) {
-        let ok = false;
-        const nx = -uy * side, ny = ux * side;
-        for (const o of [SIDEWALK_BAND[0] + 1, 3, 5, 7, SIDEWALK_BAND[1]]) if (g.near(x + nx * (hw + o), y + ny * (hw + o), 1.6)) { ok = true; break; }
-        if (ok) { hit++; break; }
-      }
+      // right of travel in the internal (y north) frame is (uy, -ux)
+      const R = probe(x, y, uy, -ux, ux, uy), Lf = probe(x, y, -uy, ux, ux, uy);
+      if (R) dr.push(R);
+      if (Lf) dl.push(Lf);
     });
-    r.sidewalk = n && hit / n >= SIDEWALK_MIN_COVER ? 'separate' : 'no';
+    const cover = n ? Math.max(dl.length, dr.length) / n : 0;
+    r.sidewalk = cover >= SIDEWALK_MIN_COVER ? 'separate' : 'no';
+    if (!r.est || n < 2) continue;
+    const med = (a) => { a.sort((p, q) => p - q); return a[a.length >> 1]; };
+    const okL = dl.length / n >= 0.35, okR = dr.length / n >= 0.35;
+    let w = 0;
+    if (okL && okR) w = med(dl) + med(dr) - SIDEWALK_ASSUMED;
+    else if (okL || okR) w = 2 * (med(okL ? dl : dr) - SIDEWALK_ASSUMED / 2);
+    if (w >= 4 && w >= r.width * 0.7 && w <= r.width * 1.7) { r.width = r1(w); r.est = 2; measured++; }
   }
+  stats.widthFromSidewalks = measured;
+  // one width per street: pieces of the same street (name, class, one-way) take the street's median width when they
+  // are within 25 % of it, so kerbs do not jog at every junction; widths are rounded to 0.25 m
+  const groups = new Map();
+  for (const r of roads) if (r.name && !r.junction) (groups.get(`${r.name}|${r.highway}|${r.oneway}`) ?? groups.set(`${r.name}|${r.highway}|${r.oneway}`, []).get(`${r.name}|${r.highway}|${r.oneway}`)).push(r);
+  for (const list of groups.values()) {
+    const ws = list.filter((r) => r.est === 2).map((r) => r.width).sort((a, b) => a - b);
+    if (!ws.length) continue;
+    const med = ws[ws.length >> 1];
+    for (const r of list) if (Math.abs(r.width - med) <= 0.25 * med) { r.width = med; if (r.est === 1) r.est = 2; }
+  }
+  for (const r of roads) r.width = Math.round(r.width * 4) / 4;
 }
 
 // ---- towpath: paths named towpath / C&O Canal Trail, or running along the canal
@@ -988,6 +1035,143 @@ for (const rp of realProps) if (rp[2] !== 'signals' && rp[2] !== 'stop') props.p
   }
   stats.synth = synthCount;
 }
+
+// ============================================================================================= clean edge
+// The crop is a rectangle, but the playable area ends at natural edges where it can: beyond the Rock Creek valley in
+// the north-east (Kalorama is not Georgetown) and on the Virginia shore south of the Potomac (with Theodore Roosevelt
+// Island). Everything there is dropped and the land becomes woodland, so streets end at the woods or the river
+// instead of being cut mid-block. Roads crossing into a mask are cut at its edge (they lead off the map).
+const MASK_NE = [[300, -1021.3], [1058.2, -1021.3], [1058.2, -540], [960, -540], [880, -575], [811, -608], [742, -661], [706, -716], [640, -745], [540, -769], [471, -863]];
+const potomacCentre = (waterways.find((w) => w.kind === 'river')?.pts ?? []);
+const riverRings = water.filter((w) => w.kind === 'river').map((w) => w.pts);
+/** output-frame (x, z): outside the playable area? */
+const masked = (x, z) => {
+  if (pointInRing(x, z, MASK_NE)) return true;
+  // south of the Potomac's centre line (Virginia, Roosevelt Island), unless on the water
+  const P = potomacCentre;
+  for (let i = 1; i < P.length; i++) {
+    const a = P[i - 1], b = P[i];
+    if ((a[0] - x) * (b[0] - x) > 0 || a[0] === b[0]) continue;
+    const zc = a[1] + ((x - a[0]) / (b[0] - a[0])) * (b[1] - a[1]);
+    if (z > zc) return !riverRings.some((r) => pointInRing(x, z, r));
+    break;
+  }
+  return false;
+};
+/** Cuts an output polyline where it enters a mask (the crossing found by bisection); returns the outside runs. */
+const unmaskedRuns = (pts) => {
+  const runs = [];
+  let cur = [];
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], mp = masked(p[0], p[1]);
+    if (i > 0) {
+      const q = pts[i - 1], mq = masked(q[0], q[1]);
+      if (mp !== mq) {
+        let lo = 0, hi = 1; // t from q (lo side = q's state)
+        for (let k = 0; k < 14; k++) { const t = (lo + hi) / 2; if (masked(q[0] + (p[0] - q[0]) * t, q[1] + (p[1] - q[1]) * t) === mq) lo = t; else hi = t; }
+        const t = mq ? hi : lo;
+        const c = [r1(q[0] + (p[0] - q[0]) * t), r1(q[1] + (p[1] - q[1]) * t)];
+        if (!mq) { cur.push(c); if (cur.length >= 2) runs.push(cur); cur = []; } else cur = [c];
+      }
+    }
+    if (!mp) {
+      const l = cur[cur.length - 1];
+      if (!l || l[0] !== p[0] || l[1] !== p[1]) cur.push(p);
+    }
+  }
+  if (cur.length >= 2) runs.push(cur);
+  return runs.filter((r) => lineLength(r) > 1);
+};
+{
+  const before = { roads: roads.length, footways: footways.length, buildings: buildings.length, pois: pois.length, props: props.length, parks: parks.length, parking: parking.length };
+  const splitList = (list, isArea) => {
+    const out = [];
+    for (const e of list) {
+      if (isArea(e)) { const c = centroidOut(e.pts); if (!masked(c[0], c[1])) out.push(e); continue; }
+      if (!e.pts.some((p) => masked(p[0], p[1]))) { out.push(e); continue; }
+      const runs = unmaskedRuns(e.pts);
+      runs.forEach((pts, i) => out.push(i === 0 ? { ...e, pts } : { ...e, id: uniqueId(`${e.id}`), pts }));
+    }
+    return out;
+  };
+  const centroidOut = (pts) => { let x = 0, z = 0; for (const p of pts) { x += p[0]; z += p[1]; } return [x / pts.length, z / pts.length]; };
+  const keepArea = (e) => { const c = centroidOut(e.pts); return !masked(c[0], c[1]); };
+  const r2 = splitList(roads, () => false);
+  roads.length = 0; roads.push(...r2.filter((r) => r.junction !== 'roundabout' || r.pts.length > 8));
+  const f2 = splitList(footways, (f) => !!f.area);
+  footways.length = 0; footways.push(...f2);
+  const b2 = buildings.filter(keepArea); buildings.length = 0; buildings.push(...b2);
+  const goneB = new Set();
+  const p2 = pois.filter((p) => !masked(p.x, p.z)); pois.length = 0; pois.push(...p2);
+  const pr2 = props.filter((p) => !masked(p[0], p[1])); props.length = 0; props.push(...pr2);
+  const pk2 = parks.filter(keepArea); parks.length = 0; parks.push(...pk2);
+  const pl2 = parking.filter(keepArea); parking.length = 0; parking.push(...pl2);
+  const br2 = splitList(bridges, (b) => b.src === 'area'); bridges.length = 0; bridges.push(...br2);
+  void goneB;
+  // the masked land becomes woodland (park polygons; trees are synthesized below like any wood)
+  const ne = MASK_NE.map(([x, z]) => [x, -z]);
+  for (const pc of clipArea([{ pts: ne.slice().reverse(), role: 'outer', closed: true }], rect, null, [], 'mask-ne')) {
+    const o = outPoly(pc, 0);
+    if (o) parks.push({ id: uniqueId('edge-ne'), kind: 'natural=wood', name: null, synth: 1, ...o });
+  }
+  // Virginia shore: sample a 10 m grid of masked land cells, outline it per column run (coarse is fine: it is woods)
+  {
+    const cols = [];
+    for (let x = rect.x0; x <= rect.x1 + 1e-6; x += 10) {
+      let z0 = null, z1 = null;
+      for (let z = -rect.y1; z <= -rect.y0 + 1e-6; z += 5) {
+        if (pointInRing(x, z, MASK_NE)) continue;
+        if (masked(x, z)) { if (z0 === null) z0 = z; z1 = z; }
+      }
+      cols.push(z0 === null ? null : [x, z0, z1]);
+    }
+    let run = [];
+    const flush = () => {
+      if (run.length >= 2) {
+        const top = run.map(([x, z0]) => [r1(x), r1(z0)]), bot = run.map(([x, , z1]) => [r1(x), r1(Math.min(-rect.y0, z1 + 5))]).reverse();
+        parks.push({ id: uniqueId('edge-va'), kind: 'natural=wood', name: null, synth: 1, pts: [...bot, ...top].reverse() });
+      }
+      run = [];
+    };
+    for (const c of cols) { if (c) run.push(c); else flush(); }
+    flush();
+  }
+  stats.masked = Object.fromEntries(Object.entries(before).map(([k, v]) => [k, v - ({ roads, footways, buildings, pois, props, parks, parking })[k].length]));
+}
+
+// ---- woodland and park trees (synthesized): the data maps few trees, the Rock Creek valley and the edges are woods
+{
+  const roadG = new SegGrid(25), footG = new SegGrid(25);
+  for (const r of roads) roadG.addLine(r.pts, r.width / 2);
+  for (const f of footways) if (!f.area) footG.addLine(f.pts, 1);
+  const treeG = new SegGrid(10);
+  for (const p of props) if (p[2] === 'tree') treeG.addLine([[p[0], p[1]], [p[0], p[1]]], 1);
+  const near = (g, x, z, extra) => {
+    let hit = false;
+    g.query(x - 30, z - 30, x + 30, z + 30, (s) => { if (Math.sqrt(distPointSeg2(x, z, s.ax, s.ay, s.bx, s.by)) < (typeof s.data === 'number' ? s.data : 0) + extra) { hit = true; return false; } return true; });
+    return hit;
+  };
+  const wet = (x, z) => water.some((w) => w.kind !== 'swimming_pool' && pointInRing(x, z, w.pts));
+  let n = 0;
+  const hashR = (x, z) => { let h = Math.imul(Math.round(x * 10) ^ 0x9e3779b9, 0x85ebca6b) ^ Math.imul(Math.round(z * 10), 0xc2b2ae35); h ^= h >>> 15; return ((Math.imul(h, 0x27d4eb2d) ^ (h >>> 13)) >>> 0) / 4294967296; };
+  for (const p of parks) {
+    const wood = p.kind === 'natural=wood' || p.kind === 'natural=scrub';
+    const step = wood ? SYNTH.woodTreeStep : p.kind === 'landuse=cemetery' ? SYNTH.cemeteryTreeStep : SYNTH.parkTreeStep;
+    const keep = wood ? 0.9 : p.kind === 'leisure=pitch' || p.kind === 'leisure=playground' ? 0 : SYNTH.parkTreeShare;
+    if (!keep) continue;
+    let minx = Infinity, minz = Infinity, maxx = -Infinity, maxz = -Infinity;
+    for (const [x, z] of p.pts) { minx = Math.min(minx, x); maxx = Math.max(maxx, x); minz = Math.min(minz, z); maxz = Math.max(maxz, z); }
+    for (let z = minz + step / 2; z < maxz; z += step) for (let x = minx + step / 2; x < maxx; x += step) {
+      const tx = x + (hashR(x, z) - 0.5) * step * 0.7, tz = z + (hashR(z, x) - 0.5) * step * 0.7;
+      if (hashR(tx, tz) > keep || !pointInRing(tx, tz, p.pts) || (p.holes ?? []).some((h) => pointInRing(tx, tz, h))) continue;
+      if (!inRect(tx, -tz, -3) || near(roadG, tx, tz, 2.5) || near(footG, tx, tz, 2) || near(treeG, tx, tz, 3.5) || wet(tx, tz) || buildingAt(tx, -tz, 1.5)) continue;
+      props.push([r1(tx), r1(tz), 'tree', 1]);
+      treeG.addLine([[tx, tz], [tx, tz]], 1);
+      if (++n >= SYNTH.maxParkTrees) break;
+    }
+  }
+  stats.synth.parkTree = n;
+}
 props.sort((a, b) => (a[2] < b[2] ? -1 : a[2] > b[2] ? 1 : a[0] - b[0] || a[1] - b[1]));
 
 // ============================================================================================= terrain
@@ -1150,7 +1334,7 @@ const doc = {
     bounds: { x0: r1(rect.x0), z0: r1(-rect.y1), x1: r1(rect.x1), z1: r1(-rect.y0) },
     winding: 'outer rings counter-clockwise on a north-up map (negative shoelace area in raw x,z), holes the other way; rings do not repeat the first point',
     units: { maxspeed: 'km/h', h: 'm', width: 'm kerb to kerb', heights: 'm above the Potomac surface (river level 0)' },
-    notes: 'ids: g/b/p + the first 12 hex digits of the Overture GERS id (stable across releases), .n when one feature became several pieces (split by bridge/tunnel/level/subclass rules or the crop). Road and path vertices at Overture connectors are kept and identical in every way that meets there, so graphs can be built by matching coordinates. Roads: lanes and width are estimates by class (est: 1) unless the data has a width; sidewalk=separate where mapped sidewalks run alongside. Washington Circle is one closed road with junction=roundabout. Buildings: h from Overture height (OSM or USGS lidar), building parts or floors, else the median of neighbours of the same kind or a class default (est: 1). POIs: category only (OSM key=value from the Overture taxonomy), b = building id. Props: [x, z, kind] real, [x, z, kind, 1] synthesized. landmarks.canal.levels: canal water levels west to east between the locks (lock_gate props mark both ends of each chamber); waterways creek.levels: Rock Creek water level per vertex. heights: grid of terrain heights relative to the river, data[iz * nx + ix] at (x0 + ix * spacing, z0 + iz * spacing).',
+    notes: 'ids: g/b/p + the first 12 hex digits of the Overture GERS id (stable across releases), .n when one feature became several pieces (split by bridge/tunnel/level/subclass rules or the crop). Road and path vertices at Overture connectors are kept and identical in every way that meets there, so graphs can be built by matching coordinates. Roads: lanes are estimates by class; width is the data width, else measured from the sidewalk lines either side (est: 2), else a class estimate (est: 1); sidewalk=separate where mapped sidewalks run alongside. Washington Circle is one closed road with junction=roundabout. Buildings: h from Overture height (OSM or USGS lidar), building parts or floors, else the median of neighbours of the same kind or a class default (est: 1). POIs: category only (OSM key=value from the Overture taxonomy), b = building id. Props: [x, z, kind] real, [x, z, kind, 1] synthesized. landmarks.canal.levels: canal water levels west to east between the locks (lock_gate props mark both ends of each chamber); waterways creek.levels: Rock Creek water level per vertex. heights: grid of terrain heights relative to the river, data[iz * nx + ix] at (x0 + ix * spacing, z0 + iz * spacing).',
     simplify: { line: SIMPLIFY_LINE, area: SIMPLIFY_AREA, building: SIMPLIFY_BUILDING },
     attribution: ATTRIBUTION.replace('{release}', release.release),
     licence: LICENCE,
@@ -1173,7 +1357,7 @@ const L = [];
 L.push(`Overture import: release ${release.release} -> ${args.out} (${(bytes / 1048576).toFixed(2)} MB${bytes > SIZE_TARGET ? ', OVER the 3 MB target' : ''}) in ${((performance.now() - T0) / 1000).toFixed(1)} s`);
 L.push(`  crop ${CROP.minlon},${CROP.minlat} .. ${CROP.maxlon},${CROP.maxlat} = ${Math.round(W)} m x ${Math.round(H)} m; bounds x ${r1(rect.x0)}..${r1(rect.x1)}, z ${r1(-rect.y1)}..${r1(-rect.y0)}`);
 L.push(`  roads ${roads.length} (${km(roads)} km): ${by(roads, (r) => r.highway).map(([k, v]) => `${k} ${v}`).join(', ')}`);
-L.push(`    one-way ${roads.filter((r) => r.oneway).length}, bridge pieces ${roads.filter((r) => r.bridge).length}, tunnel ${roads.filter((r) => r.tunnel).length}, layers ${by(roads.filter((r) => r.layer), (r) => r.layer).map(([k, v]) => `${k}:${v}`).join(' ')}, width from data ${roads.filter((r) => !r.est).length}, sidewalk=separate ${roads.filter((r) => r.sidewalk === 'separate').length}`);
+L.push(`    one-way ${roads.filter((r) => r.oneway).length}, bridge pieces ${roads.filter((r) => r.bridge).length}, tunnel ${roads.filter((r) => r.tunnel).length}, layers ${by(roads.filter((r) => r.layer), (r) => r.layer).map(([k, v]) => `${k}:${v}`).join(' ')}, width from data ${roads.filter((r) => !r.est).length}, from sidewalks ${stats.widthFromSidewalks}, sidewalk=separate ${roads.filter((r) => r.sidewalk === 'separate').length}`);
 L.push(`  footways ${footways.length} (${km(footways)} km): ${by(footways, (f) => f.kind).map(([k, v]) => `${k} ${v}`).join(', ')}; towpath pieces ${towpath.length}`);
 L.push(`  buildings ${buildings.length}: heights ${JSON.stringify(stats.heights)}; overlaps kept (5-60%) ${stats.overlapsKept}`);
 L.push(`  pois ${pois.length}: ${by(pois, (p) => p.cat).slice(0, 12).map(([k, v]) => `${k} ${v}`).join(', ')}`);
@@ -1184,6 +1368,7 @@ L.push(`  parks ${parks.length}: ${by(parks, (p) => p.kind).map(([k, v]) => `${k
 L.push(`  props ${props.length}: ${by(props, (p) => `${p[2]}${p[3] ? '*' : ''}`).map(([k, v]) => `${k} ${v}`).join(', ')} (* synth)`);
 L.push(`  signals: ${JSON.stringify(stats.signals)}`);
 L.push(`  terrain: z${heights.demZoom} (${heights.demPx.toFixed(1)} m/px) resampled to ${args.spacing} m (${heights.grid.nx} x ${heights.grid.nz}); river surface at ${heights.riverLevel.toFixed(2)} m NAVD88 = 0; range ${heights.grid.data.reduce((a, b) => Math.min(a, b))} .. ${heights.grid.data.reduce((a, b) => Math.max(a, b))} m`);
+L.push(`  clean edge: removed ${JSON.stringify(stats.masked)}`);
 L.push(`  dropped: ${Object.entries(stats.dropped).map(([k, v]) => `${k} ${v}`).join('; ')}`);
 for (const n of stats.notes) L.push(`  note: ${n}`);
 console.log(L.join('\n'));

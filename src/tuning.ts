@@ -637,6 +637,7 @@ const RAW = {
     waterClearance: 2.4, // m from canal / creek water to the underside of a deck
     freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
     deckThickness: 1.1, // m from deck surface to its underside
+    deckGroundGap: 0.6, // m: natural ground under a bridge deck is cut down to at least this far below its underside
     stairWallFrom: 0.2, // m: a stair's side walls start once it has risen this far above its foot (the flat run-in stays open)
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)
