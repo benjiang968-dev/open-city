@@ -71,6 +71,8 @@ export function createDayNight(scene: THREE.Scene): DayNightState {
 const ca = new THREE.Color();
 const cb = new THREE.Color();
 const moonDir = new THREE.Vector3(0.35, 0.85, -0.4).normalize();
+/** Where the headlight sits on the car (car-local metres, +z forward). */
+const HEADLIGHT_AT = new THREE.Vector3(0, 0.4, 2);
 
 /**
  * Sun direction for a game hour: up at TUNING.look.sunrise, down at TUNING.look.sunset (the same day the KEYS above
@@ -120,8 +122,14 @@ export function updateDayNight(w: World, dt: number): void {
 
   // the player's headlights
   const v = w.player.vehicle;
-  if (v && s.headlight.parent !== v.mesh) v.mesh.add(s.headlight);
-  if (!v && s.headlight.parent !== w.scene) w.scene.add(s.headlight);
+  // The light stays a child of the scene and copies the car's pose: under the car's own mesh it went dark whenever that
+  // mesh was hidden (an untouched parked car is drawn as an instance until it moves), which changed the light count and
+  // recompiled every lit material mid-game (a multi-second stall on entering a parked car with the PBR shaders).
+  if (s.headlight.parent !== w.scene) w.scene.add(s.headlight);
+  if (v) {
+    s.headlight.quaternion.copy(v.mesh.quaternion);
+    s.headlight.position.copy(HEADLIGHT_AT).applyQuaternion(v.mesh.quaternion).add(v.mesh.position);
+  }
   s.headlight.intensity = v && !v.wrecked ? THREE.MathUtils.clamp((s.night - 0.2) * 2, 0, 1) * 30 * workingHeadlights(v) : 0;
 
   // street lights and windows glow at night
