@@ -879,6 +879,9 @@ export function updateTraffic(w: World, dt: number): void {
       let vEnd = car.move >= 0 ? J.mvSpeed[car.move] : car.target >= 0 ? e.speed : TT.turnSpeedMin;
       // a roundabout entry: reach the line slowly enough to stop there if a circulating car turns up late
       if (c.kind === CTL_RING && !e.roundabout) vEnd = Math.min(vEnd, TT.ringEntryCreep);
+      // nowhere to go at all (a one-way road leaving the map): pull up at the end. Rolling on at turn speed with no
+      // next lane, the car circled on the spot at the map edge for as long as the player watched
+      if (car.next < 0 && w.city.roads.nodes[e.to].out.length === 0) vEnd = 0;
       let remStop = rem;
       if (c.kind !== 0 && car.next >= 0 && !car.cleared) {
         if (rem < (car.speed * car.speed) / (2 * TT.approachDecel) + TT.decideDist) {
