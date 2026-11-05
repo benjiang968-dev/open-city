@@ -36,6 +36,25 @@ Same frame as before: origin 38.9065, -77.061, `lat = 38.9065 − z / 111013.7`,
 crop is -77.0726, 38.8986 to -77.0483, 38.9157 (2108 m x 1898 m; x -1006..1102, z -1021..877). The numbers below
 come from comparing the two JSON files (old: `src/data/georgetown.json` at commit 4133d32).
 
+### Stage 1 integration: places that still look or play wrong (2026-11-05, branch `s1-integrate`)
+
+The physics work (exact `heightAt`, colliders for everything drawn, stairs) met the real data for the first time in
+the integration. Fixed there: stair ends off the ground (65 of 86), lanes under overlapping road surfaces, the bridge
+abutment wall across K St. Still open:
+
+| Where (x, z / lat, lon) | What | Status |
+|---|---|---|
+| -349, 240 / 38.90434, -77.06502 | Two short stairs come off a canal footbridge deck behind its railing: not walkable from the deck (`stairs` #5, #6) | open |
+| -934, -24 / 38.90672, -77.07177 | A switchback stair (four pieces, two 90-degree turns): the `stairs` walk stops at the second turn (38.5 of 41.0 m) | open (a player can turn there; the scripted walk does not) |
+| 252, -770 / 38.91344, -77.05809 | A cluster of overlapping stair pieces at different heights: two of them are not walkable end to end (`stairs` #39, #43) | open |
+| 228, -888 / 38.91450, -77.05837 | A stair with a 69-degree bend mid-flight: the walk stops at the bend (29.1 of 35.4 m) | open |
+| 580, 786 / 38.89942, -77.05431; 378, 350 / 38.90335, -77.05664; -540, 310 / 38.90371, -77.06723 | Two road meshes overlap 0.5-1.1 m apart (Virginia Ave, the Rock Creek Parkway under the bridges, the Whitehurst Freeway's west end): the lower one is hidden inside the upper | lanes and walk nodes now lie on the upper (drawn) surface; the meshes still overlap |
+| 158, 433 / 38.90260, -77.05918 | A bridge abutment wall stood across K St under the Whitehurst Freeway's deck end (drawn on s1-realdata, solid with s1-physics): the gate drive crashed into it | fixed (abutments left out over roads) |
+| -648, 170 / 38.90497, -77.06847 (spawn) | The starting car hits the corner pole within 20 m of the spawn (`drive`: 120 -> 52 hp in 3 s); the `stairs` kerb test there finds the pavement 0.39 m below the road | open (carried over from s1-realdata) |
+| -352.6, 302.5 / 38.90378, -77.06507 | `fallthrough`: a dropped capsule rests 0.27 m above the ground, touching nothing the test's rays see | open (1 of 1,303 landings) |
+| -102, -1020 / 38.91569, -77.06218 (north edge); -276, 237 / 38.90437, -77.06418 (footbridge) | `physaudit` railing mismatches: rails drawn where the probe finds no collider, and footbridge rails drawn 1.1 m above a deck with no collider at that height | open (221 railing probe mismatches, 105 floor samples) |
+| everywhere on M St and Wisconsin Ave | 136 trees and 60 lamps, signal poles and sign posts stand within a person's reach of a walk link (they all collide since s1-physics; synthesized street trees are not moved to the kerb strip on real data) | open: no walkway is fully blocked |
+
 ### What moved (old knowledge-based line → real line of the same name)
 
 Median and largest distance from the old line's vertices to the real street:
