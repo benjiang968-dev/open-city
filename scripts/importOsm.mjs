@@ -1493,3 +1493,6 @@ function printReport({ input, out, osm, res, bytes, inBytes, tParse, tConvert, l
   if (osm.remarks.length) L.push(`  Overpass remarks: ${osm.remarks.join(' | ')}`);
   console.log(L.join('\n'));
 }
+
+// Shared with scripts/importOverture.mjs (same output schema and geometry conventions).
+export { clipArea, clipPolyline, clipRingSH, centroid, distPointSeg2, lineLength, pointInRing, sampleLine, signedArea, simplify, toJson, SegGrid, STREET_WORD, BUSINESS_WORD };

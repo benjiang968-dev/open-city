@@ -12,7 +12,7 @@ import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, polyArea, SegGrid } from './geoDoc';
 import { lin as linHex, PhysChunks, RenderChunks, type Layer } from './meshKit';
 import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
-import { buildRoadNet, OMITTED_ROADS, solveProfiles, type REdge, type RoadNet } from './roadNet';
+import { buildRoadNet, omittedRoad, solveProfiles, type REdge, type RoadNet } from './roadNet';
 import { buildNetMeshes, drapeRibbon, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
 import { buildBridges, buildStairs, rasterizeStairs } from './bridges';
@@ -170,7 +170,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   // ---------------------------------------------------------------- road graph and profiles
   const baseAt = (x: number, z: number) => ras.baseAt(x, z);
   const net = buildRoadNet(doc, baseAt);
-  const probe = makeProbe(net, W, ras, doc);
+  const probe = makeProbe(net, W, ras, doc, !!doc.meta.synthetic);
   solveProfiles(net, baseAt, probe);
   phase('roads');
 
@@ -272,8 +272,10 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   }));
   const decks: GeoDeck[] = net.edges.filter((e) => e.deck).map((e) => ({ roadId: e.road.id, edge: e.id, name: e.name, layer: e.layer, centre: centreOf(net, e), halfWidth: e.hw }));
   const deckIdx = buildDeckIndex(net, [...water.walkDecks, ...pierDecks]);
-  const omitted = doc.roads.filter((r) => OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`)).map((r) => ({
-    roadId: r.id, name: r.name ?? '', reason: 'K St underpass beneath Washington Circle: not rendered (ramps would need >15% grades between the split nodes and the ring); remove from the graph',
+  const omitted = doc.roads.filter((r) => omittedRoad(doc, r)).map((r) => ({
+    roadId: r.id, name: r.name ?? '', reason: doc.meta.synthetic
+      ? 'K St underpass beneath Washington Circle: not rendered (ramps would need >15% grades between the split nodes and the ring); remove from the graph'
+      : 'tunnel or below-ground road (the K St underpass and its ramps): the world has no tunnel geometry yet; not rendered, not in the graph',
   }));
 
   // ---------------------------------------------------------------- queries (no allocation)
@@ -499,7 +501,7 @@ function buildingsUnderDecks(doc: GeoDoc, net: RoadNet, ras: GeoRaster): Set<str
 }
 
 /** Required deck heights for bridge profiles: what passes beneath + clearance. */
-function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc) {
+function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc, synthetic: boolean) {
   const grid = new SegGrid(32);
   for (const e of net.edges) grid.addLine(e.pts, e.id, e.hw + 4);
   const paths = new SegGrid(32);
@@ -536,8 +538,8 @@ function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc) {
     let dp = Infinity;
     paths.query(x, z, (_s, _p, d) => { if (d < dp) dp = d; });
     if (dp < 2.5) req = Math.max(req, ras.baseAt(x, z) + G.pathClearance + th);
-    // the freeway runs elevated above K St / Water St
-    if (self.freeway && x > -620 && x < 250) req = Math.max(req, ground + G.freewayClearance + th);
+    // the spec's freeway runs elevated above K St / Water St (real data: the roads beneath set the clearance)
+    if (synthetic && self.freeway && x > -620 && x < 250) req = Math.max(req, ground + G.freewayClearance + th);
     return req;
   };
 }

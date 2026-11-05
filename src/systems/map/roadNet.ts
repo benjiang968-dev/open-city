@@ -15,6 +15,15 @@ const GORE_RADIUS = 1; // m kerb radius where two arms meet at a sharp angle (me
 const MIN_TRIM = 1.2; // m every arm keeps clear of a junction centre
 /** Ways left out of the render (and to be removed from the graph). See the report: the K St underpass. */
 export const OMITTED_ROADS = new Set(['K St NW#tunnel']);
+/**
+ * Real (imported) data: tunnels and roads below ground level (the K St underpass beneath Washington Circle and its
+ * ramps) are left out of the render and the graph; the world has no tunnel geometry yet. Knowledge-based data keeps
+ * its own list (OMITTED_ROADS).
+ */
+export function omittedRoad(doc: GeoDoc, r: GeoRoad): boolean {
+  if (doc.meta.synthetic) return OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`);
+  return r.tunnel === 1 || r.layer < 0;
+}
 /** The Whitehurst Freeway's last stretch is moved north so it runs beside (not on top of) the K St bridge. */
 const FREEWAY_SHIFT = { x0: 110, x1: 250, x2: 392, dz: -15.6 };
 
@@ -104,7 +113,8 @@ export interface ClearanceProbe {
 export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => number): RoadNet {
   const key = (x: number, z: number) => `${x},${z}`;
   // ---- which vertices are nodes
-  const roads = doc.roads.filter((r) => !OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`));
+  const synthetic = !!doc.meta.synthetic;
+  const roads = doc.roads.filter((r) => !omittedRoad(doc, r));
   const count = new Map<string, number>();
   const isEnd = new Set<string>();
   for (const r of roads) {
@@ -129,14 +139,21 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
   };
   const isNode = (p: Pt) => { const k = key(p[0], p[1]); return isEnd.has(k) || (count.get(k) ?? 0) > 1; };
 
-  // ---- roundabout: snap to a true circle
-  const ring = roads.find((r) => r.junction === 'roundabout');
-  let ringC: { x: number; z: number; r: number } | null = null;
-  if (ring) {
-    const P = ring.pts.slice(0, -1);
-    const cx = P.reduce((s, p) => s + p[0], 0) / P.length, cz = P.reduce((s, p) => s + p[1], 0) / P.length;
+  // ---- roundabouts (Washington Circle; real data may hold more than one): snap each ring to a true circle
+  const ringOf = new Map<GeoRoad, { x: number; z: number; r: number }>();
+  for (const ring of roads) {
+    if (ring.junction !== 'roundabout') continue;
+    const closed = ring.pts.length > 3 && ring.pts[0][0] === ring.pts[ring.pts.length - 1][0] && ring.pts[0][1] === ring.pts[ring.pts.length - 1][1];
+    const P = closed ? ring.pts.slice(0, -1) : ring.pts;
+    // centre by arc length (the data's vertices bunch where the spokes join)
+    let cx = 0, cz = 0, W = 0;
+    for (let i = 0; i < P.length; i++) {
+      const a = P[i], b = P[(i + 1) % P.length], l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      cx += ((a[0] + b[0]) / 2) * l; cz += ((a[1] + b[1]) / 2) * l; W += l;
+    }
+    cx /= W || 1; cz /= W || 1;
     const r = P.reduce((s, p) => s + Math.hypot(p[0] - cx, p[1] - cz), 0) / P.length;
-    ringC = { x: cx, z: cz, r };
+    ringOf.set(ring, { x: cx, z: cz, r });
   }
 
   // ---- edges
@@ -154,6 +171,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const a = getNode(raw[0]), b = getNode(raw[raw.length - 1]);
     let pts: Pt[];
     const roundabout = r.junction === 'roundabout';
+    const ringC = ringOf.get(r);
     if (roundabout && ringC) {
       // resample along the circle between the end angles (direction of travel follows the data)
       const a0 = Math.atan2(raw[0][1] - ringC.z, raw[0][0] - ringC.x);
@@ -175,15 +193,17 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
       b.x = pts[n][0]; b.z = pts[n][1];
       a.roundabout = b.roundabout = true;
     } else pts = raw.map((p) => [p[0], p[1]] as Pt);
-    const freeway = r.highway === 'trunk' && r.layer >= 2;
-    if (freeway) pts = shiftFreeway(pts);
+    // elevated freeway: the spec's Whitehurst Freeway (trunk, layer 2); in real data any motorway / trunk deck
+    const freeway = synthetic ? r.highway === 'trunk' && r.layer >= 2 : /^(motorway|trunk)/.test(r.highway) && (r.bridge === 1 || r.layer > 0);
+    if (freeway && synthetic) pts = shiftFreeway(pts);
     pts = densify(pts, DENSE);
     const lanesN = Math.max(1, r.lanes ?? 2);
-    let width = lanesN * G.laneWidth;
+    // kerb-to-kerb width: the data's (imported maps carry a width estimate per road), else lanes x lane width
+    let width = r.width ? Math.max(G.minRoadWidth, r.width) : lanesN * G.laneWidth;
     let fwd = 0, bwd = 0;
     if (r.oneway === 1) fwd = lanesN;
     else if (r.oneway === -1) bwd = lanesN;
-    else if (lanesN === 1) { fwd = bwd = 1; width = Math.max(width, G.minTwoWayWidth); }
+    else if (lanesN === 1) { fwd = bwd = 1; if (!r.width) width = Math.max(width, G.minTwoWayWidth); }
     else { fwd = Math.ceil(lanesN / 2); bwd = lanesN - fwd; }
     const hw = width / 2;
     const lw = width / (fwd + bwd);
@@ -406,9 +426,9 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     return out;
   }
 
-  // ---- where the shifted freeway runs beside the K St bridge, that bridge loses its north sidewalk
+  // ---- where the shifted freeway runs beside the K St bridge, that bridge loses its north sidewalk (spec data only)
   for (const e of edges) {
-    if (!e.deck || e.freeway || !e.name.startsWith('K St')) continue;
+    if (!synthetic || !e.deck || e.freeway || !e.name.startsWith('K St')) continue;
     const fw = edges.find((f) => f.freeway);
     if (!fw) continue;
     const side = -1; // north = left of an eastward edge

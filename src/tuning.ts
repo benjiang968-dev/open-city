@@ -627,6 +627,7 @@ const RAW = {
   geo: {
     laneWidth: 3.3, // m per lane; the map data's carriageway width is lanes x laneWidth
     minTwoWayWidth: 5.6, // m: a two-way street tagged with 1 lane is widened to this (two narrow lanes)
+    minRoadWidth: 3, // m: narrowest carriageway drawn (imported driveways and alleys keep their own width above this)
     sidewalkWidth: 3, // m from the kerb to the back of the sidewalk (the data's sidewalk lines run 1.5 m from the kerb)
     kerbHeight: 0.15, // m step from road to sidewalk; car wheels feel it, people step up it
     cornerRadius: 6, // m kerb radius at street corners

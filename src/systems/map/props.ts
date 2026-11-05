@@ -102,7 +102,8 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
   const pits = new MeshBuf();
   for (const e of net.edges) {
     if (e.deck) continue;
-    const spec = SHOPPING.find((s) => s.name === e.name);
+    // (imported data brings its own street trees as synthesized props; only the knowledge-based map plants them here)
+    const spec = doc.meta.synthetic ? SHOPPING.find((s) => s.name === e.name) : undefined;
     if (!spec) continue;
     for (const side of [-1, 1]) {
       if (!(side < 0 ? e.swL : e.swR)) continue;

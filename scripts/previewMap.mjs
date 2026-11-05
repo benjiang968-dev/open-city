@@ -148,7 +148,7 @@ function contours(interval) {
   const minor = [], major = [];
   const v = (ix, iz) => h.data[iz * h.nx + ix];
   const xs = (ix) => h.x0 + ix * h.spacing, zs = (iz) => h.z0 + iz * h.spacing;
-  const lo = Math.ceil(Math.min(...h.data) / interval) * interval, hi = Math.max(...h.data);
+  const lo = Math.ceil(h.data.reduce((a, b) => Math.min(a, b)) / interval) * interval, hi = h.data.reduce((a, b) => Math.max(a, b));
   for (let level = Math.max(interval, lo); level <= hi; level += interval) {
     const out = level % (interval * 5) === 0 ? major : minor;
     for (let iz = 0; iz < h.nz - 1; iz++) {

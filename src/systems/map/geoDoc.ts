@@ -15,6 +15,11 @@ export interface GeoRoad {
   layer: number;
   junction: string | null;
   maxspeed: number | null;
+  /** Kerb-to-kerb width (m); imported data carries an estimate (est: 1) or the mapped width. */
+  width?: number;
+  est?: number;
+  service?: string;
+  access?: string;
   sidewalk?: string;
   surface?: string;
   pts: Pt[];
@@ -37,7 +42,13 @@ export interface GeoBuilding {
   h: number;
   type: string;
   levels: number;
+  /** height from neighbours or a class default, not the data */
+  est?: number;
+  /** underside height (m) for buildings over a passage */
+  minH?: number;
+  roof?: string;
   pts: Pt[];
+  holes?: Pt[][];
 }
 export interface GeoPoi {
   id: string;
@@ -53,6 +64,8 @@ export interface GeoArea {
   name: string | null;
   pts: Pt[];
   holes?: Pt[][];
+  /** Water level (m) per vertex of a waterway line (imported: Rock Creek). */
+  levels?: number[];
 }
 export interface GeoParking {
   id: string;
@@ -69,7 +82,8 @@ export interface GeoHeights {
   nz: number;
   data: number[];
 }
-export type GeoProp = [number, number, string];
+/** [x, z, kind] from the data, or [x, z, kind, 1] when synthesized by the importer. */
+export type GeoProp = [number, number, string] | [number, number, string, number];
 
 export interface GeoDoc {
   meta: {
@@ -88,7 +102,7 @@ export interface GeoDoc {
   parks: GeoArea[];
   parking: GeoParking[];
   bridges: { id: string; src: string; name: string | null; layer: number; pts: Pt[] }[];
-  landmarks: unknown;
+  landmarks: { canal?: { waterways: string[]; water: string[]; levels?: number[]; locks?: { name: string; x: number; z: number; length: number }[] }; towpath?: string[] } | null;
   props: GeoProp[];
   heights: GeoHeights;
 }
