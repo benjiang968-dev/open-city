@@ -749,3 +749,40 @@ Format: date · what changed · what to test · known issues.
     - Mortar colour is the same on every brick building (bond, brick colour and paint vary).
     - The in-game shots show the taxi job's fare beacon (an existing 40 m light column) at the end of M St.
     - Headless runs are slower (see above): budget minutes for a scenario's first rendered frame.
+
+- **S1.4 PBR look, independent review (verify-look, branch `s1-look`):** every claim re-run, screenshots at street level and from the air at dawn, day, dusk, night and in rain, perf against main 8192ea1, shader stalls while driving, grid regressions. Seven fixes, each its own commit:
+  - **Leaf cards mirrored the sky.** The detailed trees lit their leaf cards with the rounded canopy normal but without the back-face flip, so at the rim and on the far side of every crown the normal faced away from the camera, Fresnel went to 1 and the leaves showed the bright sky: pale, speckled "frost" on every backlit tree (all street-level M St shots). Normals now bend toward the viewer, leaves keep 60 % of the sky reflection, sunlight passes through backlit leaves (translucency, inside three's sun loop so it keeps the sun's shadow), and edge-on cards fade (`TUNING.look.leaf*`, `worldMaterial.ts`).
+  - **Black sky at 19:00.** `sunDirection()` set the sun at 18:00 while the day/night keys keep dusk light until about 19:45, so the physical sky went black and starry and the sun switched to the moon while the hemisphere light, fog and exposure still said dusk. Sunrise and sunset are now `TUNING.look.sunrise/sunset` (6.0 and 19.8): golden hour at 19:00, blue hour at 19:30, night by 20:00.
+  - **Rain sky with dark blue holes.** Cloud coverage only reached 0.95; three's Sky varies it by ±0.3 per region, so the overcast greying turned the gaps into slate patches. Coverage now goes to 1.25 and density to 0.85 at full cloud (`skyCloudOvercast`, `skyCloudDensity*`).
+  - **Tar roofs repeated a 4 m lattice of dark oval pairs** (the bake's repair patches inside one 4 m tile), plainly visible from any height. Patches are now rare and faint.
+  - **Entering a parked car recompiled every lit shader.** The headlight was parented to the driven car's mesh, which stays hidden while an untouched parked car is drawn as an instance; the light count dropped and 15-16 programs (world, facades, trees, water, sky, cars, people) compiled mid-game: frames of 2-3 s in software GL, and no headlight while sitting in the car. It now stays in the scene and copies the car's pose.
+  - **Shadow-pass program churn.** One shared depth material for instanced and plain casters made three re-derive program parameters per draw; with every prop casting and two cascades that was about 155 KB of garbage per frame on Medium (main: 89 KB). Instanced casters now have their own depth materials (`render/shadowCasters.ts`): 59 KB per frame.
+  - **TUNING.look comments** (`interiorDay`, shadow biases).
+  - **Test:**
+    - Screenshots of the review: `screenshots/34-look-review-{trees,dusk,rain,roof,aerial}.jpg` (builder build vs review fixes, Medium, 1280 x 720, the game itself).
+    - Stalls: in the game, get into a parked car at night: no hitch, headlight on. Scripted: a drive over the whole map (50 lane points on Georgetown, 40 on the grid; day, dusk, night, rain) compiles 0 new programs on either map (before the headlight fix: 16 on Georgetown).
+    - `node scripts/shot.mjs x lookstall` and `MAP=georgetown node scripts/shot.mjs x lookstall`.
+    - Grid regressions after the fixes, all exit 0 and console clean: `world`, `walk` (4.8 m walked, 0.64 m jump), `drive` (31 km/h after 3 s, turn, brake), `handling` (83 km/h after 4 s, handbrake slide recovers), `crashspikes` (930 frames, 0 over 33 ms, worst 10 ms), `gate2`, `mapcheck` (pass, 0 warnings), `theft`, `lookstall` (41 programs before and after); Georgetown `lookstall` 46 before and after (its final page screenshot timed out after 300 s in software GL; the scenario itself passed).
+  - **Measured** (base = main 8192ea1, Georgetown at M St 15:30, software GL, interleaved runs, medians):
+
+    | | Low base | Low new | Medium base | Medium new |
+    |---|---|---|---|---|
+    | CPU per frame, 4x throttle, 480 x 270 (3 rounds) | 19.9 ms | 19.6 ms | 33.3 ms | 28.6 ms |
+    | frames over 33 ms of 20, same runs | 0 | 0 | 10 | 3 |
+    | software-GL frame, 960 x 540, GPU drained (2 rounds) | 566 ms | 1311 ms | 1033 ms | 5307 ms |
+    | draw calls / triangles | 92 / 0.46 M | 92 / 0.46 M | 156 / 0.88 M | 256 / 1.39 M |
+    | page start to first frame | 8.6 s | 11.3 s | 9.5 s | 18.0 s |
+    | baked texture memory | - | 19.3 MiB | - | 73.3 MiB |
+    | garbage per frame (heap sampling, 30 frames) | | | 291 KB | 322 KB after the fixes (515 KB before) |
+
+    - CPU per frame is not worse on either preset; Low is not slower than main on the CPU.
+    - GPU cost is the open risk: software GL needs 2.3x main's work on Low and 5.1x on Medium (two 1536 px cascades, 6 point lights evaluated by every lit pixel all day, PBR texture fetches, sky light, interior-mapped windows). Software GL over-weights texture fetches, so real GPUs will scale differently, but Low cannot be called as cheap as main until it is measured on a real laptop.
+  - **Known issues (not fixed):**
+    - From the air the city reads as a toy model: flat pastel roofs and identical window grids come from the generator's palettes and facade tiles; the existing 180-750 m fog hides the city entirely from 300 m up.
+    - The asphalt aggregate is coarse and high-contrast (sandpaper at 10-30 m).
+    - Leaf cards still speckle at the crown edge (alpha to coverage), and a backlit crown shows its dark inner sphere.
+    - Stars appear while the 19:30 sky is still blue; blue hour is short (about 19:30 to 20:00).
+    - The 6 (Medium) or 10 (High) lamp point lights stay in every lit shader by day at intensity 0 (no recompiles, but every pixel pays for them).
+    - Pre-existing on main, still there: `carMaterial` is shared by instanced parked cars and plain traffic cars, and the crowd shares one material between coloured and plain parts, so the main pass still re-derives programs per draw (about 44 KB per frame); weather keeps 30 % of the sun under rain (hard shadows on an overcast day).
+    - The committed `33-look-*` shots predate these fixes (frosty trees, old sun angle).
+    - Changing the quality preset changes the light count; materials then compile lazily as they come into view after the menu closes.
