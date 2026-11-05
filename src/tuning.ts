@@ -851,9 +851,63 @@ const RAW = {
   quality: {
     default: 'medium', // preset used until the player picks one in the pause menu
     // resolutionScale multiplies the (capped) device pixel ratio; pedBudget = pedestrians active near the player
-    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, pedBudget: 30 },
-    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1024, pedBudget: 45 },
-    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, pedBudget: 60 },
+    // textureRes = px per side of every baked surface map (procedural PBR, render/texBake.ts); anisotropy = texture
+    // filtering samples; textureDetail 1 = normal maps and baked occlusion on, 0 = off (cheaper pixels)
+    // shadowMapSize = px per side of each of the sun's two shadow cascades (near and far); shadowDistance = metres the
+    // cascades reach from the camera (beyond it, no sun shadows); treeNear = metres within which trees are drawn in full
+    // detail (bark trunk, branches, leaf cards; render/trees.ts), 0 = never
+    low: { resolutionScale: 0.7, maxDevicePixelRatio: 1, shadows: false, shadowMapSize: 512, shadowDistance: 0, pedBudget: 30, textureRes: 256, anisotropy: 2, textureDetail: 0, treeNear: 0, lampLights: 0 },
+    medium: { resolutionScale: 1, maxDevicePixelRatio: 1.25, shadows: true, shadowMapSize: 1536, shadowDistance: 320, pedBudget: 45, textureRes: 512, anisotropy: 8, textureDetail: 1, treeNear: 110, lampLights: 6 },
+    high: { resolutionScale: 1, maxDevicePixelRatio: 2, shadows: true, shadowMapSize: 2048, shadowDistance: 650, pedBudget: 60, textureRes: 1024, anisotropy: 16, textureDetail: 1, treeNear: 200, lampLights: 10 },
+  },
+
+  look: {
+    // sky (three's Preetham sky, render/sky.ts) and image-based lighting from it
+    skyBoxSize: 1200, // m: the sky box around the camera (drawn at the far plane)
+    skyTurbidity: 3.2, // haze in clear weather (2 = very clear, 10 = hazy); clouds raise it
+    skyRayleigh: 0.85, // blue scattering strength
+    skyMie: 0.004, // aerosol scattering
+    skyMieG: 0.82, // forward glow round the sun
+    skyCloudClear: 0.18, // cloud cover drawn in clear weather (the weather's cloud value raises it)...
+    skyCloudOvercast: 1.25, // ...toward this at full cloud (above 1 so the deck closes: rain 0.8 -> 1.04, cloudy 0.65 -> 0.88)
+    skyCloudDensityClear: 0.45, // cloud opacity in clear weather (three's Sky cloudDensity)...
+    skyCloudDensityOvercast: 0.85, // ...and at full cloud (an opaque grey deck)
+    skyCloudElevation: 0.55, // apparent height of the cloud layer (three's Sky cloudElevation, 0..1)
+    envCubeSize: 128, // px per face of the sky capture that lights everything (PMREM)
+    envRefreshDegrees: 1.5, // recapture the sky when the sun has moved this far...
+    envRefreshMinSeconds: 1.5, // ...but at most this often (real seconds)
+    envIntensityDay: 1.0, // scene.environmentIntensity by day (sky light on PBR materials)
+    envIntensityNight: 0.16, // at night (the night sky is dark anyway; this keeps a little moonlit fill)
+    skyDiffuseDay: 0.42, // share of the sky light that reaches diffuse surfaces by day (reflections keep it all): sets how
+    // bright the shade is next to sunlight (about 1:4 on a clear day)
+    skyDiffuseNight: 0.7,
+    skyDiffuseSaturation: 0.55, // colour saturation of that sky fill (1 = the sky's own blue; lower stands in for the warm
+    // light bounced off sunlit streets and walls, which the sky capture does not hold)
+    nightSkyZenith: [0.006, 0.008, 0.018], // linear radiance of the night sky overhead...
+    nightSkyHorizon: [0.035, 0.028, 0.026], // ...and near the horizon (city glow)
+    overcastDim: 0.62, // how much darker the sky (and so its light) gets under full cloud
+    groundBounce: 0.45, // brightness of the ground below the horizon in the sky capture by day (bounce light from below)
+    sunrise: 6.0, // game hour the sun crosses the horizon in the morning (matches the day/night keys in dayNight.ts)...
+    sunset: 19.8, // ...and in the evening (the keys fade the sun out by 21:00; noon falls half way, about 12:54)
+    sunIntensity: 6.5, // sunlight at noon (the day/night keys scale it toward dawn and dusk)
+    moonIntensity: 0.25, // night key light
+    exposureDay: 0.86, // tone mapping exposure by day (ACES filmic)
+    exposureNight: 1.1, // at night (eyes adapt)
+    hemiDay: 0.12, // hemisphere fill by day (the sky environment does most of it)
+    hemiNight: 0.32, // at night (city glow and moonlight)
+    shadowRadius: 2.2, // soft shadow filter radius (shadow map texels) on Medium/High
+    shadowBias: -0.0004, // depth bias of the sun's shadow cascades (against acne on lit faces)
+    shadowNormalBias: 0.035, // offset along the normal (m-ish, scaled by texel size) against acne at grazing sun
+    interiorDay: 0.35, // daylight reaching window interiors, relative (window glass, render/facadeMaterial.ts)
+    lampLightRange: 24, // m: reach of the real lights at the street lamps nearest the camera (render/nightLights.ts)
+    lampLightIntensity: 55, // candela-like intensity of one lamp at full night
+    lampLightsMax: 10, // the most lamp lights any preset uses (TUNING.quality.*.lampLights)
+    // leaf cards of the detailed trees (render/worldMaterial.ts)
+    leafMinFacing: 0.2, // shading normals turned at least this far toward the viewer (no sky-mirror rims on backlit trees)
+    leafSkyReflection: 0.6, // share of the sky reflection leaves keep (they are matt, waxy at most)
+    leafTranslucency: 0.45, // share of the sunlight a leaf passes on toward the viewer when the sun is behind it...
+    leafTransmitBase: 0.12, // ...and the share it passes on whatever the angle (diffuse transmission)
+    leafEdgeOn: [0.06, 0.28], // |cos| between card and view where edge-on cards fade out (no dark spikes)
   },
 
   debug: {

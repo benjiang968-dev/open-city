@@ -11,6 +11,7 @@ import { poiName } from '../../data/poiNames';
 import type { GeoDoc, Pt } from './geoDoc';
 import { hashStr, loadGeoDoc, pointInPoly } from './geoDoc';
 import { buildGeorgetownWorld, type GeoQuality, type GeoRoadPoly, type GeoWorld } from './georgetownWorld';
+import type { Look } from '../render/look';
 import { SIGN_CATS } from './facades';
 import { K } from './terrain';
 import {
@@ -118,9 +119,9 @@ export async function loadGeorgetownDoc(): Promise<GeoDoc> {
 }
 
 // ======================================================================================================
-export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, doc: GeoDoc, quality: GeoQuality = 'medium', audit = false): CityMap {
+export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, doc: GeoDoc, quality: GeoQuality = 'medium', audit = false, look?: Look): CityMap {
   const t0 = performance.now();
-  const geo = buildGeorgetownWorld(scene, R, physics, doc, { seed, quality, audit });
+  const geo = buildGeorgetownWorld(scene, R, physics, doc, { seed, quality, audit, look });
   const tWorld = performance.now();
   const b = geo.bounds;
   const bounds = { minX: b.x0, maxX: b.x1, minZ: b.z0, maxZ: b.z1 };

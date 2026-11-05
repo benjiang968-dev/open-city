@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
+import { bakeLook } from './render/look';
 
 export type Quality = 'low' | 'medium' | 'high';
 export const QUALITIES: Quality[] = ['low', 'medium', 'high'];
@@ -37,6 +38,8 @@ export function applyQuality(w: World, q: Quality, boot = false): void {
   w.settings.quality = q;
   w.settings.pedBudget = p.pedBudget;
   w.city?.setQuality?.(q); // the map's own draw distance, detail and trees (not yet loaded at the first call)
+  if (!boot && w.look) bakeLook(w.look, w.renderer, q); // surface maps at the preset's resolution (a re-bake only if it changed)
+  w.dayNight.lamps?.setActive(p.lampLights); // real lights at the nearest street lamps
   const r = w.renderer;
   r.setPixelRatio(Math.min(window.devicePixelRatio || 1, p.maxDevicePixelRatio) * p.resolutionScale);
   r.setSize(window.innerWidth, window.innerHeight);
@@ -44,6 +47,7 @@ export function applyQuality(w: World, q: Quality, boot = false): void {
   const shadowsChanged = r.shadowMap.enabled !== p.shadows;
   r.shadowMap.enabled = p.shadows;
   sun.castShadow = p.shadows;
+  sun.shadow.camera.far = Math.max(1, p.shadowDistance); // how far the two cascades reach
   if (sun.shadow.mapSize.x !== p.shadowMapSize) {
     sun.shadow.mapSize.set(p.shadowMapSize, p.shadowMapSize);
     sun.shadow.map?.dispose();

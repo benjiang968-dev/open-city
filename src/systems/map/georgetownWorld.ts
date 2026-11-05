@@ -16,12 +16,19 @@ import { buildRoadNet, omittedRoads, solveProfiles, type REdge, type RNode, type
 import { buildNetMeshes, drapeRibbon, isDeckNode, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
 import { buildBridges, buildStairs, rasterizeStairs, stairHoles } from './bridges';
-import { buildBuildings, createFacadeMaterial, rasterizeBuildings } from './facades';
+import { buildBuildings, rasterizeBuildings } from './facades';
 import { buildMonuments } from './monuments';
 import { buildLots, conformToLots, planLots, rasterizeLots, type GeoLot } from './lots';
 import { buildProps } from './props';
 import { SurfaceIndex } from './surfaceIndex';
 import { SolidRecorder, type SolidTags } from '../objects/solidKinds';
+import { createLook, type Look } from '../render/look';
+import { makeWorldMaterial } from '../render/worldMaterial';
+import { makeFacadeMaterial } from '../render/facadeMaterial';
+import { upgradePropMaterials } from '../render/propMaterials';
+import { createTreeLod } from '../render/trees';
+import { upgradeWater } from '../render/water';
+import { SURF, surf } from '../render/surfaces';
 
 const G = TUNING.geo;
 
@@ -42,6 +49,8 @@ export interface GeoWorldOptions {
   quality: GeoQuality;
   /** Physics audit mode (?physaudit=1): record every drawn box / cylinder / wall with its solid kind. */
   audit?: boolean;
+  /** Baked surface maps and shared material uniforms (render/look.ts); a fresh, unbaked one if left out. */
+  look?: Look;
 }
 
 export interface GeoLane {
@@ -176,6 +185,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   let tp = T0;
   const phase = (name: string) => { const t = performance.now(); phases[name] = Math.round(t - tp); tp = t; };
   const b = doc.meta.bounds;
+  const look = opts.look ?? createLook(opts.quality);
   const root = new THREE.Group();
   root.name = 'georgetown';
   scene.add(root);
@@ -241,6 +251,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   chunks.tag('ground');
   const water = buildWater(doc, W, ras, chunks, phys, root, holes);
   chunks.tag('ground');
+  upgradeWater(water.meshes, look);
   const pierDecks = buildPlazaAndPiers(doc, ras, chunks, phys, plazaH, W);
   phase('water');
   chunks.tag('ground');
@@ -250,7 +261,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   const lotStalls = buildLots(lotInfo, ras, chunks, phys);
   phase('bridges');
   const litWindowMat = new THREE.MeshBasicMaterial({ color: 0x8899aa });
-  const facadeMat = createFacadeMaterial(litWindowMat, GEO_QUALITY[opts.quality].anisotropy);
+  const facadeMat = makeFacadeMaterial(look, litWindowMat, GEO_QUALITY[opts.quality].anisotropy);
   const bld = buildBuildings(doc, ras, net, info.edgeGrid, chunks, phys, opts.seed, root, dropped);
   chunks.tag('untagged');
   buildMonuments(doc, ras, chunks, phys);
@@ -267,12 +278,14 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     return best;
   };
   const props = buildProps(doc, ras, net, info, bridges.lamps, chunks, phys, root, lampMat, lampPoolMat, standAt);
+  upgradePropMaterials(root, look);
+  const treeLod = createTreeLod(look, root, TUNING.quality[opts.quality].treeNear);
   phase('props');
 
   // ---------------------------------------------------------------- materials and chunk meshes
-  const groundMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93 });
-  const decalMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -6 });
-  const detailMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8 });
+  const groundMat = makeWorldMaterial(look, { name: 'geo-ground', roughness: 0.93 });
+  const decalMat = makeWorldMaterial(look, { name: 'geo-decal', roughness: 0.85, decal: true });
+  const detailMat = makeWorldMaterial(look, { name: 'geo-detail', roughness: 0.8 });
   const mats: Record<Layer, THREE.Material> = { ground: groundMat, decal: decalMat, facade: facadeMat, detail: detailMat };
   const groups = new Map<number, ChunkGroup>();
   let tris = 0, meshCount = 0;
@@ -390,6 +403,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     quality = q;
     const Q = GEO_QUALITY[q];
     props.setTreeShare(Q.trees);
+    treeLod.setRadius(TUNING.quality[q].treeNear);
     world.quality = q;
   };
   const camPos = new THREE.Vector3();
@@ -414,6 +428,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
       if (m.detail) m.detail.visible = vis && d3 < Q.detail;
     }
     props.update(camPos, Q.detail, draw);
+    treeLod.update(camPos);
     bld.update(camPos, Q.detail);
   };
 
@@ -426,7 +441,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     roadPolys, junctions, decks, lotStalls,
     lampPositions: props.lampPositions,
     signalHeads: props.signalHeads,
-    litWindowMat, lampMat, lampPoolMat, groundMats: [groundMat, decalMat],
+    litWindowMat, lampMat, lampPoolMat, groundMats: [],
     water: { meshes: water.meshes, update: water.update },
     update, setQuality, quality,
     omitted,
@@ -770,10 +785,10 @@ function buildDeckIndex(net: RoadNet | null, walkDecks: { pts: Pt[]; hw: number;
 /** Footpaths, trails, the towpath links and the promenade: draped ribbons on the terrain (decals). */
 function drawPaths(doc: GeoDoc, ras: GeoRaster, chunks: RenderChunks) {
   const colOf = (f: GeoDoc['footways'][number]) => {
-    if (f.surface === 'gravel') return 0xc2ad86;
-    if (f.surface === 'asphalt' || f.kind === 'cycleway') return 0x6e6d6a;
-    if (f.surface === 'paving_stones') return 0xc9b9a0;
-    return 0xb9a98e;
+    if (f.surface === 'gravel') return surf(SURF.GRAVEL, linHex(0xc2ad86));
+    if (f.surface === 'asphalt' || f.kind === 'cycleway') return surf(SURF.ASPHALT, linHex(0x6e6d6a));
+    if (f.surface === 'paving_stones') return surf(SURF.CONCRETE_SLAB, linHex(0xc9b9a0));
+    return surf(SURF.GRAVEL, linHex(0xb9a98e));
   };
   const buf = (x: number, z: number) => chunks.buf('decal', x, z);
   for (const f of doc.footways) {
@@ -789,7 +804,7 @@ function drawPaths(doc: GeoDoc, ras: GeoRaster, chunks: RenderChunks) {
       keep.push(p);
     }
     if (keep.length > 1) runs.push(keep);
-    const col = linHex(colOf(f));
+    const col = colOf(f);
     for (const r of runs) drapeRibbon(buf, r, w, (x, z) => ras.heightAt(x, z), col, 0.035);
   }
 }

@@ -5,11 +5,12 @@ import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, pointInPoly } from './geoDoc';
 import { lin, type PhysChunks, type RenderChunks } from './meshKit';
+import { SURF, surf } from '../render/surfaces';
 import { plateauFade, pointAtS, type REdge, type RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
 
 const G = TUNING.geo;
-const COL = { asphalt: lin(0x55585d), kerb: lin(0xa3a29c), line: lin(0xeeeee6), skirt: lin(0x7a7268) };
+const COL = { asphalt: surf(SURF.ASPHALT, lin(0x55585d)), kerb: surf(SURF.GRANITE, lin(0xa3a29c)), line: surf(SURF.PAINT, lin(0xeeeee6)), skirt: surf(SURF.CONCRETE, lin(0x7a7268)) };
 const ENTRANCE_W = 7.5; // m
 
 export interface GeoLot {

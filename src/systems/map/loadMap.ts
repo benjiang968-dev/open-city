@@ -6,16 +6,17 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../../tuning';
 import type { CityMap, MapId } from './cityMap';
 import { createGridMap } from './gridMap';
+import type { Look } from '../render/look';
 
 type Quality = 'low' | 'medium' | 'high';
-type MapFactory = (scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, quality: Quality, audit: boolean) => Promise<CityMap>;
+type MapFactory = (scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, quality: Quality, audit: boolean, look?: Look) => Promise<CityMap>;
 
 const MAPS: Record<MapId, MapFactory> = {
-  grid: async (scene, R, physics, seed, _quality, audit) => createGridMap(scene, R, physics, seed, audit),
-  georgetown: async (scene, R, physics, seed, quality, audit) => {
+  grid: async (scene, R, physics, seed, _quality, audit, look) => createGridMap(scene, R, physics, seed, audit, look),
+  georgetown: async (scene, R, physics, seed, quality, audit, look) => {
     const m = await import('./georgetownMap');
     const doc = await m.loadGeorgetownDoc();
-    return m.createGeorgetownMap(scene, R, physics, seed, doc, quality, audit);
+    return m.createGeorgetownMap(scene, R, physics, seed, doc, quality, audit, look);
   },
 };
 
@@ -31,12 +32,12 @@ export function mapIdFromUrl(): string {
 }
 
 /** Builds the map the URL asks for. `quality` is the starting graphics preset (real maps size their detail by it). */
-export async function loadMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, quality: Quality): Promise<CityMap> {
+export async function loadMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, quality: Quality, look?: Look): Promise<CityMap> {
   const want = mapIdFromUrl();
   let make = (MAPS as Partial<Record<string, MapFactory>>)[want];
   if (!make) {
     console.warn(`Unknown map "${want}" in the URL; loading "${TUNING.map.defaultMap}" instead.`);
     make = MAPS[TUNING.map.defaultMap as MapId];
   }
-  return make(scene, R, physics, seed, quality, physAuditFromUrl());
+  return make(scene, R, physics, seed, quality, physAuditFromUrl(), look);
 }

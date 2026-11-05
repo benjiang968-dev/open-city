@@ -9,15 +9,16 @@ import { centroid, clamp, hashStr, lerp, pointInPoly, project, rand, type SegGri
 import { lin, mixc, shade, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
 import type { RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
-import { TILE, makeFacadeTexture } from './facadeTex';
+import { TILE } from './facadeTex';
 import { POI_NAMES, poiName } from '../../data/poiNames';
 import { TUNING } from '../../tuning';
+import { facadeColour } from '../render/palette';
 
 // ----------------------------------------------------------------------------------------- art constants
 const STOREY = 3.2; // m
 const PARAPET = 0.7; // m of wall above the top floor on flat roofs
 const WEST_END_X = 380;
-const hx = (h: number) => lin(h);
+const hx = (h: number) => facadeColour(h); // packed linear, tagged with the wall / roof surface (render/palette.ts)
 const ROW_COLOURS = [
   [0xad5844, 7], [0xb8664e, 5], [0x9e4c3c, 4], [0xc2735a, 3], // red brick
   [0xead48f, 3], [0xf0e3c4, 3], [0xa9c2d4, 2], [0xa7c4a2, 2], [0xe7b9b4, 2], [0xc9b9d8, 1], [0xf3efe6, 2], [0xe9c79c, 2], [0x9fb4a0, 1], [0xd9a98d, 1],
@@ -58,53 +59,6 @@ const LANDMARKS: { key: string; lat: number; lon: number; type: string; minH?: n
 ];
 
 // ======================================================================================================
-export function createFacadeMaterial(litWindowMat: THREE.MeshBasicMaterial, anisotropy: number): THREE.MeshStandardMaterial {
-  const { tex, glass } = makeFacadeTexture();
-  tex.anisotropy = glass.anisotropy = anisotropy; // fixed at build: changing it later re-uploads the arrays
-  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.82, metalness: 0.02 });
-  mat.userData.facadeTex = tex;
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uFacade = { value: tex };
-    sh.uniforms.uGlass = { value: glass };
-    sh.uniforms.uWin = { value: litWindowMat.color }; // the day/night system drives this colour
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nattribute vec4 aFac;\nflat varying vec4 vFac;\nvarying vec2 vFUv;')
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\nvFac = aFac;\nvFUv = uv;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>
-uniform highp sampler2DArray uFacade;
-uniform highp sampler2DArray uGlass;
-uniform vec3 uWin;
-flat varying vec4 vFac;
-varying vec2 vFUv;
-// integer hash of a window cell and the building's seed: exact, so a window is either lit or not
-float fHash(vec2 c, float seed){
-  uint h = uint(int(c.x) + 4096) * 73856093u ^ uint(int(c.y) + 4096) * 19349663u ^ uint(seed) * 83492791u;
-  h ^= h >> 13u; h *= 0x5bd1e995u; h ^= h >> 15u;
-  return float(h & 1023u) / 1023.0;
-}`)
-      .replace('#include <map_fragment>', `
-vec2 fCell = floor(vFUv);
-float fLayer = (abs(fCell.x - vFac.z) < 0.5 && fCell.y < 0.5) ? vFac.y : vFac.x;
-vec4 fTex = texture(uFacade, vec3(vFUv, fLayer));
-float fGlassM = texture(uGlass, vec3(vFUv, fLayer)).r;`)
-      .replace('#include <color_fragment>', `
-float fTint = fTex.a;
-float fGlass = fGlassM;
-diffuseColor.rgb *= fTex.rgb * mix(vec3(1.0), vColor.rgb, fTint);`)
-      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = mix(roughness, 0.22, fGlass);')
-      .replace('#include <emissivemap_fragment>', `
-float fNight = clamp((uWin.r - 0.22) / 0.78, 0.0, 1.0);
-float fShare = 0.34 + 0.18 * fract(vFac.w * 0.137);
-fShare += fCell.y < 0.5 ? 0.3 : 0.0; // ground floors (shops) are lit more often
-float fLit = step(fHash(fCell, vFac.w), fShare);
-vec2 fW = fwidth(vFUv);
-fLit = mix(fLit, fShare, smoothstep(0.25, 0.7, max(fW.x, fW.y)));
-totalEmissiveRadiance += uWin * vec3(1.0, 0.86, 0.62) * fGlass * fLit * fNight * (0.55 + 0.4 * fract(vFUv.y));`);
-  };
-  return mat;
-}
-
 /** Building footprints into the raster (kind BUILDING, terrain mesh skipped under them). */
 export function rasterizeBuildings(doc: GeoDoc, ras: GeoRaster, skip: Set<string>) {
   const band = ras.band, k = ras.k;

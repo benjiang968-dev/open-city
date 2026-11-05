@@ -6,6 +6,7 @@ import { TUNING } from '../../tuning';
 import type { GeoDoc } from './geoDoc';
 import { SegGrid, clamp, pointInPoly } from './geoDoc';
 import { lin, shade, type Holes, type MeshBuf, type PhysBuf, type PhysChunks, type RenderChunks } from './meshKit';
+import { SURF, surf } from '../render/surfaces';
 import { pointAtS, type REdge, type RNode, type RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
 
@@ -20,20 +21,20 @@ export const FRONTAGE = 1.0;
 const SKIRT = 0.9; // m skirts reach below sidewalk / road edges
 const WEST_END_X = 380; // m: east of this, concrete sidewalks instead of brick
 export const COL = {
-  asphalt: lin(0x4b4e54),
-  asphaltMain: lin(0x45484d),
-  asphaltFreeway: lin(0x50535a),
-  sett: lin(0x7d7268),
-  brickWalk: lin(0xa86a55),
-  concreteWalk: lin(0xbcb7ad),
-  kerb: lin(0xa3a29c),
-  skirt: lin(0x7a7268),
-  deck: lin(0xa9a69e),
-  deckUnder: lin(0x8e8b84),
-  white: lin(0xeeeee6),
-  yellow: lin(0xe5b52f),
-  rail: lin(0x5b5550),
-  pit: lin(0x5a4a3a),
+  asphalt: surf(SURF.ASPHALT, lin(0x4b4e54)),
+  asphaltMain: surf(SURF.ASPHALT, lin(0x45484d)),
+  asphaltFreeway: surf(SURF.ASPHALT, lin(0x50535a)),
+  sett: surf(SURF.SETT, lin(0x7d7268)),
+  brickWalk: surf(SURF.BRICK_PAVER, lin(0xa86a55)),
+  concreteWalk: surf(SURF.CONCRETE_SLAB, lin(0xbcb7ad)),
+  kerb: surf(SURF.GRANITE, lin(0xa3a29c)),
+  skirt: surf(SURF.CONCRETE, lin(0x7a7268)),
+  deck: surf(SURF.CONCRETE, lin(0xa9a69e)),
+  deckUnder: surf(SURF.CONCRETE, lin(0x8e8b84)),
+  white: surf(SURF.PAINT, lin(0xeeeee6)),
+  yellow: surf(SURF.PAINT, lin(0xe5b52f)),
+  rail: surf(SURF.RAIL, lin(0x5b5550)),
+  pit: surf(SURF.SOIL, lin(0x5a4a3a)),
 };
 
 export interface Cross {

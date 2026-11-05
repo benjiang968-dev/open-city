@@ -9,6 +9,7 @@ import { POI_TEMPLATES, STREET_WORDS } from '../names';
 import { GeoBuilder } from '../art/geo';
 import { GROUPS } from '../physicsGroups';
 import { PROP_COLLIDERS, PROP_KIND, SolidRecorder, SolidTags, type ColliderPart, type PropColliderName, type SolidKind } from './objects/solidKinds';
+import type { Look } from './render/look';
 
 const T = TUNING.world;
 
@@ -106,7 +107,7 @@ const COL = {
 };
 
 // --------------------------------------------------------------------------------------------
-export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, audit = false): CityData {
+export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPIER.World, seed: number, audit = false, look?: Look): CityData {
   const rng = new Rng(seed ^ 0x51ed);
   const pitch = T.blockSize + T.roadWidth;
   const xs: number[] = [];

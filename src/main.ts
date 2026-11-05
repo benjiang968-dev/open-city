@@ -7,7 +7,7 @@ import type { World } from './world';
 import { createInput, endInputFrame, act } from './systems/input';
 import { loadMap, physAuditFromUrl } from './systems/map/loadMap';
 import { validateCityMap, laneSample, projectOnLane, roadRouter, walkRouter } from './systems/map/cityMap';
-import { createDayNight, updateDayNight } from './systems/dayNight';
+import { createDayNight, updateDayNight, updateSky, attachLampLights } from './systems/dayNight';
 import { createCamera, updateCamera } from './systems/camera';
 import { createPlayer, updatePlayer } from './systems/player';
 import { spawnInitialVehicles, updateVehicles, detectCrashes, wreckMaterial } from './systems/vehicles';
@@ -45,6 +45,9 @@ import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtFx';
 import { createPhysDebug, physDebugKeys, updatePhysDebug } from './systems/physicsDebug';
+import { createLook, bakeLook } from './systems/render/look';
+import { warmDraw } from './systems/render/warmup';
+import { separateInstancedDepth } from './systems/render/shadowCasters';
 
 async function boot() {
   await RAPIER.init();
@@ -80,10 +83,14 @@ async function boot() {
     prof: new Profiler(), settings: createSettings(), police: createPolice(), jobs: new JobManager(), audio: createAudio(), dialogue: new ScriptedProvider(),
   } as unknown as World;
   w.dayNight = createDayNight(scene);
+  // procedural PBR surface maps, baked on the GPU before any world material is built (render/texBake.ts)
+  w.look = createLook(w.settings.quality);
+  bakeLook(w.look, renderer, w.settings.quality);
   applyQuality(w, w.settings.quality, true);
   const tMap = performance.now();
-  w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality); // ?map= picks the map; the seed never does
+  w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality, w.look); // ?map= picks the map; the seed never does
   w.city.setQuality?.(w.settings.quality);
+  attachLampLights(w, TUNING.quality[w.settings.quality].lampLights);
   const mapMs = performance.now() - tMap;
   w.weather = createWeather(w);
   const spawn = w.city.spawn;
@@ -122,6 +129,10 @@ async function boot() {
   w.combat = createCombat(w);
   createBubbles();
 
+  // the sky light (PMREM environment) exists before anything compiles, so no material recompiles when it arrives
+  updateDayNight(w, 0);
+  updateWeather(w, 0);
+  updateSky(w, true);
   // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
   // triggers a first-time shader compile mid-game
   {
@@ -135,7 +146,9 @@ async function boot() {
     const car0 = w.vehicles[0].mesh, car0Shown = car0.visible;
     car0.visible = true; // a car's own meshes (shown once driven or dented)
     showHurtFxForWarmup(w.hurtFx, true);
+    separateInstancedDepth(scene); // instanced shadow casters keep their own depth program (no per-draw program churn)
     renderer.compile(scene, camera);
+    warmDraw(renderer, scene); // and draw each kind once: some drivers finish a program only at its first draw
     showHurtFxForWarmup(w.hurtFx, false);
     crack.visible = false;
     car0.visible = car0Shown;
@@ -257,7 +270,7 @@ async function boot() {
     P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); if (w.started) updateCombat(w, dt); updateInventory(w); updateBubbles(w); P.end('sync');
     P.begin('fx'); updateHurtFx(w, dt); P.end('fx');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
-    P.begin('weather'); updateWeather(w, dt); P.end('weather');
+    P.begin('weather'); updateWeather(w, dt); updateSky(w); P.end('weather');
     if (render) { P.begin('city'); w.city.update(w.time, camera); P.end('city'); }
     P.begin('camera'); updateCamera(w, dt); P.end('camera');
     P.begin('hud'); updateHud(w, dt); P.end('hud');
