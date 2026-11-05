@@ -27,7 +27,7 @@ const RAW = {
 
   // The map interface (src/systems/map/): shared by every map implementation (grid city, Georgetown).
   map: {
-    defaultMap: 'grid', // map loaded when the URL has no ?map= (or an unknown one); the seed never picks the map
+    defaultMap: 'georgetown', // map loaded when the URL has no ?map= (or an unknown one; ?map=grid is the procedural grid city); the seed never picks the map
     // cruise speed (m/s) for roads without a maxspeed tag, by road class (the grid city uses traffic.cruiseSpeed)
     classSpeed: { primary: 13.4, secondary: 12.5, tertiary: 11.2, residential: 11, service: 6.7, parkway: 15.6 },
     laneWidth: 3.5, // metres per traffic lane (grid: how many lanes per direction fit a road's width)

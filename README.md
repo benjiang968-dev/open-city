@@ -1,7 +1,8 @@
 # Open City (working title)
 
-A browser open-world sandbox: a seeded coastal city, cars you can drift, traffic, pedestrians you can talk to,
-a taxi job and police. No story, no cutscenes. See `CLAUDE.md` for the design and `DEVLOG.md` for progress.
+A browser open-world sandbox in a real place: Georgetown and the Potomac waterfront, Washington DC, at 1:1 from open
+map data, with cars you can drift, traffic, pedestrians you can talk to, a taxi job and police. No story, no
+cutscenes. See `CLAUDE.md` for the design, `docs/ROADMAP.md` for the plan and `DEVLOG.md` for progress.
 
 ## Run
 
@@ -10,8 +11,10 @@ npm install
 npm run dev        # opens http://localhost:5173
 ```
 
-`?seed=123` in the URL picks a different city (people, cars; on the grid map also buildings, shops and street names). `?map=grid` picks the map;
-the seed never changes which map loads. Every system reads the map through one interface, `src/systems/map/cityMap.ts`.
+The game opens on Georgetown. `?map=grid` loads the older procedural grid city instead. `?seed=123` in the URL varies
+people, cars and shop names (on the grid map also buildings and street names); the seed never changes which map loads
+or Georgetown's geometry. `?quality=low|medium|high` forces a graphics preset. Every system reads the map through one
+interface, `src/systems/map/cityMap.ts`.
 
 ## Controls
 
@@ -45,7 +48,10 @@ npm run build
 node scripts/shot.mjs 06-taxi taxi       # runs a scenario, saves screenshots/06-taxi.png, fails on console errors
 ```
 
-Scenarios live in `scripts/scenarios.mjs` (handling, life, taxi, chat, police, bust, night, perf …).
+Scenarios live in `scripts/scenarios.mjs` (handling, life, taxi, chat, police, bust, night, perf …). Without `MAP=`
+they run on the default map (Georgetown), except the ones written for the grid city (`GRID_SCENARIOS`), which load
+`?map=grid`. The Georgetown gate: `geodrive` (Key Bridge, M St, Washington Circle, K St to the waterfront), `geolife`
+(crowds, theft), `taxi`, `stairs`, `fallthrough`, `mapcheck`, `roadaudit`, `roaddrive`.
 `MAP=<id> node scripts/shot.mjs x mapcheck` checks a map's integrity (graph, 30 lane choices by a traffic car, 20 walks).
 Physics: `QUERY=physaudit=1 MAP=<id> node scripts/shot.mjs x physaudit` compares what is drawn with the colliders,
 `stairs` walks every stair and into every prop kind, `fallthrough` drops the player at thousands of points.
