@@ -2084,7 +2084,12 @@ export async function stairs(page) {
     // ------------------------------------------------------------------ kerb: road to sidewalk and back (real maps: the grid has none)
     if (geo) {
       const k = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
-      c.kerbPoint(c.spawn.x, c.spawn.z, k);
+      // a kerb near the spawn with no car parked on it (the test once started on a car's bonnet at the spawn's kerb)
+      const fx0 = Math.sin(c.kerbPoint(c.spawn.x, c.spawn.z, k) ? k.heading : 0), fz0 = Math.cos(k.heading);
+      for (const along of [0, 6, -6, 12, -12, 18, -18, 24, -24, 30, -30]) {
+        c.kerbPoint(c.spawn.x + fx0 * along, c.spawn.z + fz0 * along, k);
+        if (!w.vehicles.some((v) => { const t = v.body.translation(); return Math.hypot(t.x - k.x, t.z - k.z) < 4; })) break;
+      }
       const rx = -Math.cos(k.heading), rz = Math.sin(k.heading); // the pavement side
       H.put(k.x, k.z, face(rx, rz), k.y + 2);
       const f0 = H.feet();

@@ -358,13 +358,14 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   let pierBest = 0, pierD = 0, pierY: number | undefined;
   const pierVisit = (h: number) => { const d = pierY === undefined ? -h : Math.abs(h - pierY); if (d < pierD) { pierD = d; pierBest = h; } };
   const walkSurfaceAt = (x: number, z: number, y?: number) => {
-    const g = groundAt(x, z, y);
+    const ceil = y === undefined ? Infinity : y + TUNING.map.levelStep;
+    const ge = surf.at(x, z, ceil), g = ge === ge ? ge : ras.heightAt(x, z);
     pierBest = g; pierD = y === undefined ? -g : Math.abs(g - y); pierY = y;
-    const dk = deckSurf.at(x, z, y === undefined ? Infinity : y + TUNING.map.levelStep);
-    if (dk === dk) {
-      pierVisit(dk);
-      pierIdx.query(x, z, true, pierVisit);
-    } else deckIdx.query(x, z, true, pierVisit); // no deck triangle here (a deck running off the map edge): the profiles
+    const dk = deckSurf.at(x, z, ceil);
+    if (dk === dk) pierVisit(dk);
+    // no walking-surface triangle at all here (Key Bridge running off the map edge over the river): the deck profiles
+    if (dk !== dk && ge !== ge) deckIdx.query(x, z, true, pierVisit);
+    else pierIdx.query(x, z, true, pierVisit);
     return pierBest;
   };
   const isRoad = (x: number, z: number) => (ras.kindAt(x, z) & K.ROAD) !== 0;

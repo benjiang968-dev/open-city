@@ -10,8 +10,9 @@
 
 /** Bucket size (m): about 6 triangle references per bucket on Georgetown, a dozen on busy junctions. */
 const CELL = 4;
-/** Floats per triangle: ax, az, bx, bz, cx, cz (footprint), then the plane y = px * x + pz * z + p0, ymin, ymax. */
-const TS = 11;
+/** Floats per triangle: ax, az, bx, bz, cx, cz (footprint), then the plane y = ay + px * (x - ax) + pz * (z - az) as
+ * px, pz, ay (relative to a vertex: no float32 cancellation far from the origin, even on steep slivers). */
+const TS = 9;
 /** Footprints thinner than this (m^2, twice the area) are walls and kerb faces: nothing stands on them. */
 const MIN_AREA2 = 1e-4;
 /** Tolerance (m) of the inside test, so a point on the edge shared by two triangles is in at least one. */
@@ -30,10 +31,11 @@ export class SurfaceIndex {
 
   /** soups: Float32Arrays of xyz triples, three vertices per triangle (vertical triangles are skipped). */
   constructor(soups: Float32Array[]) {
+    const area2 = (s: Float32Array, i: number) => (s[i + 3] - s[i]) * (s[i + 8] - s[i + 2]) - (s[i + 5] - s[i + 2]) * (s[i + 6] - s[i]);
     let n = 0;
     let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
     for (const s of soups) {
-      n += Math.floor(s.length / 9);
+      for (let i = 0; i + 8 < s.length; i += 9) if (Math.abs(area2(s, i)) >= MIN_AREA2) n++;
       for (let i = 0; i < s.length; i += 3) {
         if (s[i] < x0) x0 = s[i];
         if (s[i] > x1) x1 = s[i];
@@ -51,7 +53,7 @@ export class SurfaceIndex {
     for (const s of soups) {
       for (let i = 0; i + 8 < s.length; i += 9) {
         const ax = s[i], ay = s[i + 1], az = s[i + 2], bx = s[i + 3], by = s[i + 4], bz = s[i + 5], cx = s[i + 6], cy = s[i + 7], cz = s[i + 8];
-        const a2 = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
+        const a2 = area2(s, i);
         if (Math.abs(a2) < MIN_AREA2) continue;
         const px = ((by - ay) * (cz - az) - (cy - ay) * (bz - az)) / a2;
         const pz = ((cy - ay) * (bx - ax) - (by - ay) * (cx - ax)) / a2;
@@ -59,13 +61,12 @@ export class SurfaceIndex {
         // store counter-clockwise in (x, z) so the inside test is three edge functions >= 0
         if (a2 > 0) { T[o] = ax; T[o + 1] = az; T[o + 2] = bx; T[o + 3] = bz; T[o + 4] = cx; T[o + 5] = cz; }
         else { T[o] = ax; T[o + 1] = az; T[o + 2] = cx; T[o + 3] = cz; T[o + 4] = bx; T[o + 5] = bz; }
-        T[o + 6] = px; T[o + 7] = pz; T[o + 8] = ay - px * ax - pz * az;
-        T[o + 9] = Math.min(ay, by, cy); T[o + 10] = Math.max(ay, by, cy);
+        T[o + 6] = px; T[o + 7] = pz; T[o + 8] = ay;
         m++;
       }
     }
     this.count = m;
-    this.tri = T.subarray(0, m * TS);
+    this.tri = T;
     // bucket lists (counting pass, then fill)
     const nb = this.nx * this.nz;
     const cnt = new Uint32Array(nb + 1);
@@ -101,8 +102,7 @@ export class SurfaceIndex {
       if ((bx - ax) * (z - az) - (bz - az) * (x - ax) < -EDGE_EPS) continue;
       if ((cx - bx) * (z - bz) - (cz - bz) * (x - bx) < -EDGE_EPS) continue;
       if ((ax - cx) * (z - cz) - (az - cz) * (x - cx) < -EDGE_EPS) continue;
-      let y = T[o + 6] * x + T[o + 7] * z + T[o + 8];
-      if (y < T[o + 9]) y = T[o + 9]; else if (y > T[o + 10]) y = T[o + 10]; // steep slivers: stay within the triangle
+      const y = T[o + 8] + T[o + 6] * (x - ax) + T[o + 7] * (z - az);
       if (y <= ceil) { if (y > best) best = y; } else if (y < above) above = y;
     }
     return best > -Infinity ? best : above < Infinity ? above : NaN;
