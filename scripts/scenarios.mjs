@@ -2173,6 +2173,17 @@ export async function stairs(page) {
       }
     }
     w.input.keys.clear();
+    // the closing screenshot: halfway up the landmark stair with the F4 collision view on
+    if (geo) {
+      const st = geo.stairs[0], f = st.flights[1] ?? st.flights[0];
+      const a = along(st.pts, (f[0] + f[1]) / 2);
+      H.put(a.x - a.uz * st.w / 4, a.z + a.ux * st.w / 4, face(a.ux, a.uz), st.h((f[0] + f[1]) / 2) + 1.5);
+      w.dayNight.hour = 12.5;
+      if (!w.physDebug.on) w.input.pressed.add('F4');
+      const y = H.feet();
+      w.cam.override = { px: a.x - a.ux * 7 - a.uz * 6, py: y + 5, pz: a.z - a.uz * 7 + a.ux * 6, lx: a.x + a.ux * 2, ly: y + 0.5, lz: a.z + a.uz * 2 };
+      window.__ocFrames(1, true); w.physDebug.nextAt = 0; window.__ocFrames(4, true);
+    }
     return res;
   });
   return { ...out, pass: out.fails.length === 0 };
@@ -2194,8 +2205,11 @@ export async function fallthrough(page) {
     const b = c.bounds;
     let seed = 987654;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
-    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, above: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
-    const examples = { below: [], above: [], insideBuilding: [], notSettled: [], onProp: {} };
+    // below: the feet sank under the collider they stand on; mapLow / mapHigh: that collider is more than 5 cm under /
+    // over map.heightAt there; hover: the feet rest more than 0.25 m above it (a capsule on a slope rests a little up)
+    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, mapLow: 0, mapHigh: 0, hover: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
+    const examples = { below: [], mapLow: [], mapHigh: [], hover: [], insideBuilding: [], notSettled: [], onProp: {} };
+    let maxRest = 0;
     const capsule = new R.Capsule(hh, rad);
     const STATIC = (0xffff << 16) | 1;
     const t0 = performance.now();
@@ -2231,19 +2245,99 @@ export async function fallthrough(page) {
       let inBld = false;
       w.physics.intersectionsWithShape({ x: p.x, y: p.y, z: p.z }, { x: 0, y: 0, z: 0, w: 1 }, new R.Capsule(hh - 0.05, rad - 0.05), (col) => { if (H.kindName(c.solidTags.get(col.handle)) === 'building') inBld = true; return !inBld; }, undefined, STATIC);
       if (inBld) { st.insideBuilding++; if (examples.insideBuilding.length < 8) examples.insideBuilding.push([+x.toFixed(1), +z.toFixed(1)]); continue; }
-      if (kind !== 'ground' && kind !== 'kerb' && kind !== 'stair' && kind !== 'deck') {
-        st.onProp++; examples.onProp[kind] = (examples.onProp[kind] ?? 0) + 1;
-        if (feet < gy - 0.05) { st.below++; if (examples.below.length < 8) examples.below.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), +gy.toFixed(3), kind]); }
-        continue;
-      }
-      const ref = Math.abs(gyy - feet) < Math.abs(gy - feet) ? gyy : gy;
+      const ex = (list, extra) => { if (list.length < 8) list.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), ...extra]); };
+      if (!under) { st.below++; ex(examples.below, ['no floor under']); continue; }
+      const rest = feet - under.y;
+      maxRest = Math.max(maxRest, rest);
+      if (rest < -0.05) { st.below++; ex(examples.below, [+under.y.toFixed(3), kind]); continue; }
+      if (rest > 0.25) { st.hover++; ex(examples.hover, [+under.y.toFixed(3), kind]); continue; }
+      if (kind !== 'ground' && kind !== 'kerb' && kind !== 'stair' && kind !== 'deck') { st.onProp++; examples.onProp[kind] = (examples.onProp[kind] ?? 0) + 1; continue; }
+      const ref = Math.abs(gyy - under.y) < Math.abs(gy - under.y) ? gyy : gy;
       if (ref !== gy) st.onDeck++;
-      const d = feet - ref;
-      if (d < -0.05) { st.below++; if (examples.below.length < 8) examples.below.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), +ref.toFixed(3), kind]); }
-      else if (d > 0.05) { st.above++; if (examples.above.length < 8) examples.above.push([+x.toFixed(1), +z.toFixed(1), +feet.toFixed(3), +ref.toFixed(3), kind]); }
+      const d = under.y - ref;
+      if (d < -0.05) { st.mapLow++; ex(examples.mapLow, [+under.y.toFixed(3), +ref.toFixed(3), kind]); }
+      else if (d > 0.05) { st.mapHigh++; ex(examples.mapHigh, [+under.y.toFixed(3), +ref.toFixed(3), kind]); }
       else st.ok++;
     }
     const ms = Math.round(performance.now() - t0);
-    return { samples: n, ...st, maxDrift: +maxDrift.toFixed(3), examples, ms, pass: st.below === 0 && st.insideBuilding === 0 && st.notSettled === 0 && st.above <= Math.ceil(st.landed * 0.002) };
+    return { samples: n, ...st, maxDrift: +maxDrift.toFixed(3), maxRestAbove: +maxRest.toFixed(3), examples, ms, pass: st.below === 0 && st.insideBuilding === 0 && st.notSettled === 0 && st.hover === 0 && st.mapLow + st.mapHigh <= Math.ceil(st.landed * 0.002) };
   }, n);
+}
+
+/**
+ * F4 collision view screenshots (screenshots/31-physics-f4-*.png): a stair, a stoop, a park with trees and Key Bridge
+ * on Georgetown (on the grid: a park and a street corner). The camera is fixed for each shot; the view is rebuilt
+ * around the player, who stands at the spot.
+ */
+export async function physf4(page) {
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => window.__oc.started, null, { timeout: 120000 });
+  const spots = await page.evaluate(() => {
+    const w = window.__oc, c = w.city, geo = c.geo;
+    w.dayNight.hour = 12.5;
+    const out = [];
+    const cam = (name, px, py, pz, lx, ly, lz, sx, sz) => out.push({ name, px, py, pz, lx, ly, lz, sx, sz });
+    if (geo) {
+      // the canal steps nearest Wisconsin Ave: from the towpath side, looking up the stairwell
+      const st = geo.stairs.reduce((b, s) => (Math.abs(s.pts[0][0] + 131) < Math.abs(b.pts[0][0] + 131) ? s : b), geo.stairs[1]);
+      const a = st.pts[0], b = st.pts[st.pts.length - 1];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
+      const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      cam('stair', m[0] - uz * 7 - ux * 6, 5, m[1] + ux * 7 - uz * 6, m[0], 0.5, m[1], m[0] - ux * 2, m[1] - uz * 2);
+      // a stoop of about 7 steps near the spawn
+      const S = geo.audit.stoopInfo;
+      let best = -1, bd = Infinity;
+      for (let i = 0; i < S.length; i += 8) { if (S[i + 7] < 6) continue; const d = Math.hypot(S[i] - c.spawn.x, S[i + 1] - c.spawn.z); if (d < bd) { bd = d; best = i; } }
+      const [dx, dz, , nx, nz, outN] = Array.from(S.slice(best, best + 6));
+      const ex = -nz, ez = nx;
+      cam('stoop', dx + nx * (outN + 4) + ex * 3.5, 3, dz + nz * (outN + 4) + ez * 3.5, dx + nx * outN * 0.5, 0.6, dz + nz * outN * 0.5, dx + nx * (outN + 1.2), dz + nz * (outN + 1.2));
+      // a park with trees and benches: the densest cluster of trunk colliders near the spawn
+      let tx = 0, tz = 0, bn = -1;
+      const trunks = [];
+      w.physics.colliders.forEach((col) => { if (c.solidTags.get(col.handle) === 21 && col.shapeType() === 10) { const t = col.translation(); trunks.push([t.x, t.z]); } });
+      for (let k = 0; k < trunks.length; k += 7) {
+        const [x, z] = trunks[k];
+        let n = 0;
+        for (const [x2, z2] of trunks) if (Math.abs(x2 - x) < 12 && Math.abs(z2 - z) < 12) n++;
+        if (n > bn && !c.isBlocked(x + 3, z) && !c.isWater(x + 3, z)) { bn = n; tx = x; tz = z; }
+      }
+      cam('park', tx + 11, 6, tz + 11, tx, 0.5, tz, tx + 3, tz);
+      // Key Bridge: on its sidewalk
+      const e = c.roads.edges.find((q) => q.bridge && (q.name ?? '').includes('Key Bridge') && q.len > 80);
+      const lp = { x: 0, y: 0, z: 0, heading: 0 };
+      window.__ocMap.laneSample(e, e.len * 0.4, lp);
+      const off = e.halfWidth - e.offset + 1.5;
+      const sx = lp.x - Math.cos(lp.heading) * off, sz = lp.z + Math.sin(lp.heading) * off;
+      const fx = Math.sin(lp.heading), fz = Math.cos(lp.heading);
+      cam('keybridge', sx - fx * 9 - Math.cos(lp.heading) * 3, 4, sz - fz * 9 + Math.sin(lp.heading) * 3, sx + fx * 4, 0.5, sz + fz * 4, sx, sz);
+    } else {
+      const p = c.parkRects?.[0] ?? null;
+      const x = c.center.x, z = c.center.z;
+      cam('grid-street', x + 14, 6, z + 14, x, 0.5, z, x + 2, z + 2);
+      if (p) cam('grid-park', (p.x0 + p.x1) / 2 + 14, 7, (p.z0 + p.z1) / 2 + 14, (p.x0 + p.x1) / 2, 0.5, (p.z0 + p.z1) / 2, (p.x0 + p.x1) / 2 + 3, (p.z0 + p.z1) / 2 + 6);
+    }
+    return out;
+  });
+  const shots = [];
+  for (const s of spots) {
+    const info = await page.evaluate((s) => {
+      const w = window.__oc, c = w.city, P = w.player;
+      const y = c.heightAt(s.sx, s.sz, 1e3);
+      P.body.setTranslation({ x: s.sx, y: y + 1.0, z: s.sz }, true);
+      P.vy = 0;
+      window.__ocStep(30);
+      if (!w.physDebug.on) w.input.pressed.add('F4');
+      const gy = (x, z) => c.heightAt(x, z, 1e3);
+      w.cam.override = { px: s.px, py: gy(s.px, s.pz) + s.py, pz: s.pz, lx: s.lx, ly: gy(s.lx, s.lz) + s.ly, lz: s.lz };
+      window.__ocFrames(1, true);
+      w.physDebug.nextAt = 0;
+      window.__ocFrames(4, true);
+      return { colliders: w.physDebug.colliders, edges: w.physDebug.segs };
+    }, s);
+    const path = `screenshots/31-physics-f4-${s.name}.png`;
+    await page.screenshot({ path });
+    shots.push({ path, ...info });
+  }
+  await page.evaluate(() => { const w = window.__oc; w.cam.override = null; if (w.physDebug.on) { w.input.pressed.add('F4'); window.__ocFrames(1, true); } });
+  return { shots, pass: shots.every((s) => s.edges > 0) };
 }

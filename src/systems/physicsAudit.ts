@@ -526,7 +526,10 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
         const L = Math.hypot(bx - ax, bz - az) || 1;
         const x = ax + (bx - ax) * t - ((bz - az) / L) * off, z = az + (bz - az) * t + ((bx - ax) / L) * off;
         const top = st.h(s) + 1.2; // below a street bridge over the stair foot
-        const py = floorAt(x, z, top);
+        const hd = castDown(x, top, z, 30, true);
+        // started inside something solid (a wall's coping where the stair turns): not a floor sample
+        if (hd && hd.timeOfImpact === 0) { prev = NaN; continue; }
+        const py = hd ? top - hd.timeOfImpact : NaN;
         grid.heightsAt(x, z, vh);
         // the drawn tread: the highest upward face within reach of the physics floor
         let vy = NaN;
