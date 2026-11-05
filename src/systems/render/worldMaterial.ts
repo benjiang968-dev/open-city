@@ -135,12 +135,45 @@ OcOut ocSurface(int s, vec3 Ng, vec3 vcol, float baseRough, float baseMetal) {
  */
 const FOLIAGE_ALPHA = /* glsl */ `
 {
+  // cards seen edge-on fade out (they would read as dark spikes sticking out of the crown)
+  vec3 ocCardN = normalize(cross(dFdx(vOcP), dFdy(vOcP)));
+  ocS.alpha *= smoothstep(${TUNING.look.leafEdgeOn[0].toFixed(3)}, ${TUNING.look.leafEdgeOn[1].toFixed(3)}, abs(dot(ocCardN, normalize(cameraPosition - vOcP))));
   float ocR = length(vCard);
   float ocEdge = 1.0 - smoothstep(0.55, 1.0, ocR + (ocS.alpha - 0.5) * 0.35);
   vec2 ocG = fwidth(ocS.wuv) * float(textureSize(uAlbTex, 0).x) * texelFetch(uSurfTab, ivec2(0, int(vSurf + 0.5)), 0).y;
   float ocLod = max(0.0, log2(max(ocG.x, ocG.y)));
   diffuseColor.a = clamp(ocS.alpha * (1.0 + 0.3 * ocLod), 0.0, 1.0) * ocEdge;
 }`;
+
+/**
+ * Leaf cards: the rounded canopy normal points away from the viewer on the far side of a crown and at its rim, where
+ * Fresnel then turns the leaf into a mirror of the bright sky (pale, speckled "frost" on every backlit tree). Bend such
+ * normals toward the viewer; leaves keep the rounded shading where it faces the camera.
+ */
+const FOLIAGE_NORMAL = /* glsl */ `
+{
+  vec3 ocV = normalize(cameraPosition - vOcP);
+  vec3 ocLn = ocS.nW;
+  float ocNv = dot(ocLn, ocV);
+  if (ocNv < ${TUNING.look.leafMinFacing.toFixed(3)}) ocLn = normalize(ocLn + ocV * (${TUNING.look.leafMinFacing.toFixed(3)} - ocNv));
+  normal = normalize((viewMatrix * vec4(ocLn, 0.0)).xyz);
+}`;
+
+/**
+ * Leaf translucency: thin leaves pass sunlight on toward the viewer when the sun is behind them (a backlit canopy glows
+ * yellow-green instead of going black). Added inside three's sun-light loop, after its own direct light, so the leaf
+ * keeps the sun's colour and shadow; null if the chunk ever changes shape (the leaves then simply have none).
+ */
+const LEAF_LIGHTS: string | null = (() => {
+  const src = THREE.ShaderChunk.lights_fragment_begin;
+  const i0 = src.indexOf('#if ( NUM_SUN_LIGHTS > 0 ) && defined( RE_Direct )');
+  const j = i0 < 0 ? -1 : src.indexOf('RE_Direct( directLight', i0);
+  const k = j < 0 ? -1 : src.indexOf(';', j) + 1;
+  if (k <= 0) return null;
+  const T = TUNING.look;
+  const add = `\n\t\treflectedLight.directDiffuse += ocLeafT * directLight.color * (${T.leafTransmitBase.toFixed(3)} + ${(1 - T.leafTransmitBase).toFixed(3)} * pow(saturate(dot(-geometryViewDir, directLight.direction)), 3.0));`;
+  return `vec3 ocLeafT = diffuseColor.rgb * vec3(0.9, 1.0, 0.55) * ${T.leafTranslucency.toFixed(3)};\n` + src.slice(0, k) + add + src.slice(k);
+})();
 
 export interface WorldMatOptions {
   name: string;
@@ -196,12 +229,13 @@ ${o.foliage ? FOLIAGE_ALPHA : ''}`)
       .replace('#include <color_fragment>', '')
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(ocS.rough, 0.03, 1.0);')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = ocS.metal;')
-      .replace('#include <normal_fragment_maps>', 'normal = normalize((viewMatrix * vec4(ocS.nW, 0.0)).xyz);')
+      .replace('#include <normal_fragment_maps>', o.foliage ? FOLIAGE_NORMAL : 'normal = normalize((viewMatrix * vec4(ocS.nW, 0.0)).xyz);')
       .replace('#include <aomap_fragment>', /* glsl */ `
 reflectedLight.indirectDiffuse *= ocS.ao * uSkyDiffuse;
 reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722))), reflectedLight.indirectDiffuse, OC_SKY_SAT);
-reflectedLight.indirectSpecular *= ocS.ao;
+reflectedLight.indirectSpecular *= ocS.ao${o.foliage ? ` * ${TUNING.look.leafSkyReflection.toFixed(3)}` : ''};
 reflectedLight.directDiffuse *= mix(1.0, ocS.ao, 0.5);`);
+    if (o.foliage && LEAF_LIGHTS) sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_begin>', LEAF_LIGHTS);
   };
   return mat;
 }

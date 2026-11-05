@@ -846,6 +846,12 @@ const RAW = {
     lampLightRange: 24, // m: reach of the real lights at the street lamps nearest the camera (render/nightLights.ts)
     lampLightIntensity: 55, // candela-like intensity of one lamp at full night
     lampLightsMax: 10, // the most lamp lights any preset uses (TUNING.quality.*.lampLights)
+    // leaf cards of the detailed trees (render/worldMaterial.ts)
+    leafMinFacing: 0.2, // shading normals turned at least this far toward the viewer (no sky-mirror rims on backlit trees)
+    leafSkyReflection: 0.6, // share of the sky reflection leaves keep (they are matt, waxy at most)
+    leafTranslucency: 0.45, // share of the sunlight a leaf passes on toward the viewer when the sun is behind it...
+    leafTransmitBase: 0.12, // ...and the share it passes on whatever the angle (diffuse transmission)
+    leafEdgeOn: [0.06, 0.28], // |cos| between card and view where edge-on cards fade out (no dark spikes)
   },
 
   debug: {
