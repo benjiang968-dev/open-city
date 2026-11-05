@@ -363,8 +363,9 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     pierBest = g; pierD = y === undefined ? -g : Math.abs(g - y); pierY = y;
     const dk = deckSurf.at(x, z, ceil);
     if (dk === dk) pierVisit(dk);
-    // no walking-surface triangle at all here (Key Bridge running off the map edge over the river): the deck profiles
-    if (dk !== dk && ge !== ge) deckIdx.query(x, z, true, pierVisit);
+    // no deck triangle and no ground near the height asked about (Key Bridge running off the map edge over the river):
+    // the deck profiles (at a bridge's end at grade the ground is right there, and the profiles are a kerb off)
+    if (dk !== dk && (ge !== ge || (y !== undefined && ge < y - TUNING.map.levelStep))) deckIdx.query(x, z, true, pierVisit);
     else pierIdx.query(x, z, true, pierVisit);
     return pierBest;
   };
