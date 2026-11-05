@@ -21,6 +21,10 @@ Stage 1, item 5 (research). Written 2026-11-05. It answers four questions for St
   map is shown and in the credits.
 - **Keep places in a separate file under CDLA-Permissive-2.0.** Drop the Apache-2.0 (Foursquare) records or
   ship their NOTICE. Store only category and position, never names.
+- **Keep the 140 Esri Community Maps footprints (CC BY 4.0) out of the ODbL file** (fact-check). Either drop
+  them or ship them in their own CC BY 4.0 file. Putting CC BY 4.0 data into an ODbL database needs a waiver of
+  CC BY 4.0 §2(a)(5)(B); Esri's waiver is reported to cover "OpenStreetMap and its users" only, and I could not
+  confirm that it covers Overture users (section 3).
 - Ready-to-paste strings are in section 8.
 
 Not legal advice. Where a point rests on OSMF guidance that I could not open (see "How this was researched"), it is
@@ -58,6 +62,12 @@ marked.
 
   For the OSMF attribution and produced-work guidance I used web-search extracts [G1–G4]. The licence texts
   themselves were read in full from SPDX.
+- **Fact-check pass (2026-11-05, second reader).** Re-downloaded [O1], [O2], [L1–L4], CC-BY-4.0 [L5], [E2],
+  [E3] and [E4] and matched the quotes; re-counted `sources[].dataset` and `license` in the clipped Georgetown
+  Parquet files (counts in section 2 confirmed exactly); re-checked three terrain tiles with HEAD requests (same
+  `x-amz-meta-x-imagery-sources`, z16 still 404). Esri's own blog, the Foursquare NOTICE page and the
+  OSMF/OSM wiki pages are refused from here, so those points rest on search extracts [G1, G5, G6]. Changes from
+  that pass are marked "fact-check".
 
 ## 1. OpenStreetMap vs Overture for us
 
@@ -89,13 +99,18 @@ From Overture's generated attribution table [O2] (fetched 2026-11-05, entries "A
 | addresses (`address`) | per source, "permissive open licenses" | US: National Address Database (USDOT), "National Address Database Access and Usage License" | not sampled |
 | divisions | ODbL | OSM, geoBoundaries (CC BY 4.0), Esri, LINZ | not needed |
 
-Overture's own attribution page [O1] says that for anything made "wholly or in part from OpenStreetMap data" they
-show **`© OpenStreetMap contributors, Overture Maps Foundation`**. The optional citation is
-`Overture Maps Foundation, overturemaps.org`.
+Overture's own attribution page [O1] says its Explore tool "displays several datasets that are made wholly or in
+part from OpenStreetMap data", so to meet the ODbL it shows **`© OpenStreetMap contributors, Overture Maps
+Foundation`** (fact-check: this is what Overture does on its own map, not a rule it sets for users). The optional
+citation, for publications, is `Overture Maps Foundation, overturemaps.org` plus the date the data were accessed.
 
-**CC BY 4.0 inside buildings.** 140 Georgetown footprints come from Esri Community Maps under CC BY 4.0. Overture
-labels this "with OpenStreetMap waivers"; I could not read the waiver, so I am not relying on it. CC BY needs
-credit: "Esri Community Maps contributors". Google Open Buildings did not appear in Georgetown. The importer
+**CC BY 4.0 inside buildings.** 140 Georgetown footprints come from Esri Community Maps. The data's
+`sources[].license` value is literally "Creative Commons by Attribution (CC BY 4.0) with OpenStreetMap waivers".
+Fact-check: according to search extracts of Esri's Community Maps data-sharing post, Esri "waives Section
+2(a)(5)(B) of the CC BY 4.0 license as to OpenStreetMap and its users" and accepts the OSM contributors page as
+attribution [G5]. A second search could not find that wording, and I could not open the page, so this is
+unconfirmed. Either way the waiver names OSM, not Overture or us, so I am not relying on it (section 3). CC BY
+needs credit: "Esri Community Maps contributors". Google Open Buildings did not appear in Georgetown. The importer
 should list every `sources[].dataset` it keeps and fail if an unknown licence appears.
 
 ## 3. ODbL obligations for a game
@@ -129,7 +144,10 @@ Text: ODbL 1.0 [L1], read in full.
 3. **Notice on the Produced Work** (4.3). When the game is public it must carry a notice "reasonably
    calculated" to make anyone who sees it aware the content came from the database and is under ODbL. The
    licence's example: "Contains information from DATABASE NAME, which is made available here under the
-   Open Database License (ODbL)."
+   Open Database License (ODbL)." Fact-check: 4.3 a also says "DATABASE NAME should be replaced with the name of
+   the Database and a hyperlink to the URI of the Database. 'Open Database License' should contain a hyperlink to
+   the URI of the text of this License. If hyperlinks are not possible, You should include the plain text of the
+   required URI's". The strings in section 8 now carry both links.
 4. **Offer the derivative database** (4.6). If we publicly use a Derivative Database or a Produced Work from
    it, we must offer recipients, free of charge over the internet, either "(a) The entire Derivative Database;
    or (b) A file containing all of the alterations made to the Database or the method of making the
@@ -138,10 +156,30 @@ Text: ODbL 1.0 [L1], read in full.
      (for example `data/georgetown.json`, linked from Credits)
    - keep the importer script and the Overture release id in the repo
 5. **No restrictive technical measures** (4.7). Do not obfuscate or encrypt the data file. A minified bundle is
-   fine as long as the plain file is offered too ("parallel distribution", 4.7 b).
-6. **Do not add incompatible contents** to the ODbL file (4.4 d). Anything we hand-author into it (our own
-   street furniture, invented shop names, parking spots) becomes part of the ODbL database. That is fine
-   because it is our own work. Third-party content under other licences must stay out (next point).
+   fine as long as the plain file is offered too ("parallel distribution", 4.7 b). (Fact-check: minifying is
+   probably not a "technological measure" at all; offering the plain file removes the question either way.)
+6. **Do not add incompatible contents** to the ODbL file (4.4 d: "You must not add Contents to Derivative
+   Databases under Section 4.4 a that are incompatible with the rights granted under this License"). Anything
+   we hand-author into it (our own street furniture, invented shop names, parking spots) becomes part of the
+   ODbL database. That is fine because it is our own work. Third-party content under other licences must stay
+   out (next points).
+
+**CC BY 4.0 building footprints (Esri) — fact-check addition.**
+
+- CC BY 4.0 §2(a)(5)(B) [L5]: "You may not offer or impose any additional or different terms or conditions on,
+  or apply any Effective Technological Measures to, the Licensed Material if doing so restricts exercise of the
+  Licensed Rights by any recipient". The OSMF Licence Working Group's published position (search extract [G6])
+  is that CC BY 4.0 data can only go into the ODbL OSM database with an explicit waiver of that clause, and that
+  distributing ODbL *Produced Works* does not need it.
+- `georgetown.json` is a database we publicly convey, not just a Produced Work. Esri's reported waiver names
+  "OpenStreetMap and its users" (unconfirmed, [G5]). Whether Overture's redistribution or our file is covered
+  is **not settled**.
+- **Low-risk choice:** keep the 140 Esri-sourced footprints out of `georgetown.json`. Either drop them (3% of
+  Georgetown buildings; the generator fills the gap as it does today) or ship them as
+  `georgetown-buildings-ccby.json` under CC BY 4.0 with the notices CC BY §3(a)(1) asks for: creator
+  ("Esri Community Maps contributors"), the licence name and URI, a note that we modified the data (reprojected,
+  clipped, simplified), and a pointer to the warranty disclaimer. The same applies to any Google Open Buildings
+  (CC BY 4.0) footprints if the bbox grows.
 
 **Mixing with CDLA places (and Apache/CC0).**
 
@@ -153,7 +191,9 @@ Text: ODbL 1.0 [L1], read in full.
 - **Low-risk layout:**
   - `georgetown.json`: OSM/Overture-derived geometry, ODbL.
   - `georgetown-places.json`: one record per place with only `{ id, x, z, basic_category, confidence,
-    operating_status, sourceLicence }`, CDLA-Permissive-2.0, with the CDLA text shipped alongside.
+    operating_status, sourceLicence }`, CDLA-Permissive-2.0, with the CDLA text shipped alongside. The CDLA
+    condition is to make the text available "with the shared Data", so it goes next to the file in `dist/` as
+    well as in the repo, not only in the repo.
   - No real names, phones, websites, socials, emails or brands. This is already a CLAUDE.md rule (names come
     from `src/data/poiNames.ts`).
   - Matching a place to a building can happen at load time, or be stored in the places file. **Do not** write
@@ -161,11 +201,14 @@ Text: ODbL 1.0 [L1], read in full.
     on CDLA/ODbL compatibility and the separate-file layout avoids the question. OSMF's "Horizontal Map Layers"
     guideline [G3] describes the same idea for produced works: separate layers that are not used to correct each
     other. I did not read it directly.
-- **Apache-2.0 (Foursquare) records.** Redistribution needs a copy of the Apache licence, notices of changes and
-  the NOTICE file contents (Apache-2.0 §4 [L3]). Overture links Foursquare's NOTICE at
-  `https://opensource.foursquare.com/places-notice-txt/` [O2]. Simplest: **filter out places whose only
-  external source is Foursquare** (336 of 3,822 in Georgetown). The alternative is to ship `LICENSE-APACHE-2.0`
-  plus the NOTICE text.
+- **Apache-2.0 (Foursquare) records.** Redistribution needs a copy of the Apache licence (§4 a), "prominent
+  notices stating that You changed the files" (§4 b), the original notices (§4 c) and the NOTICE file contents
+  (§4 d) [L3]. Overture's entry reads "Copyright 2024 Foursquare Labs, Inc. All rights reserved. Available under
+  Apache 2.0… Foursquare data was transformed to the Overture schema. Changed: 2026-03-18" and links the NOTICE at
+  `https://opensource.foursquare.com/places-notice-txt/` [O2]. That page is refused from here, so the NOTICE
+  wording is **unconfirmed**. Simplest: **filter out places whose only external source is Foursquare** (336 of
+  3,822 in Georgetown; fact-check confirmed all 336 Foursquare places have no other external source). The
+  alternative is to ship `LICENSE-APACHE-2.0` plus the NOTICE text read from that page.
 - **CC0 (AllThePlaces)** places need nothing [L4].
 
 **Attribution placement for a game (OSMF).**
@@ -173,9 +216,14 @@ Text: ODbL 1.0 [L1], read in full.
 - The OSMF Attribution Guidelines (search extracts [G1]) list acceptable places for games: "splash screen on
   application startup, in the game view, during gameplay, on the credits page, in the menu, or in another
   suitable location".
-- Splash text must be legible long enough to read.
+- Splash text must be legible long enough to read (one copy of the guideline says "at least 5 seconds";
+  unconfirmed which version is current).
 - Where the attribution cannot carry the link, the link to `https://www.openstreetmap.org/copyright` must be in
-  "an easily locatable part of the… software".
+  an easy-to-find part of the software; the guideline's example is a menu entry labelled "Data licences"
+  (fact-check: confirmed only as a search extract of the 2021 guideline; the exact quote "an easily locatable
+  part of the… software" was not seen).
+- The guideline also says the attribution must name "OpenStreetMap" and make clear the data is available under
+  the ODbL.
 - For an interactive map the usual expectation is attribution on or next to the map. Our minimap (and the
   Stage 3 big map) shows OSM-derived roads, so the short credit belongs in the big map's corner (or under the
   minimap) as well as in the pause menu.
@@ -191,7 +239,7 @@ residential, unclassified, service and living_street: 1,000 of 2,886 road segmen
 | Road class | `segment.class`: motorway, trunk, primary, secondary, tertiary, residential, living_street, unclassified, service, pedestrian, footway, steps, path, track, cycleway, bridleway, unknown. `subtype`: road, rail, water | footway 1,566 · service 402 · steps 235 · residential 227 · primary 187 · secondary 70 · trunk 40 · tertiary 32 · cycleway 31 · path 27 · motorway 27 · unknown 18 · others ≤ 8 |
 | Kind of service road, sidewalk, crossing | `subclass` (+ `subclass_rules` along the segment): link, sidewalk, crosswalk, parking_aisle, driveway, alley, cycle_crossing | sidewalk 442 · crosswalk 267 · alley 90 · driveway 66 · link 46 · parking_aisle 23 |
 | Street names | `names.primary` (+ `names.common` by language, `names.rules` by side or range) | 567 / 1,000 drivable (the unnamed ones are mostly service roads). Names are full: "M Street Northwest", "Wisconsin Avenue Northwest" |
-| One-way | `access_restrictions[]`: `{access_type: denied, when: {heading: backward}}` = one-way along the geometry. Also mode, purpose (`using`), status (`recognized`), vehicle dimensions, time (`during`), and `between` for part of a segment | 327 drivable segments one-way, for example 32nd Street NW |
+| One-way | `access_restrictions[]`: `{access_type: denied, when: {heading: backward}}` = one-way along the geometry. Also mode, purpose (`using`), status (`recognized`), vehicle dimensions, time (`during`), and `between` for part of a segment | 327 drivable segments one-way, for example 32nd Street NW (fact-check recount: 323 when rules limited to part of a segment (`between`) or to one mode are left out) |
 | Other access | same array: `allowed`/`designated` with `mode: [foot, bicycle]`, `denied` with `mode: [motor_vehicle]` or `[car]`, `recognized: [as_private]` | 405 drivable segments have some rule |
 | Turn bans | `prohibited_transitions[]` (sequence of segment/connector, `final_heading`, `when`) | 82 |
 | Speed limits | `speed_limits[]`: `max_speed {value, unit}`, `min_speed`, `is_max_speed_variable`, `when`, `between` | 328 / 1,000 (32.8%): 25 mph 272, 35 mph 34, 30 mph 11, 15 mph 8, 40 mph 6, 10 mph 3, 20 and 55 mph 1 each. **Default by class for the rest** |
@@ -244,7 +292,7 @@ residential, unclassified, service and living_street: 1,000 of 2,886 road segmen
   - Every Georgetown tile I fetched (z14 4684/6266, z15 9369/12533, z15 9369/12535) carries
     `x-amz-meta-x-imagery-sources: ned/ned19_n39x00_w077x25_md_washingtondc_2008.tif`. That is USGS
     NED/3DEP **1/9 arc-second** (about 3 m), the DC 2008 lidar-derived DEM. `data-sources.md` lists 3DEP
-    1/3″ and 1/9″ in the US from z10 to z15 [E2].
+    1/3″ in the US from z10 and 1/9″ from z11 to z15 [E2] (fact-check: the 1/9″ range starts at z11, not z10).
   - Tiles are `Last-Modified: 12 Nov 2017`: a static dataset, no updates.
 - **Resolution.**
   - **z15 is the maximum zoom; z16 returns 404** (checked: `terrarium/16/18739/25067.png`).
@@ -277,11 +325,16 @@ residential, unclassified, service and living_street: 1,000 of 2,886 road segmen
   - Roads are not smoothed. Keep the generator's road-corridor smoothing so road surfaces have no lidar
     bumps.
 - **Attribution.**
-  - USGS asks for "3DEP data courtesy of the U.S. Geological Survey" (3DEP is public domain: "may be used
-    without restriction").
+  - USGS asks for "3DEP data courtesy of the U.S. Geological Survey" (3DEP is public domain: "All 3DEP
+    products available through The National Map are in the public domain and may be used without
+    restriction", with a request for credit "when used for redistribution, resale, presentation or
+    publication"; quoted by joerd [E3]).
   - Joerd's document gives a combined "Required attribution" list for the whole world [E3]. Only the USGS line
-    applies to tiles that come from 3DEP alone, as ours do at z14–15.
-  - Crediting Mapzen and the AWS Open Data programme is courteous and cheap.
+    applies to tiles that come from 3DEP alone, as ours do at z14–15 (that is my reading; the document itself
+    says "you are responsible for researching each project to follow their license terms").
+  - Fact-check: joerd also has a second list, "Required attribution when using Mapzen's hosted service", whose
+    first entry is **"Mapzen"**. The AWS bucket is "Managed By: Mapzen, a Linux Foundation project" [E4], so
+    treat the Mapzen credit as required, not just courteous. Crediting the AWS Open Data programme is optional.
   - If we ever use low zooms (z ≤ 9 uses SRTM/GMTED/ETOPO1), add "SRTM and GMTED2010 data courtesy of the
     U.S. Geological Survey; ETOPO1 U.S. National Oceanic and Atmospheric Administration".
 
@@ -301,14 +354,18 @@ them arrive in the same `height` column. `sources[].property == "/properties/hei
      `meta.license` into `georgetown.json`.
    - Do not float to "latest": GERS ids and geometry change monthly.
    - The schema's YAML is deprecated and goes in December 2026 [O5]. Read the Parquet columns, not the YAML.
-2. **Two output files.**
-   - `georgetown.json` (ODbL): roads, footways, steps, crossings, signals, infrastructure, buildings, water,
-     land use.
+2. **Two output files (three if Esri footprints are kept).**
+   - `georgetown.json` (ODbL): roads, footways, steps, crossings, signals, infrastructure, buildings whose
+     geometry is from OSM or Microsoft (both ODbL), water, land use.
    - `georgetown-places.json` (CDLA-Permissive-2.0): categories only.
    - Drop Apache-2.0-only places, or ship their NOTICE.
+   - Esri CC BY 4.0 footprints (140): drop them, or put them in `georgetown-buildings-ccby.json` under CC BY 4.0
+     (fact-check, section 3). Heights from USGS (public domain) may stay on ODbL buildings.
 3. **Licence gate in the importer.**
    - Collect `sources[].dataset` and `license`, and fail on any licence not in an allow-list (ODbL-1.0,
-     CDLA-Permissive-2.0, CC0-1.0, USGS/public domain, Esri CC BY 4.0).
+     CDLA-Permissive-2.0, CC0-1.0, USGS/public domain, and CC BY 4.0 only when routed to the separate CC BY
+     file). Note that USGS Lidar entries carry a null `license` in this release, so the gate must map
+     `dataset == "USGS Lidar"` explicitly.
    - Write the observed list into `meta.sources` so the credits panel can be generated from data.
 4. **Defaults where Overture is empty.**
    - lanes and widths by class
@@ -322,33 +379,45 @@ them arrive in the same `height` column. `sources[].property == "/properties/hei
 
 ## 8. Exact attribution strings (ready to paste)
 
-**Pause menu, small print** (the `CityMap.attribution` line) **and the big map's corner:**
+Fact-check rewrite (2026-11-05). What changed from the first version: ODbL 4.3 wants the database name and the
+words "Open Database License" hyperlinked; CC BY 4.0 wants a licence link and a "modified" note; AllThePlaces
+is CC0, not CDLA; Mapzen is on joerd's required list for the hosted tiles. The Esri parts apply only if the 140
+Esri footprints are kept (in their own CC BY file, section 3); if they are dropped, delete every Esri mention.
+
+**Pause menu, small print** (the `CityMap.attribution` line) **and the big map's corner.** "© OpenStreetMap
+contributors" is a link to `https://www.openstreetmap.org/copyright`; the rest of the line links to the Credits
+panel:
 
 ```
-© OpenStreetMap contributors (ODbL) · Overture Maps Foundation · Esri Community Maps contributors · USGS
+© OpenStreetMap contributors (ODbL) · Overture Maps Foundation · Esri Community Maps contributors (CC BY 4.0) · USGS 3DEP · Mapzen · Credits and data licences
 ```
 
-The pause menu also gets a "Credits and data licences" panel with this text. The links must be clickable, and
-the panel must be reachable in one click from the pause menu:
+The pause menu also gets a "Credits and data licences" panel (one click from the pause menu; OSMF's own example
+of an easy-to-find place is a menu entry labelled "Data licences"). Every URL is a clickable link:
 
 ```
 Map data © OpenStreetMap contributors, available under the Open Database License (ODbL) 1.0.
   https://www.openstreetmap.org/copyright
 Roads, paths, buildings, water and land use from Overture Maps Foundation, release 2026-10-21.0
 (https://overturemaps.org), including data from TomTom and Microsoft (ODbL).
-Some building footprints © Esri Community Maps contributors, CC BY 4.0.
+Some building footprints © Esri Community Maps contributors (https://communitymaps.arcgis.com/home/),
+licensed under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/), provided as is without warranty.
+We reprojected, clipped and simplified them.
 Building heights in part from USGS 3DEP lidar (public domain).
-Place locations and categories from Overture Maps Foundation, CDLA-Permissive-2.0
-(sources include Meta, Microsoft, BrightQuery and AllThePlaces). Business names in the game are invented.
-Terrain: 3DEP data courtesy of the U.S. Geological Survey, via Terrain Tiles (Mapzen / Linux Foundation)
+Place locations and categories from Overture Maps Foundation under CDLA-Permissive-2.0
+(https://cdla.dev/permissive-2-0/; sources include Meta, Microsoft and BrightQuery), and from AllThePlaces (CC0).
+Business names in the game are invented.
+Terrain: 3DEP data courtesy of the U.S. Geological Survey, via Mapzen Terrain Tiles (a Linux Foundation project)
 on the Registry of Open Data on AWS.
-This game contains information from OpenStreetMap and Overture Maps, which is made available here under the
-Open Database License (ODbL). The game's map database is free to download under the ODbL:
-  <site>/data/georgetown.json  (source: src/data/georgetown.json and scripts/importOverture.mjs)
+This game contains information from the Open City Georgetown map database
+(<site>/data/georgetown.json), which is made available here under the Open Database License (ODbL)
+(https://opendatacommons.org/licenses/odbl/1-0/). It is derived from OpenStreetMap and Overture Maps and is free
+to download. Source: src/data/georgetown.json and scripts/importOverture.mjs.
 ```
 
-If Foursquare-sourced places are kept, add: `Some place data © Foursquare Labs, Inc., Apache License 2.0 (see
-NOTICE).`
+If Foursquare-sourced places are kept, add the NOTICE text from `https://opensource.foursquare.com/places-notice-txt/`
+(not readable from here; unconfirmed wording) plus: `Some place data © 2024 Foursquare Labs, Inc., Apache License
+2.0 (https://www.apache.org/licenses/LICENSE-2.0); transformed to the Overture schema and changed by us.`
 
 **README** (replace the current "Map data" heading text once real data lands; the current line claims OSM for a
 map that is still synthetic):
@@ -359,17 +428,20 @@ map that is still synthetic):
 Map data © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available under the
 [Open Database License (ODbL) 1.0](https://opendatacommons.org/licenses/odbl/1-0/), via
 [Overture Maps Foundation](https://overturemaps.org) release 2026-10-21.0 (includes TomTom and Microsoft data
-under ODbL; some building footprints © Esri Community Maps contributors, CC BY 4.0; building heights in part
-from USGS 3DEP lidar). Place categories: Overture Maps Foundation,
-[CDLA-Permissive-2.0](https://cdla.dev/permissive-2-0/). Terrain: 3DEP data courtesy of the U.S. Geological
-Survey, via [Terrain Tiles on AWS](https://registry.opendata.aws/terrain-tiles/).
+under ODbL). Building heights in part from USGS 3DEP lidar (public domain). Place categories: Overture Maps
+Foundation, [CDLA-Permissive-2.0](https://cdla.dev/permissive-2-0/), and AllThePlaces (CC0). Terrain: 3DEP data
+courtesy of the U.S. Geological Survey, via Mapzen [Terrain Tiles on AWS](https://registry.opendata.aws/terrain-tiles/).
+Some building footprints © [Esri Community Maps contributors](https://communitymaps.arcgis.com/home/),
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), modified (only if kept).
 
 `src/data/georgetown.json` is a derivative database of OpenStreetMap/Overture and is licensed under the ODbL
-1.0; `src/data/georgetown-places.json` is under CDLA-Permissive-2.0. See DATA-LICENSE.md. Street names are
-real; shop and business names are invented (`src/data/poiNames.ts`).
+1.0; `src/data/georgetown-places.json` is under CDLA-Permissive-2.0; `src/data/georgetown-buildings-ccby.json`
+(if present) is under CC BY 4.0. See DATA-LICENSE.md. Street names are real; shop and business names are
+invented (`src/data/poiNames.ts`).
 ```
 
-**`DATA-LICENSE.md`** (new file at the repo root when the real data is committed; `scripts/importOverture.mjs` and `georgetown-places.json` are placeholder names for whatever item 2 calls them):
+**`DATA-LICENSE.md`** (new file at the repo root when the real data is committed; `scripts/importOverture.mjs`,
+`georgetown-places.json` and `georgetown-buildings-ccby.json` are placeholder names for whatever item 2 calls them):
 
 ```markdown
 # Data licences
@@ -380,18 +452,24 @@ The program code in this repository and the data files listed below are licensed
 Derivative database of OpenStreetMap and Overture Maps Foundation data.
 Licensed under the Open Database License (ODbL) 1.0: https://opendatacommons.org/licenses/odbl/1-0/
 © OpenStreetMap contributors (https://www.openstreetmap.org/copyright), Overture Maps Foundation
-(https://overturemaps.org), release 2026-10-21.0; includes data from TomTom and Microsoft (ODbL) and
-building footprints © Esri Community Maps contributors (CC BY 4.0). Building heights in part from USGS 3DEP (public domain).
+(https://overturemaps.org), release 2026-10-21.0; includes data from TomTom and Microsoft (ODbL).
+Building heights in part from USGS 3DEP (public domain).
 Our own additions (generated sidewalks, lanes, doors, parking spots, hand placed props) are part of this
 database and are released under the same licence.
 How it was made: scripts/importOverture.mjs with the bbox and release in meta.
 
+## src/data/georgetown-buildings-ccby.json (only if Esri footprints are kept)
+Building footprints © Esri Community Maps contributors (https://communitymaps.arcgis.com/home/), via Overture
+Maps Foundation release 2026-10-21.0. Licensed under CC BY 4.0: https://creativecommons.org/licenses/by/4.0/
+Modified by Open City: reprojected to the game's local frame, clipped to the map area and simplified.
+Provided as is, without warranties (see section 5 of the licence).
+
 ## src/data/georgetown-places.json
-Place positions and categories from Overture Maps Foundation, CDLA-Permissive-2.0 (text: LICENSE-CDLA-2.0.txt).
-Names, phone numbers, websites and brands are deliberately not included.
+Place positions and categories from Overture Maps Foundation, CDLA-Permissive-2.0 (text: LICENSE-CDLA-2.0.txt),
+and from AllThePlaces (CC0 1.0). Names, phone numbers, websites and brands are deliberately not included.
 
 ## Terrain heights inside georgetown.json
-Derived from USGS 3DEP 1/9 arc-second elevation (public domain), served as AWS Terrain Tiles.
+Derived from USGS 3DEP 1/9 arc-second elevation (public domain), served as Mapzen Terrain Tiles on AWS.
 "3DEP data courtesy of the U.S. Geological Survey."
 
 ## Anything else
@@ -399,8 +477,10 @@ Procedurally generated textures and meshes are original to this project. Third-p
 listed with source and licence in assets/LICENSES.md.
 ```
 
-Ship `LICENSE-CDLA-2.0.txt` (the 2,354-byte SPDX text) beside it, and the ODbL text or URI as 4.2 b requires.
-The URI above satisfies the "or its URI" option.
+Ship `LICENSE-CDLA-2.0.txt` (the 2,354-byte SPDX text) beside the places file, both in the repo and in `dist/`
+(CDLA section 2.1: the text goes "with the shared Data"). For the ODbL, the URI satisfies 4.2 b ("a copy of this License…
+or its Uniform Resource Identifier"), but it must appear both in the database (`meta.license`) and in the
+relevant documentation.
 
 ## 9. Tooling note for the importer
 
@@ -433,6 +513,7 @@ It took 19 s for places, 138 s for segments and 477 s for buildings (512 files),
 - [L2] CDLA-Permissive-2.0 (SPDX copy). https://raw.githubusercontent.com/spdx/license-list-data/main/text/CDLA-Permissive-2.0.txt (canonical: https://cdla.dev/permissive-2-0/)
 - [L3] Apache-2.0 (SPDX copy). https://raw.githubusercontent.com/spdx/license-list-data/main/text/Apache-2.0.txt
 - [L4] CC0-1.0 (SPDX copy). https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC0-1.0.txt
+- [L5] CC-BY-4.0 (SPDX copy, read in full in the fact-check). https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC-BY-4.0.txt (canonical: https://creativecommons.org/licenses/by/4.0/legalcode)
 - [E1] tilezen/joerd, "Types of Terrain Tiles". https://github.com/tilezen/joerd/blob/master/docs/formats.md
 - [E2] tilezen/joerd, "Data sources". https://github.com/tilezen/joerd/blob/master/docs/data-sources.md
 - [E3] tilezen/joerd, "Attribution". https://github.com/tilezen/joerd/blob/master/docs/attribution.md
@@ -442,3 +523,5 @@ It took 19 s for places, 138 s for segments and 477 s for buildings (512 files),
 - [G2] OSMF Licence and Legal FAQ / Produced Work guideline (search extracts only). https://osmfoundation.org/wiki/Licence/Licence_and_Legal_FAQ and https://osmfoundation.org/wiki/Licence/Community_Guidelines/Produced_Work_-_Guideline
 - [G3] OSMF Horizontal Map Layers guideline (title and summary from search only). https://osmfoundation.org/wiki/Licence/Community_Guidelines/Horizontal_Map_Layers_-_Guideline
 - [G4] OSM legal-talk, "Using OSM data, to generate game worlds" (2021, secondary). https://lists.openstreetmap.org/pipermail/legal-talk/2021-February/009061.html
+- [G5] Esri, "Community Maps data sharing" (ArcGIS blog; search extracts only, host refused here; the waiver wording appeared in one search and not in a second). https://www.esri.com/arcgis-blog/products/arcgis-living-atlas/mapping/community-maps-data-sharing/
+- [G6] OSMF Licence Working Group, "Use of CC BY 4.0 licensed data in OpenStreetMap" (2017; search extracts only) and the OSM wiki waiver template. https://blog.openstreetmap.org/2017/03/17/use-of-cc-by-data/ and https://wiki.openstreetmap.org/wiki/Import/ODbL_Compatibility
