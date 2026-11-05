@@ -779,7 +779,24 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       }
       if (!moved) break;
     }
+    // a bridge abutment in a dip: where a street runs straight onto a deck (two arms, one of them the deck) and the
+    // abutment node sits on the valley side below both the street's next junction and the deck's far end, the street
+    // sagged into a V there (K St onto its bridge over the Rock Creek parkway: 10.5 m between 12.4 m and 12.0 m, a car
+    // at 60 km/h took off and crashed). The node rises to the line between them (bounded like the approach lift).
+    let sagFilled = false;
+    for (const n of nodes) {
+      if (n.arms.length !== 2) continue;
+      const [p, q] = n.arms.map((a) => a.edge);
+      if (p.deck === q.deck || p.a === p.b || q.a === q.b) continue;
+      const fp = p.a === n ? p.b : p.a, fq = q.a === n ? q.b : q.a;
+      if (p.L + q.L > G.sagFillSpan || fp.h < n.h + 0.3 || fq.h < n.h + 0.3) continue;
+      const line = (fp.h * q.L + fq.h * p.L) / (p.L + q.L);
+      n.h = Math.min(line, n.h + G.approachMaxLift);
+      n.raised = true;
+      sagFilled = true;
+    }
     for (const e of atGrade) if (e.a.raised || e.b.raised) shape(e, ground.get(e)!);
+    if (sagFilled) for (const e of decks) deckProfile(e, false);
   }
 
   function deckProfile(e: REdge, moveNodes = true) {

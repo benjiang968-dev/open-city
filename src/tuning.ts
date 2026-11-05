@@ -791,6 +791,7 @@ const RAW = {
     deckGroundGap: 0.6, // m: natural ground under a bridge deck is cut down to at least this far below its underside
     deckJoinHop: 30, // m: real data: an at-grade piece shorter than this between a deck end and the next junction joins the deck to its street (the deck need not clear roads beyond it)
     approachMaxLift: 3, // m: real data: a junction next to a raised deck end may rise this much at most so the short piece between them stays within its grade limit (bigger lifts cascaded through the Rock Creek valley)
+    sagFillSpan: 160, // m: real data: a bridge abutment lower than both the street's next junction and the deck's far end, within this span, rises to the line between them (no V-shaped dip onto a bridge)
     gradeSeparation: 2.5, // m: overlapping carriageways closer in height than this are one surface (the smaller road conforms to the bigger); more is a real grade separation
     conformBlend: 12, // m over which a road blends into the surface of a bigger road it overlaps
     overlayTolerance: 0.25, // m: an at-grade road this far off the raster's surface is a grade separation (kept as its own surface)
