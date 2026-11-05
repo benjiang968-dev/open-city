@@ -827,6 +827,8 @@ const RAW = {
     nightSkyHorizon: [0.035, 0.028, 0.026], // ...and near the horizon (city glow)
     overcastDim: 0.62, // how much darker the sky (and so its light) gets under full cloud
     groundBounce: 0.45, // brightness of the ground below the horizon in the sky capture by day (bounce light from below)
+    sunrise: 6.0, // game hour the sun crosses the horizon in the morning (matches the day/night keys in dayNight.ts)...
+    sunset: 19.8, // ...and in the evening (the keys fade the sun out by 21:00; noon falls half way, about 12:54)
     sunIntensity: 6.5, // sunlight at noon (the day/night keys scale it toward dawn and dusk)
     moonIntensity: 0.25, // night key light
     exposureDay: 0.86, // tone mapping exposure by day (ACES filmic)

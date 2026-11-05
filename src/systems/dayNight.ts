@@ -72,9 +72,15 @@ const ca = new THREE.Color();
 const cb = new THREE.Color();
 const moonDir = new THREE.Vector3(0.35, 0.85, -0.4).normalize();
 
-/** Sun direction for a game hour: rises in the east (+x), noon in the south (+z), sets in the west. */
+/**
+ * Sun direction for a game hour: up at TUNING.look.sunrise, down at TUNING.look.sunset (the same day the KEYS above
+ * light: golden hour into the evening, not a black sky at 19:00), below the horizon in between at night.
+ */
 export function sunDirection(hour: number, out: THREE.Vector3): THREE.Vector3 {
-  const ang = ((hour - 6) / 12) * Math.PI;
+  const rise = LT.sunrise, day = LT.sunset - LT.sunrise;
+  const ang = hour >= rise && hour <= LT.sunset
+    ? ((hour - rise) / day) * Math.PI
+    : Math.PI + (((hour - LT.sunset + 24) % 24) / (24 - day)) * Math.PI;
   return out.set(-Math.cos(ang), Math.sin(ang) * 1.25, 0.42).normalize();
 }
 
