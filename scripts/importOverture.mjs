@@ -811,6 +811,17 @@ const buildingAt = (x, y, snap = 0) => {
   roads.length = 0;
   roads.push(...out);
   stats.serviceIntoBuildings = { cut, dropped };
+  // a statue's pedestal mapped as a building at the middle of a roundabout (Washington Circle): the game builds its own
+  // statue there, so the footprint goes
+  for (const ring of roads.filter((r) => r.junction === 'roundabout')) {
+    const P = ring.pts.slice(0, -1);
+    const cx = P.reduce((a, p) => a + p[0], 0) / P.length, cz = P.reduce((a, p) => a + p[1], 0) / P.length;
+    const rad = P.reduce((a, p) => a + Math.hypot(p[0] - cx, p[1] - cz), 0) / P.length;
+    for (let i = buildings.length - 1; i >= 0; i--) {
+      const b = buildings[i], c = b.pts.reduce((a, p) => [a[0] + p[0] / b.pts.length, a[1] + p[1] / b.pts.length], [0, 0]);
+      if (Math.hypot(c[0] - cx, c[1] - cz) < rad * 0.5) { buildings.splice(i, 1); drop('building inside a roundabout (statue pedestal)'); }
+    }
+  }
   // narrow alleys and driveways between buildings: no wider than the gap (median distance to the nearest footprint on
   // either side, sampled every 3 m), never under MIN_LANE_GAP (one car)
   let narrowed = 0;
