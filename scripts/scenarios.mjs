@@ -1961,3 +1961,128 @@ export async function roadaudit(page, S) {
     return out;
   });
 }
+
+// Drive test (MAP=georgetown node scripts/shot.mjs x roaddrive): the player's car driven physically along every
+// major street (primary, secondary, tertiary, parkway; lanes chained straight on through junctions), at street speed,
+// steered by a path follower that only turns the body about the vertical (suspension, pitch and roll stay physical).
+// Measures the chassis' vertical acceleration and the time with all four wheels off the ground; reports the worst
+// streets and places against TUNING.geo.roadLimits (maxVertAccel, maxAirtime). Other traffic is moved away first.
+export async function roaddrive(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, M = window.__ocMap, Lm = M.roadLimits;
+    const E = c.roads.edges, N = c.roads.nodes;
+    const STEP = 1 / 60;
+    const major = new Set(['primary', 'secondary', 'tertiary', 'parkway']);
+    const dir = (e, atEnd) => { const p = e.pts, n = p.length; return atEnd ? Math.atan2(p[n - 3] - p[n - 6], p[n - 1] - p[n - 4]) : Math.atan2(p[3] - p[0], p[5] - p[2]); };
+    const dAng = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+    const next = (e) => N[e.to].out.map((i) => E[i]).filter((n) => n.name && n.name === e.name && major.has(n.cls) && n.to !== e.from && !n.parking && dAng(dir(n, false), dir(e, true)) < 0.5).sort((a, b) => dAng(dir(a, false), dir(e, true)) - dAng(dir(b, false), dir(e, true)) || b.lane - a.lane)[0];
+    const prev = (e) => N[e.from].in.map((i) => E[i]).find((p) => p.name === e.name && major.has(p.cls) && p.from !== e.to && dAng(dir(p, true), dir(e, false)) < 0.5);
+    // chains of lanes along each major street (the inner lane: the kerbside one may be a parking lane), longest first,
+    // each lane used once
+    const used = new Set();
+    const chains = [];
+    for (const e of E) {
+      if (!major.has(e.cls) || !e.name || e.lane !== e.lanesSameDir - 1 || e.parking || used.has(e.id) || prev(e)) continue;
+      const list = [];
+      for (let k = e, guard = 0; k && !used.has(k.id) && guard < 200; k = next(k), guard++) { list.push(k); used.add(k.id); }
+      const len = list.reduce((s, q) => s + q.len, 0);
+      if (len >= 120) chains.push({ name: e.name, cls: e.cls, list, len });
+    }
+    chains.sort((a, b) => b.len - a.len);
+    const LP = { x: 0, y: 0, z: 0, heading: 0 };
+    const pathOf = (ch) => {
+      const P = [];
+      for (const e of ch.list) for (let s = 0; s < e.len; s += 1) { M.laneSample(e, s, LP); P.push(LP.x, LP.y, LP.z); }
+      return P;
+    };
+    // the player's car
+    let v = w.player.vehicle;
+    if (!v) {
+      v = w.vehicles.find((q) => q.owned) ?? w.vehicles[0];
+      window.__mh.put(w.player.body, v.px - Math.cos(v.heading) * 2.2, v.pz + Math.sin(v.heading) * 2.2, 1.2);
+      window.__ocRun(0.2); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+      v = w.player.vehicle ?? v;
+    }
+    // other traffic, parked cars and people out of the way (a collision would skew the numbers)
+    for (const t of w.traffic) if (t.body) t.body.setTranslation({ x: t.px, y: -500, z: t.pz }, false);
+    for (const q of w.vehicles) if (q !== v) { q.body.setTranslation({ x: q.px, y: -600, z: q.pz }, false); q.body.setLinvel({ x: 0, y: 0, z: 0 }, false); q.body.setBodyType(w.R.RigidBodyType.Fixed, false); }
+    w.peds.length = 0;
+    w.traffic.length = 0;
+    const out = [];
+    let worstA = 0, worstAir = 0, overA = 0, overAir = 0, samples = 0, metres = 0;
+    const budgetM = 30000;
+    for (const ch of chains) {
+      if (metres > budgetM) break;
+      const P = pathOf(ch), n = P.length / 3;
+      if (n < 30) continue;
+      const target = Math.min(ch.cls === 'parkway' ? 18 : 13.9, ch.list[0].speed || 13.9);
+      const h0 = Math.atan2(P[9] - P[0], P[11] - P[2]);
+      // a fresh, drivable car each run (a collision in the previous run may have wrecked it)
+      v.health = v.maxHealth; v.wrecked = false; v.driven = true; v.upsideTimer = 0;
+      v.body.setTranslation({ x: P[3], y: P[4] + 0.9, z: P[5] }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h0 / 2), z: 0, w: Math.cos(h0 / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.body.setLinvel({ x: Math.sin(h0) * target, y: 0, z: Math.cos(h0) * target }, true);
+      v.prevVel?.set(Math.sin(h0) * target, 0, Math.cos(h0) * target);
+      let idx = 1, t = 0, vyPrev = 0, air = 0, maxA = 0, maxAir = 0, at = null, airAt = null, lost = false, crash = null, spPrev = target;
+      const recent = []; // last 0.4 s of samples: dropped if a collision follows (its spike is not the road's)
+      const vys = [];
+      const K = w.input.keys;
+      for (let step = 0; step < 60 * 400; step++) {
+        const p = v.body.translation();
+        let bd = Infinity, bi = idx;
+        for (let i = idx; i < Math.min(n, idx + 40); i++) { const d = Math.hypot(P[i * 3] - p.x, P[i * 3 + 2] - p.z); if (d < bd) { bd = d; bi = i; } }
+        idx = bi;
+        if (bd > 6) { lost = true; break; }
+        if (idx >= n - 8) break;
+        const la = Math.min(n - 1, idx + 7);
+        const want = Math.atan2(P[la * 3] - p.x, P[la * 3 + 2] - p.z);
+        const r = v.body.rotation();
+        const fwdx = 2 * (r.x * r.z + r.w * r.y), fwdz = 1 - 2 * (r.x * r.x + r.y * r.y);
+        const cur = Math.atan2(fwdx, fwdz);
+        const err = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
+        const d = err * 0.25;
+        const cy = Math.cos(d / 2), sy = Math.sin(d / 2);
+        v.body.setRotation({ w: cy * r.w - sy * r.y, x: cy * r.x + sy * r.z, y: cy * r.y + sy * r.w, z: cy * r.z - sy * r.x }, true);
+        const lv = v.body.linvel();
+        const cd = Math.cos(d), sd = Math.sin(d);
+        v.body.setLinvel({ x: lv.x * cd + lv.z * sd, y: lv.y, z: -lv.x * sd + lv.z * cd }, true);
+        const sp = Math.hypot(lv.x, lv.z);
+        if (sp < target - 0.5) { K.add('KeyW'); K.delete('KeyS'); } else if (sp > target + 2) { K.delete('KeyW'); K.add('KeyS'); } else { K.delete('KeyW'); K.delete('KeyS'); }
+        window.__ocStep(1);
+        t += STEP;
+        // vertical acceleration felt in the cabin: the change of vertical speed over 0.1 s (a single 1/60 s step is
+        // contact-solver noise)
+        const vy = v.body.linvel().y;
+        vys.push(vy);
+        if (vys.length > 7) vys.shift();
+        const ay = vys.length === 7 ? (vys[6] - vys[0]) / (6 * STEP) : 0;
+        vyPrev = vy;
+        let contacts = 0;
+        for (let i = 0; i < 4; i++) if (v.ctrl.wheelIsInContact(i)) contacts++;
+        const lv2 = v.body.linvel(), sp2 = Math.hypot(lv2.x, lv2.z);
+        if (t < 1.5) { air = 0; spPrev = sp2; continue; }
+        if (spPrev - sp2 > 0.8 || (sp2 < target * 0.4 && t > 3)) { crash = [Math.round(p.x), Math.round(p.z)]; break; } // hit something
+        spPrev = sp2;
+        air = contacts === 0 ? air + STEP : 0;
+        recent.push([ay, air, Math.round(p.x), Math.round(p.z)]);
+        if (recent.length > 24) {
+          const [a0, air0, x0, z0] = recent.shift();
+          samples++;
+          if (Math.abs(a0) > Math.abs(maxA)) { maxA = a0; at = [x0, z0]; }
+          if (Math.abs(a0) > Lm.maxVertAccel) overA++;
+          if (air0 > maxAir) { maxAir = air0; airAt = [x0, z0]; }
+          if (air0 > Lm.maxAirtime && air0 - STEP <= Lm.maxAirtime) overAir++;
+        }
+      }
+      K.delete('KeyW'); K.delete('KeyS');
+      metres += (idx / n) * ch.len;
+      worstA = Math.max(worstA, Math.abs(maxA));
+      worstAir = Math.max(worstAir, maxAir);
+      out.push({ street: ch.name, cls: ch.cls, len: Math.round(ch.len), driven: Math.round((idx / n) * ch.len), maxVertAccel: +maxA.toFixed(2), at, maxAirtime: +maxAir.toFixed(3), airAt, lost, crash });
+    }
+    out.sort((a, b) => Math.abs(b.maxVertAccel) - Math.abs(a.maxVertAccel));
+    return { limits: { maxVertAccel: Lm.maxVertAccel, maxAirtime: Lm.maxAirtime }, chains: chains.length, drivenKm: +(metres / 1000).toFixed(1), samples, worstVertAccel: +worstA.toFixed(2), worstAirtime: +worstAir.toFixed(3), samplesOverAccel: overA, airEventsOver: overAir, pass: worstA <= Lm.maxVertAccel && worstAir <= Lm.maxAirtime, runs: out };
+  });
+}

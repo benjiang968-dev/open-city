@@ -634,6 +634,9 @@ const RAW = {
     cornerRadiusLocal: 4.5, // m at corners with a residential street (real data; Georgetown's corners are tight)
     cornerRadiusService: 2, // m where a driveway, alley or service road meets a street (real data)
     plateauEase: 10, // m over which a road leaves a flat junction plateau into its grade (real data: no kink at the junction)
+    relaxGradeMain: 0.1, // real data: junction heights are relaxed until a main road's free length takes their difference at this grade
+    relaxGrade: 0.15, // the same for residential and other streets (Georgetown's steep side streets reach 15 %)
+    relaxGradeService: 0.2, // the same for driveways, alleys and parking aisles
     maxGrade: 0.075, // steepest grade (rise/run) the generator gives ramps and bridge approaches
     roadClearance: 5, // m of headroom under a deck that crosses a road
     pathClearance: 2.6, // m of headroom under a deck that crosses a towpath or trail

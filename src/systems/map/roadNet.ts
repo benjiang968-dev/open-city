@@ -631,6 +631,27 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       }
     }
   };
+  // real data: node heights come from the terrain around each junction, and two junctions a few metres apart on a
+  // steep bank (or beside a bridge abutment the DEM half keeps) could differ by metres: a short street piece between
+  // them became a 40 % ramp. Relax: where an at-grade edge's free length cannot take the height difference at the
+  // class's grade limit, both ends move toward each other (iterated; long edges are untouched).
+  if (!net.synthetic) {
+    const lim = (e: REdge) => (e.cls === 'service' ? G.relaxGradeService : /^(primary|secondary|trunk|motorway)/.test(e.cls) ? G.relaxGradeMain : G.relaxGrade);
+    const insideDeck = (n: RNode) => n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
+    for (let it = 0; it < 60; it++) {
+      let worst = 0;
+      for (const e of atGrade) {
+        if (e.a === e.b || insideDeck(e.a) || insideDeck(e.b)) continue;
+        const free = Math.max(1, e.L - e.trimA - e.trimB);
+        const ex = Math.abs(e.a.h - e.b.h) - lim(e) * free;
+        if (ex <= 0.01) continue;
+        worst = Math.max(worst, ex);
+        const d = (ex / 2) * Math.sign(e.a.h - e.b.h) * 0.8;
+        e.a.h -= d; e.b.h += d;
+      }
+      if (worst < 0.02) break;
+    }
+  }
   // nodes inside a bridge (every arm a deck: real data splits a bridge where ramps join or its level changes) do not
   // stand on the ground: the terrain under them is a river, a street below, or a DEM with the deck half removed (a
   // 12 m mound at the Key Bridge abutment). Their heights are interpolated between the bridge's ends on land (a
@@ -822,13 +843,19 @@ function conformOverlaps(net: RoadNet) {
         if (d < bestD) { bestD = d; hv = target[q]; }
       }
       if (bestD > G.conformBlend) continue;
-      const w = 0.5 + 0.5 * Math.cos((Math.PI * bestD) / G.conformBlend);
+      // fade out toward the flat junction plateaus too (the road must still leave each plateau at its height)
+      const ease = Math.max(1, Math.min(G.plateauEase, (A.L - A.trimA - A.trimB) * 0.3));
+      const w = (0.5 + 0.5 * Math.cos((Math.PI * bestD) / G.conformBlend)) * plateauFade(A, s, ease);
       out[k] = A.prof[k] + (hv - A.prof[k]) * w;
     }
     A.prof = out;
   }
 }
 
+/** 0 on an edge's junction plateaus, easing to 1 over `ease` metres beyond them. */
+export function plateauFade(e: REdge, s: number, ease: number): number {
+  return smoothStep((s - e.trimA) / ease) * smoothStep((e.L - e.trimB - s) / ease);
+}
 function smoothStep(t: number) {
   const c = clamp(t, 0, 1);
   return c * c * (3 - 2 * c);

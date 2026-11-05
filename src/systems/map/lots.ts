@@ -5,7 +5,7 @@ import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, pointInPoly } from './geoDoc';
 import { lin, type PhysChunks, type RenderChunks } from './meshKit';
-import { pointAtS, type REdge, type RoadNet } from './roadNet';
+import { plateauFade, pointAtS, type REdge, type RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
 
 const G = TUNING.geo;
@@ -107,7 +107,7 @@ export function conformToLots(net: RoadNet, plans: LotPlan[]) {
       let bd = Infinity, hv = 0;
       for (let q = 0; q < n; q++) if (!Number.isNaN(target[q]) && Math.abs(c[q] - s) < bd) { bd = Math.abs(c[q] - s); hv = target[q]; }
       if (bd > G.conformBlend) continue;
-      const w = 0.5 + 0.5 * Math.cos((Math.PI * bd) / G.conformBlend);
+      const w = (0.5 + 0.5 * Math.cos((Math.PI * bd) / G.conformBlend)) * plateauFade(e, s, Math.max(1, Math.min(G.plateauEase, (e.L - e.trimA - e.trimB) * 0.3)));
       out[k] = e.prof[k] + (hv - e.prof[k]) * w;
     }
     e.prof = out;
