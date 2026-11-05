@@ -241,12 +241,13 @@ export function createTreeLod(look: Look, root: THREE.Object3D, radius: number, 
           const sp = f.sp, n = counts[sp];
           if (n >= capacity) continue;
           const N = near[sp];
-          (N.wood.instanceMatrix.array as Float32Array).set(a.subarray(idx * 16, idx * 16 + 16), n * 16);
-          (N.leaves.instanceMatrix.array as Float32Array).set(a.subarray(idx * 16, idx * 16 + 16), n * 16);
+          // plain copies (no typed-array views: refills make no garbage)
+          const wm = N.wood.instanceMatrix.array as Float32Array, lm = N.leaves.instanceMatrix.array as Float32Array;
+          for (let k = 0; k < 16; k++) { const v = a[idx * 16 + k]; wm[n * 16 + k] = v; lm[n * 16 + k] = v; }
           if (f.im.instanceColor) {
             const c = f.im.instanceColor.array as Float32Array;
-            (N.wood.instanceColor!.array as Float32Array).set(c.subarray(idx * 3, idx * 3 + 3), n * 3);
-            (N.leaves.instanceColor!.array as Float32Array).set(c.subarray(idx * 3, idx * 3 + 3), n * 3);
+            const wc = N.wood.instanceColor!.array as Float32Array, lc = N.leaves.instanceColor!.array as Float32Array;
+            for (let k = 0; k < 3; k++) { const v = c[idx * 3 + k]; wc[n * 3 + k] = v; lc[n * 3 + k] = v; }
           }
           counts[sp] = n + 1;
         }
