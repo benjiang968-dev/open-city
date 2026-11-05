@@ -1110,7 +1110,7 @@ Format: date · what changed · what to test · known issues.
 
 ### Stage 1 integration (branch `s1-integrate`, from main 8192ea1)
 
-- **Merges, in order:** `s1-research` (5ada6be), `s1-physics` (17c3625), `s1-realdata` (76ea1bd), `s1-look` (cf8e768). All four branches existed. Conflicts and how they were kept on both sides:
+- **Merges, in order:** `s1-research` (731c18c), `s1-physics` (17c3625), `s1-realdata` (76ea1bd), `s1-look` (cf8e768). All four branches existed. Conflicts and how they were kept on both sides:
   - `facades.ts`: concave footprints cut into convex pieces (real data) and every building collider tagged `building` (physics).
   - `roadMesh.ts`: deck junctions collide as `deck` triangles and corners know they are on a deck (physics), plus the deck junction underside (real data); the look's surface-tagged colours (`surf(SURF.*)`) on every palette.
   - `georgetownWorld.ts`: stairwell holes, the surface index, the audit recorder and the props' `standAt` (physics) with the real-data road topology (`omittedRoads`, `planLots` / `conformToLots`) and the look (`createLook`, world and facade materials, upgraded water and props, tree LOD).
@@ -1139,3 +1139,35 @@ Format: date · what changed · what to test · known issues.
   - People at 12:30 (`geolife`): M St at Wisconsin Ave 25 people in the 60 m window (F3 target 45, real-world estimate 147, active 44, a person every 7 m of pavement); 29th St between N and P 10 (target 10, a person every 48 m). Night on M St 5, waterfront at 19:30 30, towpath at 07:30 9. 430 seeded items, 4 placed badly (2 in blocked cells, 2 near a drop; main had 0).
   - Seeds 1, 123, 456: static colliders (28,575) and the road, walk and building graphs hash identically; the shop names differ, and so do the drawn meshes, by the shop signs only (about 500 vertices of 6.47 M).
   - F3 spikes: 0 in the gate drive window. `crashspikes` (f4, load 11): 11 of 930 frames over 33 ms, worst 293 ms in physics during a traffic pile-up.
+- **Regressions:**
+  - Grid (`MAP=grid`; the integration's later changes are Georgetown-only): world, walk, drive (31 km/h after 3 s), handling, crashspikes (1 of 930 frames over 33 ms, worst 85 ms in the weather / sky-light refresh), gate2, theft, taxi (3 fares), dealership, life, witness, police (3 stars, lost in 57 s), chat, mapcheck (pass), stairs (pass), fallthrough (823 landed, 0 below, 0 hover), physf4 (pass): all exit 0 with a clean console. `crowd` did not finish: the browser's renderer was killed (the session's memory limit; "the kernel killed a process for lack of memory") after the scenario switches the preset to High; the same happens with the s1-look build alone, so it is not from the integration.
+  - Georgetown (`MAP=georgetown`): world (the default map, no MAP: loads Georgetown at the spawn), walk, drive, handling, gate2 (1 star, escaped in 28 s), theft, dealership (3 dealerships, a hatchback bought and driven), life, chat, roadaudit, pause, witness and police (these two at 640x360: their 1280x720 screenshots timed out at a load of 20) exit 0 with a clean console. `crowd`: renderer killed as on the grid. `police` on Georgetown: the scripted run-over misses both people (they stay idle), so there is no chase to judge (the grid run chases and loses 3 stars). `drive`: the starting car hits the corner pole within 20 m (120 -> 52 hp, carried over from s1-realdata). `handling`: the test car runs off K St into a building at (100, 422) after 2 s.
+  - `roadaudit` (f4 build): grade samples over the limit 3,017 (s1-realdata review 2,994), grade change 1,164 (1,080), lane-to-surface gaps 612 (1,875: the lanes now lie on the drawn surface), junction kinks 234 (235), walk steps over 0.3 m 1,647 (1,525), holes 3 (3). `roaddrive` was not run on the integrated build.
+- **Performance against main 8192ea1** (main's `?map=georgetown` is the knowledge-based map without PBR or the new colliders; this build is the real map with all of Stage 1). `node perf.mjs` (scratch tool): interleaved base/new runs, 960x540, page load unthrottled, then 4x CPU throttle; 60 rendered frames on foot at M St and 60 driving; garbage over 300 unrendered frames between forced GCs. 3 rounds on Low and Medium, 1 on High, 1 on the grid; the machine was at a load of 12-20 throughout, so CPU medians are rough and frames over 33 ms are mostly the machine. Medians:
+
+  | | Low main | Low new | Medium main | Medium new | High main | High new |
+  |---|---|---|---|---|---|---|
+  | Page ready (s) | 13.6 | 33.5 | 16.6 | 49.4 | 24.7 | 95.3 |
+  | Map build (s) | 3.9 | 13.6 | 4.2 | 23.0 | 4.9 | 40.0 |
+  | Draw calls at M St | 91 | 92 | 156 | 264 | 243 | 422 |
+  | Triangles at M St (M) | 0.46 | 0.54 | 0.88 | 1.89 | 1.13 | 2.61 |
+  | CPU per frame on foot, 4x throttle (ms, median / p90) | 18.6 / 42.2 | 25.9 / 46.3 | 29.3 / 43.8 | 28.7 / 45.3 | 41.7 / 75.8 | 34.4 / 71.9 |
+  | CPU per frame driving (ms, median / p90) | 17.7 / 39.4 | 25.4 / 87.8 | 23.3 / 42.0 | 33.7 / 74.9 | 33.5 / 93.3 | 52.1 / 99.3 |
+  | Frames over 33 ms of 60, foot / car | 8 / 6 | 16 / 19 | 19 / 9 | 21 / 30 | 45 / 32 | 31 / 51 |
+  | Garbage per frame (KB) | 74 | 62 | 5-105 | 77 | 94 | 85 |
+  | Baked texture memory (MiB) | - | 19.3 | - | 73.3 | - | 289.3 |
+  | JS heap after the runs (MB) | 153 | 299 | 166 | 277 | 164 | 280 |
+  | Shader programs | 26 | 44 | 29 | 47 | 29 | 47 |
+  | Static colliders | 10,778 | 29,146 | 10,778 | 29,146 | 10,778 | 29,146 |
+
+  Grid Medium (2 rounds): ready 7.1 -> 47.8 s (the texture bake), draw calls 126 -> 230, triangles 0.18 -> 0.24 M, CPU on foot 19.0 -> 19.2 ms (p90 56 -> 98), in a car 20.9 -> 24.4 ms, colliders 1,806 -> 2,050. Stage 1 costs more almost everywhere: twice the draw calls and triangles on Medium, a three-to-four times longer boot (texture bake plus a bigger real map and three times the colliders), about 130 MB more JS heap, and frame times that are higher on Low and in a car (software GL also pays the PBR shading in the CPU-side numbers here). Real-GPU frame times are still unmeasured.
+- **Screenshots** (in-game, 1280x720, Medium unless named, final build): `34-stage1-keybridge` (on the deck), `34-stage1-mst-lunch`, `34-stage1-rowhouses` (29th St), `34-stage1-circle-traffic` (Washington Circle), `34-stage1-waterfront`, `34-stage1-stair-f4` (a stair with the F4 collision view), `34-stage1-night` (M St at 21:36), `34-stage1-f3` (the overlay: its spike counter shows the software-GL frames of the screenshot run, 40 s each under load), `34-stage1-minimap`, `34-stage1-quality-{low,medium,high}` (M St).
+- **Known issues after the integration** (places in `docs/m3-suspicious-areas.md`, part 0):
+  - 6 of 85 real stairs are not walkable end to end; `physaudit` is not clean on the real map (504 + 140); `fallthrough` 1 hover in 1,303.
+  - AI traffic: 5 wrong-way moves per gate drive (the gate wants 0), 23 AI contacts; mapcheck's drive part fails about 2 runs in 3.
+  - Road smoothness still over the limits in places (roadaudit above); `roaddrive` not re-run.
+  - The starting car hits a pole within 20 m of the spawn; the kerb by the spawn sits 0.39 m below the road.
+  - The `crowd` scenario's switch to High gets the browser's renderer killed for memory in this container (also on s1-look alone); the High preset bakes 289 MiB of surface maps.
+  - Synthesized street trees on M St and Wisconsin Ave are not moved to the kerb strip on real data: 136 trees and 60 posts stand within a person's reach of a walk link (none blocks a walkway).
+  - The taxi can name a destination's street as "Georgetown" when the place has none.
+  - Boot is 3-4 times slower than main (texture bake, bigger real map, three times the colliders); Stage 1 costs more draw calls, triangles, heap and frame time than main; real-GPU numbers are still unmeasured.
