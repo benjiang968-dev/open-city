@@ -633,6 +633,7 @@ const RAW = {
     cornerRadius: 6, // m kerb radius at street corners
     cornerRadiusLocal: 4.5, // m at corners with a residential street (real data; Georgetown's corners are tight)
     cornerRadiusService: 2, // m where a driveway, alley or service road meets a street (real data)
+    maxJunctionTrim: 12, // m: longest flat plateau an arm keeps at a junction (real data: sharp merges would ask for 30 m)
     plateauEase: 10, // m over which a road leaves a flat junction plateau into its grade (real data: no kink at the junction)
     relaxGradeMain: 0.1, // real data: junction heights are relaxed until a main road's free length takes their difference at this grade
     relaxGrade: 0.15, // the same for residential and other streets (Georgetown's steep side streets reach 15 %)

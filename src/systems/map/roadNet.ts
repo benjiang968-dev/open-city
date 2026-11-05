@@ -374,7 +374,10 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     for (let k = 0; k < m; k++) {
       const A = arms[k], e = A.edge;
       const other = A.atStart ? e.trimB : e.trimA;
-      let tr = req[k];
+      // real data: two arms meeting at a sharp angle (a slip road peeling off, a bridge splitting into ramps) asked
+      // for a 25-30 m plateau whose outline the junction fan could not cover (a hole in the Key Bridge deck); the arms
+      // overlap there instead (their surfaces agree: conformOverlaps / the deck plateaus)
+      let tr = synthetic ? req[k] : Math.min(req[k], G.maxJunctionTrim);
       const maxT = Math.max(0.3, e.L - other - 2) * (e.a === e.b ? 0.5 : 1);
       tr = Math.min(tr, maxT * (other > 0 ? 1 : 0.6));
       A.trim = tr;
@@ -725,8 +728,14 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
   for (const e of atGrade) if (e.a.raised || e.b.raised) shape(e, ground.get(e)!);
   // decks again (their ends may have moved if a later deck raised a shared node)
   for (const e of decks) deckProfile(e);
+  if (!net.synthetic) {
+    // a deck processed early can end with its plateau at a node height a later deck raised: one more pass with the
+    // node heights frozen makes every plateau match its junction (moving nodes again ratchets decks upward)
+    for (const e of decks) deckProfile(e, false);
+    for (const e of atGrade) if (e.a.raised || e.b.raised) shape(e, ground.get(e)!);
+  }
 
-  function deckProfile(e: REdge) {
+  function deckProfile(e: REdge, moveNodes = true) {
     const n = e.pts.length, c = e.cum;
     const req = new Float32Array(n).fill(-Infinity);
     for (let k = 0; k < n; k++) {
@@ -745,11 +754,11 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
     }
     const hA0 = freeA ? Math.max(e.b.h, sampleArr(env, c, e.trimA)) : e.a.h;
     const hB0 = freeB ? Math.max(e.a.h, sampleArr(env, c, e.L - e.trimB)) : e.b.h;
-    if (freeA) e.a.h = hA0;
-    if (freeB) e.b.h = hB0;
+    if (freeA && moveNodes) e.a.h = hA0;
+    if (freeB && moveNodes) e.b.h = hB0;
     const needA = sampleArr(env, c, e.trimA), needB = sampleArr(env, c, e.L - e.trimB);
-    if (!freeA && needA > e.a.h + 0.05) { e.a.h = needA; e.a.raised = true; }
-    if (!freeB && needB > e.b.h + 0.05) { e.b.h = needB; e.b.raised = true; }
+    if (moveNodes && !freeA && needA > e.a.h + 0.05) { e.a.h = needA; e.a.raised = true; }
+    if (moveNodes && !freeB && needB > e.b.h + 0.05) { e.b.h = needB; e.b.raised = true; }
     for (let k = 0; k < n; k++) {
       const s = c[k];
       const u = clamp((s - e.trimA) / Math.max(0.1, e.L - e.trimA - e.trimB), 0, 1);
