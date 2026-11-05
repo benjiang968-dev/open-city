@@ -50,6 +50,7 @@ function crimeFromEvent(e: GameEvent): { kind: CrimeKind; x: number; z: number; 
     case 'harassment': return { kind: 'harassment', x: e.x, z: e.z, victim: e.pedId };
     case 'vandalism': return { kind: 'vandalism', x: e.x, z: e.z, victim: -1 };
     case 'menace': return { kind: 'menace', x: e.x, z: e.z, victim: -1 };
+    case 'shoplifting': return { kind: 'shoplifting', x: e.x, z: e.z, victim: -1 };
     case 'dogHurt': return { kind: 'dogAttack', x: e.x, z: e.z, victim: e.pedId };
     // the owner (if they noticed) is the victim: they chase you first and may call afterwards (pedestrians 'chase').
     // While the alarm sounds, everyone within earshot has turned to look, so the witness radius grows

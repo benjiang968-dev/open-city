@@ -13,10 +13,26 @@ const IT = TUNING.items;
 
 export interface WorldItem {
   id: number;
+  /** Stable id (saves): 'street:<n>' for the seed's street items, '<building id>/<furniture slot>' for interior items,
+   * 'new:<n>' for anything made later. */
+  uid: string;
   type: ItemId;
-  body: RAPIER.RigidBody;
-  collider: RAPIER.Collider;
+  /** Physics body: always for street items; for lazy (interior) items only while the player is near (see wakeRadius). */
+  body: RAPIER.RigidBody | null;
+  collider: RAPIER.Collider | null;
   inWorld: boolean; // false while in the inventory
+  /** Lazy items rest without a body until the player comes near (interior shelves and tables). */
+  lazy: boolean;
+  /** Lying inside a building whose interior is not built: not drawn, not simulated, not targetable. */
+  dormant: boolean;
+  /** The building it lies in (record id), or null. */
+  building: string | null;
+  /** 'public', 'player', 'business:<building id>', 'home:<building id>' */
+  owner: string;
+  /** Moved, picked up or dropped since it was made (the save keeps it). */
+  touched: boolean;
+  /** Rotation while resting without a body. */
+  qx: number; qy: number; qz: number; qw: number;
   inst: number; // instance index in its type's InstancedMesh
   px: number; // cached position (updated while awake)
   py: number;
@@ -30,6 +46,13 @@ export interface WorldItem {
 
 export interface ItemsState {
   items: WorldItem[];
+  byUid: Map<string, WorldItem>;
+  /** Uids that were used up or lost for good (eaten, thrown into the river): never made again. */
+  gone: Set<string>;
+  /** Counter for items made during play ('new:<n>'). */
+  nextNew: number;
+  /** Something changed that the save should write (pickup, drop, moved). */
+  dirty: boolean;
   art: Record<ItemId, ItemArt>;
   meshes: Record<ItemId, THREE.InstancedMesh>;
   material: THREE.MeshStandardMaterial;
@@ -64,7 +87,64 @@ export function createItems(w: World): ItemsState {
   const marker = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 4).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
   marker.visible = false;
   w.scene.add(marker);
-  return { items: [], art, meshes, material, byCollider: new Map(), target: null, marker, eventQueue: new w.R.EventQueue(true), skipped: 0 };
+  return { items: [], byUid: new Map(), gone: new Set(), nextNew: 0, dirty: false, art, meshes, material, byCollider: new Map(), target: null, marker, eventQueue: new w.R.EventQueue(true), skipped: 0 };
+}
+
+/** Give an item a physics body at its resting place (asleep). */
+export function wakeItem(w: World, it: WorldItem, asleep = true): void {
+  if (it.body) return;
+  const S = w.itemsState, R = w.R, a = S.art[it.type];
+  const body = w.physics.createRigidBody(
+    R.RigidBodyDesc.dynamic().setTranslation(it.px, it.py, it.pz).setRotation({ x: it.qx, y: it.qy, z: it.qz, w: it.qw })
+      .setLinearDamping(0.2).setAngularDamping(0.4).setSleeping(asleep),
+  );
+  const cd = a.collider.kind === 'box' ? R.ColliderDesc.cuboid(a.collider.hx, a.collider.hy, a.collider.hz) : R.ColliderDesc.cylinder(a.collider.hh, a.collider.r);
+  const collider = w.physics.createCollider(cd.setMass(IT.defs[it.type].mass).setFriction(0.75).setRestitution(0.2).setCollisionGroups(GROUPS.item), body);
+  it.body = body; it.collider = collider;
+  S.byCollider.set(collider.handle, it);
+  if (!it.inWorld) body.setEnabled(false);
+}
+/** Take a lazy item's body away (it rests where it is, drawn only). */
+export function restItem(w: World, it: WorldItem): void {
+  if (!it.body) return;
+  const S = w.itemsState;
+  if (it.inWorld) {
+    const t = it.body.translation(), r = it.body.rotation();
+    it.px = t.x; it.py = t.y; it.pz = t.z; it.qx = r.x; it.qy = r.y; it.qz = r.z; it.qw = r.w;
+  }
+  if (it.collider) S.byCollider.delete(it.collider.handle);
+  w.physics.removeRigidBody(it.body);
+  it.body = null; it.collider = null;
+}
+
+/**
+ * A lazy item (no body until the player comes near) resting at (x, y, z) with a yaw: interior shelves and tables, and
+ * items restored from a save. `y` is the surface it stands on.
+ */
+export function spawnLazy(w: World, type: ItemId, uid: string, x: number, y: number, z: number, yaw: number, owner: string, building: string | null): WorldItem | null {
+  const S = w.itemsState;
+  const im = S.meshes[type];
+  if (im.count >= CAPACITY || S.byUid.has(uid)) return S.byUid.get(uid) ?? null;
+  const a = S.art[type];
+  q4.setFromEuler(new THREE.Euler(0, yaw, a.restRotZ, 'YXZ'));
+  const it: WorldItem = {
+    id: S.items.length, uid, type, body: null, collider: null, inWorld: true, lazy: true, dormant: false, building, owner, touched: false,
+    qx: q4.x, qy: q4.y, qz: q4.z, qw: q4.w, inst: im.count, px: x, py: y + a.restY + 0.003, pz: z,
+    thrown: false, thrownAt: -10, speed: 0, stolen: false, illegal: false,
+  };
+  im.count++;
+  S.items.push(it);
+  S.byUid.set(uid, it);
+  writeMatrix(S, it);
+  return it;
+}
+
+/** Hide an item lying in a building whose interior is taken down (no body), or bring it back. */
+export function setDormant(w: World, it: WorldItem, on: boolean): void {
+  if (it.dormant === on) return;
+  if (on) restItem(w, it);
+  it.dormant = on;
+  writeMatrix(w.itemsState, it);
 }
 
 /**
@@ -91,22 +171,29 @@ export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: num
   const cd = a.collider.kind === 'box' ? R.ColliderDesc.cuboid(a.collider.hx, a.collider.hy, a.collider.hz) : R.ColliderDesc.cylinder(a.collider.hh, a.collider.r);
   const collider = w.physics.createCollider(cd.setMass(def.mass).setFriction(0.75).setRestitution(0.2).setCollisionGroups(GROUPS.item), body);
   const item: WorldItem = {
-    id: S.items.length, type, body, collider, inWorld: true, inst: im.count, px: x, py: y + a.restY, pz: z,
+    id: S.items.length, uid: `street:${S.items.length}`, type, body, collider, inWorld: true, lazy: false, dormant: false, building: null, owner: 'public', touched: false,
+    qx: q4.x, qy: q4.y, qz: q4.z, qw: q4.w, inst: im.count, px: x, py: y + a.restY, pz: z,
     thrown: false, thrownAt: -10, speed: 0, stolen: false, illegal: false,
   };
   im.count++;
   S.items.push(item);
+  S.byUid.set(item.uid, item);
   S.byCollider.set(collider.handle, item);
   writeMatrix(S, item);
   return item;
 }
 
+/** Redraw one item where it is now (after its state was changed from outside: saves). */
+export function writeItem(w: World, it: WorldItem): void {
+  writeMatrix(w.itemsState, it);
+}
+
 function writeMatrix(S: ItemsState, it: WorldItem) {
   const im = S.meshes[it.type];
-  if (!it.inWorld) im.setMatrixAt(it.inst, ZERO);
+  if (!it.inWorld || it.dormant) im.setMatrixAt(it.inst, ZERO);
   else {
-    const r = it.body.rotation();
-    q4.set(r.x, r.y, r.z, r.w);
+    if (it.body) { const r = it.body.rotation(); q4.set(r.x, r.y, r.z, r.w); }
+    else q4.set(it.qx, it.qy, it.qz, it.qw);
     p4.set(it.px, it.py, it.pz);
     im.setMatrixAt(it.inst, m4.compose(p4, q4, s1));
   }
@@ -117,35 +204,55 @@ function writeMatrix(S: ItemsState, it: WorldItem) {
 export function removeFromWorld(w: World, it: WorldItem): void {
   it.inWorld = false;
   it.thrown = false;
-  it.body.setEnabled(false);
+  it.touched = true;
+  it.building = null;
+  if (it.lazy) restItem(w, it);
+  else it.body?.setEnabled(false);
+  w.itemsState.dirty = true;
   writeMatrix(w.itemsState, it);
 }
 
 /** Put an item back into the world at a position with a velocity (dropped or thrown). */
 export function placeInWorld(w: World, it: WorldItem, x: number, y: number, z: number, yaw: number, vx: number, vy: number, vz: number): void {
   it.inWorld = true;
-  it.body.setEnabled(true);
+  it.dormant = false;
+  it.touched = true;
   q4.setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ'));
-  it.body.setTranslation({ x, y, z }, true);
-  it.body.setRotation({ x: q4.x, y: q4.y, z: q4.z, w: q4.w }, true);
-  it.body.setLinvel({ x: vx, y: vy, z: vz }, true);
-  it.body.setAngvel({ x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 }, true);
-  it.px = x; it.py = y; it.pz = z;
+  it.px = x; it.py = y; it.pz = z; it.qx = q4.x; it.qy = q4.y; it.qz = q4.z; it.qw = q4.w;
+  if (!it.body) wakeItem(w, it, false);
+  const body = it.body!;
+  body.setEnabled(true);
+  body.setTranslation({ x, y, z }, true);
+  body.setRotation({ x: q4.x, y: q4.y, z: q4.z, w: q4.w }, true);
+  body.setLinvel({ x: vx, y: vy, z: vz }, true);
+  body.setAngvel({ x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 }, true);
+  w.itemsState.dirty = true;
   writeMatrix(w.itemsState, it);
 }
 
 /** Per frame: copy moving items into their instances, settle thrown items, pick the look-at target. */
 export function updateWorldItems(w: World, dt: number): void {
   const S = w.itemsState;
+  const pp0 = w.player.mesh.position;
+  const wake2 = IT.wakeRadius * IT.wakeRadius, sleep2 = IT.sleepRadius * IT.sleepRadius;
   for (const it of S.items) {
-    if (!it.inWorld || it.body.isSleeping()) {
+    if (it.dormant || !it.inWorld) { it.speed = 0; continue; }
+    if (it.lazy) {
+      // lazy items: a body only while the player is near (or while they move)
+      const dx = it.px - pp0.x, dy = it.py - pp0.y, dz = it.pz - pp0.z, d2 = dx * dx + dy * dy * 4 + dz * dz;
+      if (!it.body) { if (d2 < wake2) wakeItem(w, it); else { it.speed = 0; continue; } }
+      else if (d2 > sleep2 && it.body.isSleeping() && !it.thrown) { restItem(w, it); writeMatrix(S, it); it.speed = 0; continue; }
+    }
+    const body = it.body!;
+    if (body.isSleeping()) {
       it.speed = 0;
-      if (it.thrown && it.inWorld) settle(it);
+      if (it.thrown) settle(it);
       continue;
     }
-    const t = it.body.translation();
-    const lv = it.body.linvel();
+    const t = body.translation();
+    const lv = body.linvel();
     it.speed = Math.hypot(lv.x, lv.y, lv.z);
+    if (!it.touched && (Math.abs(t.x - it.px) > 0.05 || Math.abs(t.z - it.pz) > 0.05 || Math.abs(t.y - it.py) > 0.05)) { it.touched = true; S.dirty = true; }
     it.px = t.x; it.py = t.y; it.pz = t.z;
     if (t.y < -20) { // fell out of the world (into the bay): park it out of sight
       removeFromWorld(w, it);
@@ -162,7 +269,7 @@ export function updateWorldItems(w: World, dt: number): void {
     const fx = Math.sin(p.facing), fz = Math.cos(p.facing);
     let best = Infinity;
     for (const it of S.items) {
-      if (!it.inWorld || it.thrown) continue;
+      if (!it.inWorld || it.thrown || it.dormant) continue;
       const dx = it.px - pp.x, dz = it.pz - pp.z;
       if (Math.abs(dx) > IT.pickupRange || Math.abs(dz) > IT.pickupRange || it.py > pp.y + 1.6) continue;
       const d = Math.hypot(dx, dz);
@@ -182,8 +289,8 @@ export function updateWorldItems(w: World, dt: number): void {
 
 function settle(it: WorldItem) {
   it.thrown = false;
-  it.body.enableCcd(false);
-  it.collider.setActiveEvents(0);
+  it.body?.enableCcd(false);
+  it.collider?.setActiveEvents(0);
 }
 
 /** Spawn the city's litter and props from the seed. */

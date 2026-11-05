@@ -70,6 +70,7 @@
 import type * as THREE from 'three';
 import { TUNING } from '../../tuning';
 import type { SolidRecorder, SolidTags } from '../objects/solidKinds';
+import type { BuildingRecord } from '../interiors/records';
 
 const M = TUNING.map;
 
@@ -288,6 +289,13 @@ export interface CityMap {
   solidTags: SolidTags;
   /** Physics audit mode only (?physaudit=1): every drawn box, cylinder and wall with its solid kind; else null. */
   solidRecorder: SolidRecorder | null;
+  /** One record per building drawn, with the door of the enterable ones (interiors/records.ts); none on the grid yet. */
+  buildingRecords?: BuildingRecord[];
+  /**
+   * Set by the interior system: the floor of a built interior under (x, z) at or below y + a level step (NaN where no
+   * built interior is). heightAt consults it first, so rescues, the camera and dropped items see real floors indoors.
+   */
+  interiorFloorAt?: ((x: number, z: number, y?: number) => number) | null;
 }
 
 // =============================================================================================== lane geometry

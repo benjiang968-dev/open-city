@@ -82,7 +82,11 @@ export const SOLID_KINDS = {
   person: k('person capsule (kinematic)', 'interactive', 'body', true, 0x00e0ff),
   // declared for Stage 2 (not placed yet): street furniture that will be movable or usable
   bin: k('litter bin (Stage 2: dynamic, sleeps until hit)', 'dynamic', 'body', true, 0x707070),
-  door: k('door (Stage 2: interactive, opens)', 'interactive', 'box', true, 0x804020),
+  door: k('door leaf (interactive: kinematic while its interior is built, a box in the doorway otherwise)', 'interactive', 'box', true, 0x804020),
+  // building interiors (systems/interiors/): built near the player in place of the building's core solid
+  interiorWall: k('interior wall (outer walls from inside, partitions, door frames)', 'static', 'box', true, 0xc8a0ff, 0.12),
+  floorSlab: k('floor slab / ceiling of an interior', 'static', 'hull', true, 0xa0d0ff, 0.12),
+  furniture: k('substantial furniture (beds, sofas, counters, shelves, tables)', 'static', 'box', true, 0xff80c0, 0.12),
 } as const satisfies Record<string, SolidKindDef>;
 
 export type SolidKind = keyof typeof SOLID_KINDS;
@@ -115,6 +119,10 @@ export class SolidTags {
   }
   get size(): number {
     return this.byHandle.size;
+  }
+  /** Forget a collider (it was removed from the physics world). */
+  delete(handle: number): void {
+    this.byHandle.delete(handle);
   }
   /** Count per kind name (for reports). */
   counts(): Record<string, number> {

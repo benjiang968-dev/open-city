@@ -68,7 +68,9 @@ export function updateCamera(w: World, dt: number): void {
       c.yaw += diff * Math.min(1, dt * T.footRecenterSpeed);
     }
   }
-  const wantDist = veh ? T.distanceInCar + (veh.spec.halfExtents[2] - 2) * 2 : T.distanceOnFoot;
+  // inside a building: closer, so the rooms (3 to 5 m across) are not all wall
+  const indoor = !veh && !!w.interiors?.inside;
+  const wantDist = veh ? T.distanceInCar + (veh.spec.halfExtents[2] - 2) * 2 : indoor ? TUNING.interiors.cameraDistance : T.distanceOnFoot;
   c.dist += (wantDist - c.dist) * Math.min(1, dt * 3);
 
   desired.set(target.x, target.y + T.heightOffset, target.z);
@@ -83,7 +85,7 @@ export function updateCamera(w: World, dt: number): void {
   const R = w.R;
   const ray = new R.Ray({ x: c.focus.x, y: c.focus.y, z: c.focus.z }, { x: tmp.x, y: tmp.y, z: tmp.z });
   const hit = w.physics.castRay(ray, dist, true, R.QueryFilterFlags.EXCLUDE_DYNAMIC | R.QueryFilterFlags.EXCLUDE_KINEMATIC);
-  if (hit) dist = Math.max(1.2, hit.timeOfImpact - 0.3);
+  if (hit) dist = Math.max(indoor ? TUNING.interiors.cameraMinDistance : 1.2, hit.timeOfImpact - (indoor ? 0.2 : 0.3));
   cam.position.copy(c.focus).addScaledVector(tmp, dist);
   const floor = w.city.heightAt(cam.position.x, cam.position.z, cam.position.y) + 0.4;
   if (cam.position.y < floor) cam.position.y = floor;

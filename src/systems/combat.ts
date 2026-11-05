@@ -144,7 +144,8 @@ export function updateCombat(w: World, dt: number): void {
   for (let i = c.flying.length - 1; i >= 0; i--) {
     const f = c.flying[i];
     const item = f.item;
-    if (!item.thrown || !item.inWorld) { c.flying.splice(i, 1); continue; }
+    if (!item.thrown || !item.inWorld || !item.body) { c.flying.splice(i, 1); continue; }
+    const ib = item.body;
     if (item.speed < CB.minHitSpeed) continue;
     for (const ped of w.peds) {
       if (!ped.active || ped.hidden) continue;
@@ -156,9 +157,9 @@ export function updateCombat(w: World, dt: number): void {
           f.hit.add(~ped.id);
           const d = IT.defs[item.type];
           const dmg = d.hitDamage * THREE.MathUtils.clamp(item.speed / CB.throwMaxSpeed, 0.3, 1);
-          const lv = item.body.linvel();
+          const lv = ib.linvel();
           if (hurtDog(w, ped, 'thrown', dmg * TUNING.hurtFx.strengthPerDamage, lv.x, lv.z, d.name)) {
-            item.body.setLinvel({ x: -lv.x * 0.25, y: Math.abs(lv.y) * 0.3, z: -lv.z * 0.25 }, true);
+            ib.setLinvel({ x: -lv.x * 0.25, y: Math.abs(lv.y) * 0.3, z: -lv.z * 0.25 }, true);
             w.audio.thud?.(item.px, item.pz, 3);
           }
         }
@@ -173,8 +174,8 @@ export function updateCombat(w: World, dt: number): void {
       const dmg = d.hitDamage * THREE.MathUtils.clamp(item.speed / CB.throwMaxSpeed, 0.3, 1);
       hitPed(w, ped, 'thrown', dmg, d.heavy, item.px - dx * 3, item.pz - dz * 3, d.name);
       // bounce off them
-      const lv = item.body.linvel();
-      item.body.setLinvel({ x: -lv.x * 0.25, y: Math.abs(lv.y) * 0.3, z: -lv.z * 0.25 }, true);
+      const lv = ib.linvel();
+      ib.setLinvel({ x: -lv.x * 0.25, y: Math.abs(lv.y) * 0.3, z: -lv.z * 0.25 }, true);
       w.audio.thud?.(item.px, item.pz, 4);
     }
   }
@@ -189,8 +190,8 @@ function throwSelected(w: World, charge: number) {
   it.thrown = true;
   it.thrownAt = w.time;
   it.speed = Math.hypot(t.vx, t.vy, t.vz);
-  it.body.enableCcd(true); // small fast object: don't tunnel through people or poles
-  it.collider.setActiveEvents(w.R.ActiveEvents.COLLISION_EVENTS);
+  it.body?.enableCcd(true); // small fast object: don't tunnel through people or poles
+  it.collider?.setActiveEvents(w.R.ActiveEvents.COLLISION_EVENTS);
   w.combat.flying.push({ item: it, hit: new Set() });
   w.audio.whoosh?.();
 }

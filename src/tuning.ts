@@ -632,18 +632,94 @@ const RAW = {
     dropProbe: 0.6, // metres out on four sides where the surface may not drop or rise by more than maxDrop (map.heightAt is
     maxDrop: 0.5, // the collider surface now, so a sharp ledge just past edgeProbe is no longer smoothed into it)
     wallProbe: 0.2, // metres: an item this close to a wall (or the map edge) on any side would stick into it: left out
-    // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
-    // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
+    // The item catalogue (one entry per art/items.ts ItemId): name, mass (kg), throwable with left click, heavy =
+    // hitting someone with it is assault, hitDamage = NPC damage from a full-speed throw, melee = left click swings it
+    // instead, value = shelf price in dollars (what a shop charges; 0 = worthless), category (inventory grouping)
     defs: {
-      bottle: { name: 'Glass bottle', mass: 0.4, throwable: true, heavy: false, hitDamage: 8 },
-      can: { name: 'Drink can', mass: 0.3, throwable: true, heavy: false, hitDamage: 4 },
-      bag: { name: 'Rubbish bag', mass: 1.5, throwable: true, heavy: false, hitDamage: 2 },
-      box: { name: 'Cardboard box', mass: 0.8, throwable: true, heavy: false, hitDamage: 3 },
-      cone: { name: 'Traffic cone', mass: 1.2, throwable: true, heavy: false, hitDamage: 5 },
-      brick: { name: 'Brick', mass: 2.5, throwable: true, heavy: true, hitDamage: 34 },
-      wrench: { name: 'Wrench', mass: 1.0, throwable: false, heavy: true, hitDamage: 20, melee: { damage: 24, reach: 1.5, cooldown: 0.55, dent: 0.1 } },
-      bat: { name: 'Baseball bat', mass: 0.9, throwable: false, heavy: true, hitDamage: 18, melee: { damage: 32, reach: 1.9, cooldown: 0.7, dent: 0.16 } },
+      bottle: { name: 'Glass bottle', mass: 0.4, throwable: true, heavy: false, hitDamage: 8, value: 3, category: 'drink' },
+      can: { name: 'Drink can', mass: 0.3, throwable: true, heavy: false, hitDamage: 4, value: 1.5, category: 'drink' },
+      bag: { name: 'Rubbish bag', mass: 1.5, throwable: true, heavy: false, hitDamage: 2, value: 0, category: 'litter' },
+      box: { name: 'Cardboard box', mass: 0.8, throwable: true, heavy: false, hitDamage: 3, value: 0, category: 'litter' },
+      cone: { name: 'Traffic cone', mass: 1.2, throwable: true, heavy: false, hitDamage: 5, value: 0, category: 'street' },
+      brick: { name: 'Brick', mass: 2.5, throwable: true, heavy: true, hitDamage: 34, value: 0, category: 'street' },
+      wrench: { name: 'Wrench', mass: 1.0, throwable: false, heavy: true, hitDamage: 20, value: 14, category: 'tool', melee: { damage: 24, reach: 1.5, cooldown: 0.55, dent: 0.1 } },
+      bat: { name: 'Baseball bat', mass: 0.9, throwable: false, heavy: true, hitDamage: 18, value: 25, category: 'sports', melee: { damage: 32, reach: 1.9, cooldown: 0.7, dent: 0.16 } },
+      mug: { name: 'Mug', mass: 0.35, throwable: true, heavy: false, hitDamage: 6, value: 6, category: 'household' },
+      book: { name: 'Book', mass: 0.5, throwable: true, heavy: false, hitDamage: 5, value: 12, category: 'book' },
+      phone: { name: 'Phone', mass: 0.2, throwable: true, heavy: false, hitDamage: 4, value: 180, category: 'electronics' },
+      cereal: { name: 'Box of cereal', mass: 0.5, throwable: true, heavy: false, hitDamage: 2, value: 4.5, category: 'food' },
+      milk: { name: 'Carton of milk', mass: 1.0, throwable: true, heavy: false, hitDamage: 4, value: 2.5, category: 'food' },
+      tin: { name: 'Tin of beans', mass: 0.45, throwable: true, heavy: false, hitDamage: 9, value: 2, category: 'food' },
+      jar: { name: 'Jar of jam', mass: 0.5, throwable: true, heavy: false, hitDamage: 8, value: 4, category: 'food' },
+      chips: { name: 'Bag of crisps', mass: 0.15, throwable: true, heavy: false, hitDamage: 1, value: 2, category: 'food' },
     },
+    wakeRadius: 3.2, // m: items resting in a building get a physics body (asleep) when the player comes this close...
+    sleepRadius: 7, // ...and lose it again (resting, drawn only) beyond this once they have come to rest
+  },
+
+  interiors: {
+    // which buildings get a real doorway and an interior (systems/interiors/): 'pilot' = only pilotIds (the Stage C
+    // house and shop), 'all' = every building a template can plan (Stage D; ?interiors=all tries it)
+    scope: 'pilot' as 'pilot' | 'all',
+    pilotIds: ['b23e0ce279d85', 'be01bab3a0eeb'], // Georgetown data ids: the rowhouse on the 3400 block and the M St shop
+    buildRadius: 32, // m from a door (on foot) at which a building's interior is built (before you can reach the door)
+    retireRadius: 48, // m: an interior further than this from the player (and nobody inside) is taken down again
+    sliceMs: 3, // ms of interior building work per frame at most (Medium; Low uses lowSliceMs)
+    lowSliceMs: 2,
+    maxActive: { low: 2, medium: 4, high: 6 }, // interiors kept built at once (plus any you are inside)
+    lights: { low: 0, medium: 2, high: 3 }, // point lights (no shadows) moved to the rooms nearest you
+    lightsMax: 3, // the pool's size (the most any preset uses): always in the scene, so presets never change the light count
+    openSlots: 6, // built interiors whose windows see through from outside at once (facade shader uniform array size)
+    innerDoorPool: 64, // inner door leaves drawn at once (the built interiors' doors between rooms)
+    glassOpacity: 0.16, // interior window glass
+    carBuildRadius: 15, // m: in a car, a building's interior is built only when you stop this close to its door...
+    carStopSpeed: 3, // ...at less than this speed (m/s)
+    payReach: 1.9, // m from a shop counter's middle where E pays for the goods in your hands
+    lightRange: 7, // m reach of an interior light
+    lightIntensityDay: 2.2, // candela-ish (three.js physical units with decay 2) by day...
+    lightIntensityNight: 5.5, // ...and at night
+    // walls and floors
+    outerWall: 0.3, // m: thickness of an outer wall inside the footprint line
+    partyWall: 0.15, // m: half a party wall (the neighbour has the other half)
+    partition: 0.1, // m: inner partition walls
+    slab: 0.25, // m: floor slab thickness (the ceiling below is its underside)
+    // doors
+    houseDoorWidth: 1.05, // m clear opening of a house front door (capsule 0.70 m + skin)
+    houseDoorHeight: 2.35, // m
+    shopDoorWidth: 1.2, // m: glazed shop door
+    shopDoorHeight: 2.45,
+    innerDoorWidth: 0.95, // m: doorways between rooms
+    innerDoorHeight: 2.1,
+    doorEdgeMin: 0.85, // m: a front door's centre at least this far from the end of its wall (room for the stoop rails)
+    leafThickness: 0.05, // m
+    leafRecess: 0.1, // m behind the facade line where the closed leaf's outer face sits (a recessed entrance)
+    doorReach: 1.7, // m from the player to a door's middle to use it with E
+    doorFacing: 0.25, // how directly you must face it (dot product)
+    doorSwingSpeed: 2.4, // rad/s a door swings
+    doorOpenAngle: 1.62, // rad a door opens to (a little past square)
+    // stairs
+    stairWidth: 1.05, // m (house); shops and offices use stairWidthWide
+    stairWidthWide: 1.2,
+    stairRun: 0.24, // m per tread (a 3.3 m storey: 16 risers of 0.21 m, 15 treads, 3.6 m of run, 42 degrees)
+    stairRiseMax: 0.21, // m per riser at most
+    stairLanding: 0.9, // m clear landing at the foot and head of a flight
+    stairHeadroom: 2.05, // m clear above the treads under the slab above (the hole in the slab starts there)
+    railHeight: 1.0, // m: balustrade round a stairwell on the floor above
+    // house plan (side hall)
+    hallWidth: 1.25, // m: the hall and stair band on the door side
+    corridorWidth: 1.0, // m: the landing beside the stairwell upstairs
+    minRoom: 1.6, // m: no room narrower than this (validation)
+    // shop plan
+    shopAisle: 1.25, // m between shelf runs
+    shopSalesDepth: 0.68, // share of the depth (at most shopSalesMax m) that is sales floor
+    shopSalesMax: 12,
+    // items in interiors
+    itemSlotJitter: 0.03, // m of placement variation of items on a shelf (from the seed)
+    // the camera indoors
+    cameraDistance: 2.6, // m orbit distance inside a building (rooms are 3-5 m across)
+    cameraMinDistance: 0.5, // m: how close a wall may pull the camera in indoors
+    saveDebounce: 2, // s after a pickup, drop or door before the autosave writes
+    autosaveEvery: 60, // s between autosaves while something changed
   },
 
   combat: {
@@ -741,10 +817,10 @@ const RAW = {
   witness: {
     // heat a completed 999 call adds for each kind of crime (40 heat = 1 star). Hurting a dog is taken very
     // personally: 60 heat (2 stars) from one call, more than knocking a person down.
-    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34, dogAttack: 60, carTheft: 30 },
+    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34, dogAttack: 60, carTheft: 30, shoplifting: 14 },
     // metres within which people can witness each crime (they also need line of sight).
     // carTheftAlarm: while a car alarm sounds everyone this close turns to look, so they can witness the theft
-    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40, dogAttack: 45, carTheft: 24, carTheftAlarm: 55 },
+    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40, dogAttack: 45, carTheft: 24, carTheftAlarm: 55, shoplifting: 18 },
     // bystander reaction weights are multiplied by these when the crime is hurting a dog: far more call or square up
     dogAttackReaction: { call: 2, film: 1, flee: 0.5, confront: 2.5 },
     maxWitnesses: 8, // nearest people considered per crime
@@ -925,6 +1001,7 @@ const RAW = {
   },
 
   hud: {
+    helpHintSeconds: 20, // the one-line "Esc: pause, controls and settings" hint shows this long after you start
     minimapRange: 220, // metres shown across the minimap radius
     minimapSize: 190, // pixels
     minimapBaseScale: 1.2, // pixels per metre of the pre-rendered map image behind the minimap

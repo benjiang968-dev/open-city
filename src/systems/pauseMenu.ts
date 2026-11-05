@@ -30,9 +30,11 @@ export function createPauseMenu(w: World): void {
       <button id="pause-mute">Sound: on</button>
       <div class="controls">
         <b>Controls</b><br>
-        W/S walk · A/D turn · Shift run · Space jump / handbrake · E use / talk / pick up<br>
-        1–9 or mouse wheel: hotbar · Left click (or F): throw / swing · Q drop · R flip car · H horn<br>
-        N weather · M mute · \` or F3 stats · F4 collision shapes · Esc or P pause
+        W/S or ↑/↓ walk (drive) · A/D or ←/→ turn (steer) · Shift run · Space jump / handbrake · mouse look (click to lock)<br>
+        E use what you face: open or close a door, get in or out of a car, talk, pick up, pay at a shop counter<br>
+        1–9 or mouse wheel: hotbar · Left click (or F): throw / swing · Q drop the held item · R flip car · H horn<br>
+        N weather · M mute · \` or F3 stats · F4 collision shapes · Esc or P pause<br>
+        Your game saves itself (doors, items, hotbar, where you are) in this browser.
       </div>
       <div class="attrib"></div>
     </div>`;

@@ -3384,3 +3384,4 @@ export async function lookstall(page, S) {
     return { programs0, log, newPrograms: r.info.programs.length - programs0, envRefreshes: w.dayNight.env.refreshes };
   });
 }
+export * from './interiorScenarios.mjs';

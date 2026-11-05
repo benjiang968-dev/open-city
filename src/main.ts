@@ -48,6 +48,11 @@ import { createPhysDebug, physDebugKeys, updatePhysDebug } from './systems/physi
 import { createLook, bakeLook } from './systems/render/look';
 import { warmDraw } from './systems/render/warmup';
 import { separateInstancedDepth } from './systems/render/shadowCasters';
+import { createDoors, updateDoors } from './systems/interiors/doors';
+import { createInteriors, updateInteriors, interiorsSummary } from './systems/interiors/interiors';
+import { openSave, applySave, updateSave, hookSaveEvents, saveBootMessage, writeSave, snapshot } from './systems/save';
+import { mapIdFromUrl } from './systems/map/loadMap';
+import { SOLID_KIND_LIST } from './systems/objects/solidKinds';
 
 async function boot() {
   await RAPIER.init();
@@ -102,8 +107,11 @@ async function boot() {
   const startingSpots = spawnInitialVehicles(w, dealerships.reservedSpots());
   dealerships.stockShowrooms(w);
   createParkedCars(w, [...dealerships.reservedSpots(), ...startingSpots]);
+  w.save = await openSave(mapIdFromUrl(), seed); // IndexedDB (settings stay in localStorage)
   w.itemsState = createItems(w);
   scatterItems(w);
+  w.doors = createDoors(w); // door leaves of the enterable buildings (drawn closed until their interior is built)
+  w.interiors = createInteriors(w);
   w.junctions = createJunctions(w.city);
   w.signalHeads = createSignalHeads(w);
   spawnTraffic(w);
@@ -128,6 +136,8 @@ async function boot() {
   w.inventory = createInventory(w);
   w.combat = createCombat(w);
   createBubbles();
+  applySave(w); // items, hotbar, doors, the player where the save has them (an interior you were in is built first)
+  hookSaveEvents(w);
 
   // the sky light (PMREM environment) exists before anything compiles, so no material recompiles when it arrives
   updateDayNight(w, 0);
@@ -161,6 +171,8 @@ async function boot() {
   (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
+  (window as unknown as { __ocKinds: unknown }).__ocKinds = SOLID_KIND_LIST;
+  (window as unknown as { __ocInteriors: unknown }).__ocInteriors = { summary: () => interiorsSummary(w), save: () => writeSave(w), snapshot: () => snapshot(w) };
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city), roadLimits: TUNING.geo.roadLimits };
   // physics audit (tests only, ?physaudit=1): drawn geometry vs colliders, see systems/physicsAudit.ts
   if (physAuditFromUrl()) {
@@ -190,7 +202,7 @@ async function boot() {
   /** One fixed physics tick for everything that moves bodies. */
   function simStep(step: number) {
     const P = w.prof;
-    P.begin('player'); updatePlayer(w, step); P.end('player');
+    P.begin('player'); updatePlayer(w, step); updateDoors(w, step); P.end('player');
     P.begin('vehicles'); updateVehicles(w, step); P.end('vehicles');
     P.begin('traffic'); updateTraffic(w, step); P.end('traffic');
     P.begin('police-drive'); drivePolice(w, step); P.end('police-drive');
@@ -224,6 +236,7 @@ async function boot() {
       showHud(w.hud, w.cash);
       showMinimap();
       showHotbar();
+      saveBootMessage(w);
       startAudio(w.audio);
       w.cam.yaw = Math.PI / 2;
     }
@@ -266,6 +279,7 @@ async function boot() {
     P.begin('audio'); updateAudio(w, dt); P.end('audio');
     w.events.length = 0;
 
+    P.begin('interiors'); updateInteriors(w, dt); updateSave(w); P.end('interiors');
     P.begin('traffic-ctl'); updateTrafficPopulation(w); updateSignalHeads(w, w.signalHeads); P.end('traffic-ctl');
     P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); if (w.started) updateCombat(w, dt); updateInventory(w); updateBubbles(w); P.end('sync');
     P.begin('fx'); updateHurtFx(w, dt); P.end('fx');

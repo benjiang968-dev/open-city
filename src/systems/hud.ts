@@ -40,7 +40,9 @@ export function createHud(): HudState {
   const job = el('job');
   const toast = el('toast');
   const speedo = el('speedo', 'shadow', '<div class="v">0</div><div class="u">km/h</div><div id="health"><div></div></div>');
-  const help = el('help', 'shadow', 'W/S or ↑/↓ walk · A/D or ←/→ turn · Shift run · Space jump / handbrake · E car / talk / pick up · 1–9 hotbar · Q drop · Click throw/swing<br>Mouse look (click to lock) · R flip car · H horn · F3 or ` stats · F4 collisions · N weather · M mute · Esc pause');
+  // the full controls list lives in the pause / help panel (pauseMenu.ts); during play only this one-line hint shows,
+  // for the first seconds, and the contextual prompt (#prompt) says what E does where you stand
+  const help = el('help', 'shadow', 'Esc: pause, controls and settings');
   for (const d of [cash, stars, clock, help]) d.style.visibility = 'hidden';
   return {
     root, title: document.getElementById('title')!, cash, stars, clock, prompt, job, toast, speedo,
@@ -53,7 +55,7 @@ export function showHud(h: HudState, cash = 0): void {
   h.shownCash = cash;
   h.title.style.display = 'none';
   for (const d of [h.cash, h.stars, h.clock, h.help]) d.style.visibility = 'visible';
-  setTimeout(() => (h.help.style.opacity = '0.4'), 15000);
+  setTimeout(() => (h.help.style.opacity = '0'), TUNING.hud.helpHintSeconds * 1000);
 }
 
 export function toast(w: World, html: string, seconds = 2.5): void {

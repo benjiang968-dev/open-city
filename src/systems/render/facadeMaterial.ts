@@ -5,6 +5,7 @@
 // a room (interior mapping: a ray-box intersection per window, wall colour, floor, ceiling, furniture, blinds) that
 // glows warm at night when that window is lit.
 import * as THREE from 'three';
+import { TUNING } from '../../tuning';
 import { TILE, makeFacadeTexture } from '../map/facadeTex';
 import { OC_FRAG_PARS, OC_VERT_MAIN, OC_VERT_PARS } from './worldMaterial';
 import { SURF } from './surfaces';
@@ -27,7 +28,8 @@ export function makeFacadeMaterial(look: Look, litWindowMat: THREE.MeshBasicMate
 #define S_CLAPBOARD ${SURF.CLAPBOARD}
 #define S_SLATE ${SURF.SLATE}
 #define S_METAL_SEAM ${SURF.METAL_SEAM}
-#define T_PLINTH ${TILE.PLINTH}.0`;
+#define T_PLINTH ${TILE.PLINTH}.0
+#define OC_OPEN ${TUNING.interiors.openSlots}`;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, look.uniforms);
     sh.uniforms.uFacade = { value: tex };
@@ -43,6 +45,8 @@ ${defs}
 ${OC_FRAG_PARS}
 uniform highp sampler2DArray uFacade;
 uniform highp sampler2DArray uFacAux;
+uniform vec4 uOpenA[OC_OPEN];
+uniform vec4 uOpenB[OC_OPEN];
 uniform vec3 uWin;
 uniform float uNight;
 uniform float uDaylight;
@@ -149,6 +153,16 @@ fRough = mix(fRough, mix(0.035, 0.7, fBlind), fGlass);
 fN = normalize(mix(fN, fGlassN, fGlass));
 fAO = mix(fAO, 1.0, fGlass);
 vec3 fEmit = fRoomC * fGlass;
+// a building whose interior is built: its glass is a hole, the real room and its window pane show through
+if (fGlass > 0.5) {
+  for (int i = 0; i < OC_OPEN; i++) {
+    vec4 oA = uOpenA[i], oB = uOpenB[i];
+    if (oB.x <= 0.0) continue;
+    vec2 oD = vOcP.xz - oA.xy;
+    float oU = dot(oD, oA.zw), oV = dot(oD, vec2(-oA.w, oA.z));
+    if (abs(oU) < oB.x && abs(oV) < oB.y && vOcP.y > oB.z && vOcP.y < oB.w) discard;
+  }
+}
 diffuseColor.rgb *= fAlb;`)
       .replace('#include <color_fragment>', '')
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(fRough, 0.03, 1.0);')

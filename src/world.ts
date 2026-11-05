@@ -31,6 +31,9 @@ import type { ParkedState } from './systems/parkedCars';
 import type { HurtFxState } from './systems/hurtFx';
 import type { PhysDebugState } from './systems/physicsDebug';
 import type { Look } from './systems/render/look';
+import type { DoorsState } from './systems/interiors/doors';
+import type { InteriorsState } from './systems/interiors/interiors';
+import type { SaveState } from './systems/save';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -52,7 +55,9 @@ export type GameEvent =
    * and is coming after you; alarm: its alarm is sounding; forced: you smashed the window to get in.
    */
   | { type: 'carTheft'; x: number; z: number; carId: number; ownerId: number; ownerSaw: boolean; alarm: boolean; forced: boolean }
-  | { type: 'policeCalled'; x: number; z: number; byPed: number };
+  | { type: 'policeCalled'; x: number; z: number; byPed: number }
+  /** You left a shop carrying goods you had not paid for. */
+  | { type: 'shoplifting'; x: number; z: number; items: number };
 
 export interface World {
   seed: number;
@@ -75,6 +80,12 @@ export interface World {
   combat: CombatState;
   crowd: CrowdRender;
   hurtFx: HurtFxState;
+  /** Door leaves of enterable buildings (interiors/doors.ts). */
+  doors: DoorsState;
+  /** Building interiors: which are built, the one you are in (interiors/interiors.ts). */
+  interiors: InteriorsState;
+  /** The IndexedDB save (save.ts). */
+  save: SaveState;
   /** F4 collision view (physicsDebug.ts). */
   physDebug: PhysDebugState;
   /** Crowd density from the map: busyness per walk link, the target around the player (pedDensity.ts). */

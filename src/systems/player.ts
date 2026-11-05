@@ -17,6 +17,8 @@ import { shovePed } from './npcReactions';
 import { carPrompt, useCar, type BreakIn } from './carTheft';
 import { showroomPrompt, buyDisplayCar } from './economy/dealership';
 import type { KerbHit } from './map/cityMap';
+import { doorCentre, doorTarget, toggleDoor } from './interiors/doors';
+import { payAtCounter, useDoor } from './interiors/interiors';
 
 const P = TUNING.player;
 const KERB: KerbHit = { x: 0, y: 0, z: 0, heading: 0, edge: -1, s: 0, dist: 0 };
@@ -148,9 +150,29 @@ export function updatePlayer(w: World, dt: number): void {
   const pedD = ped ? Math.hypot(ped.pos.x - pos.x, ped.pos.z - pos.z) : Infinity;
   const item = w.chat.open ? null : w.itemsState.target;
   const itemD = item ? Math.hypot(item.px - pos.x, item.pz - pos.z) : Infinity;
-  if (item && itemD <= pedD && itemD <= bd + 0.3) {
+  // a door of an enterable building you face within reach (interiors/doors.ts)
+  const door = w.chat.open ? null : doorTarget(w);
+  w.doors.target = door;
+  let doorD = Infinity;
+  if (door) { const [dx, dz] = doorCentre(door); doorD = Math.hypot(dx - pos.x, dz - pos.z) - 0.25; }
+  const pay = w.chat.open ? null : w.interiors.pay;
+  if (door && doorD <= itemD && doorD <= pedD && doorD <= bd + 0.3) {
+    p.prompt = door.locked ? 'Locked' : `E  ${door.open ? 'close' : 'open'} door`;
+    if (!door.locked && act.interact(inp)) {
+      if (useDoor(w, door)) toggleDoor(w, door);
+      return;
+    }
+  } else if (pay && !(item && itemD < 0.9)) {
+    p.prompt = `E  pay $${pay.total.toFixed(2)} for ${pay.items.length} item${pay.items.length > 1 ? 's' : ''}`;
+    if (act.interact(inp)) {
+      payAtCounter(w);
+      return;
+    }
+  } else if (item && itemD <= pedD && itemD <= bd + 0.3) {
     const room = freeSlot(w) >= 0;
-    p.prompt = room ? `E  pick up ${TUNING.items.defs[item.type].name}` : 'Hotbar full · Q drops the selected item';
+    const def = TUNING.items.defs[item.type];
+    const price = item.owner.startsWith('business:') && def.value > 0 ? ` ($${def.value.toFixed(2)})` : '';
+    p.prompt = room ? `E  pick up ${def.name.toLowerCase()}${price}` : 'Hotbar full · Q drops the selected item';
     if (room && act.interact(inp)) {
       pickUp(w, item);
       return;

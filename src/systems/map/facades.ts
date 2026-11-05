@@ -13,6 +13,9 @@ import { TILE } from './facadeTex';
 import { POI_NAMES, poiName } from '../../data/poiNames';
 import { TUNING } from '../../tuning';
 import { facadeColour } from '../render/palette';
+import { chooseTemplate, planDoor, recordId, type BuildingRecord, type DoorRec, type WallRec } from '../interiors/records';
+import { clipHalf, type P2 } from '../interiors/geom';
+import { planInterior } from '../interiors/templates';
 
 // ----------------------------------------------------------------------------------------- art constants
 const STOREY = 3.2; // m
@@ -28,6 +31,8 @@ const STONE = [0xc9bfae, 0xd6ccba, 0xb9b09f, 0xa79f92];
 const MODERN = [0xd8cdb6, 0xc8c2b5, 0xb8b4ab, 0xe0d8c4, 0x9ea4a6];
 const ROOF_FLAT = [0x8d8a84, 0x9a958c, 0x7e7b76, 0xa39c90, 0x8f5a4a, 0x6f7f72, 0xa6aaae];
 const ROOF_PITCH = [0x4a4f57, 0x55504b, 0x3f4a52, 0x6b4a3c];
+/** Leaf colours of the painted door tiles (facadeTex.ts door()), by tile id. */
+const DOOR_COLOURS: Record<number, number> = { [TILE.DOOR_BLACK]: 0x1d2023, [TILE.DOOR_RED]: 0x7b2220, [TILE.DOOR_NAVY]: 0x1f2c47, [TILE.DOOR_GREEN]: 0x1f3f2d };
 const AWNINGS = [0x1f5c45, 0x7a2430, 0x23395b, 0x1c1c1f, 0xd8cfb8, 0xb5552e, 0xc79a2e, 0x4f6d3a];
 export const SIGN_CATS = /^(amenity=(cafe|restaurant|fast_food|bar|pub|ice_cream|bank|pharmacy|cinema|nightclub)|shop=|tourism=hotel)/;
 const AWNING_CATS = /^(amenity=(cafe|restaurant|bar|pub|ice_cream)|shop=(bakery|deli|florist|wine|clothes|shoes|antiques|art|gift|books))/;
@@ -110,6 +115,9 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   const signBuf = new SignBuf();
 
   let extraTris = 0;
+  /** One record per building drawn (interiors/records.ts): what the interior system builds from. */
+  const records: BuildingRecord[] = [];
+  const IN = TUNING.interiors;
   const stoopBottoms: number[] = [];
   /** per stoop: door x, z on the wall line, landing height, outward normal x, z, reach of the last step, foot height, steps */
   const stoopInfo: number[] = [];
@@ -156,10 +164,22 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       if (d < fd) { fd = d; front = w; }
     }
     front.front = true;
-    // ground levels
+    // the building's record, and its front door when a template can plan an interior here (interiors/records.ts)
+    const myPois = poisBy.get(b.id) ?? [];
+    const rec: BuildingRecord = {
+      id: recordId(b.id), dataId: b.id, pts: P.map((p) => [p[0], p[1]] as P2), type: b.type, levels: Math.max(1, b.levels), cx, cz,
+      yMin: 0, y0: 0, yTop: 0, top: 0, storeys: [], front: walls.indexOf(front), template: key ? null : chooseTemplate(b.id, b.type, myPois.map((p) => p.cat)),
+      walls: walls.map((w): WallRec => ({ ax: w.ax, az: w.az, bx: w.bx, bz: w.bz, len: w.len, ux: w.ux, uz: w.uz, nx: w.nx, nz: w.nz, party: w.party, street: w.street, front: w.front, bands: [] })),
+      door: null, places: myPois.map((p) => p.id), cats: myPois.map((p) => p.cat), wallColour: 0, plan: null, planErrors: [], core: [], plug: null,
+    };
+    records.push(rec);
+    let door: DoorRec | null = planDoor(rec, 0x1d2023);
+    if (!door) rec.template = null;
+    rec.door = door;
+    // ground levels (an enterable building's floor is set from the pavement at its door, not the wall's middle)
     let yMin = Infinity;
     for (const p of P) yMin = Math.min(yMin, ras.heightAt(p[0] + (cx - p[0]) * 0.05, p[1] + (cz - p[1]) * 0.05));
-    const fmx = (front.ax + front.bx) / 2, fmz = (front.az + front.bz) / 2;
+    const fmx = door ? door.x : (front.ax + front.bx) / 2, fmz = door ? door.z : (front.az + front.bz) / 2;
     const ySide = ras.heightAt(fmx + front.nx * 1.6, fmz + front.nz * 1.6);
     yMin = Math.min(yMin, ySide) - 0.6;
     const t = b.type;
@@ -232,6 +252,23 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     if (key === 'boathouse') { col = hx(pick([0xf1efe6, 0xdfe7da, 0xe8dcc4])); tileUp = TILE.ROW_WIN; tileGround = TILE.BOATDOOR; tileDoor = TILE.BOATDOOR; roof = 'gable'; cornice = false; bay = 4.2; }
     if (key === 'stack') { smokestack(b, cx, cz, yMin, ySide); return; }
     const seedByte = hashStr(b.id) & 255;
+    {
+      const gH0 = ground || STOREY;
+      rec.yMin = yMin; rec.y0 = y0; rec.yTop = yTop; rec.top = yTop + (roof === 'flat' ? PARAPET : 2); rec.wallColour = col;
+      for (let f = 0; f < levels; f++) rec.storeys.push(f === 0 ? y0 : y0 + gH0 + (f - 1) * STOREY);
+      if (door) {
+        door.sill = y0;
+        door.colour = door.style === 'shop' ? 0x2b2b2b : DOOR_COLOURS[tileDoor] ?? 0x1d2023;
+        // the interior is planned now, before the doorway is cut: a building whose plan fails keeps its solid (and its
+        // painted door), and the reasons are kept on the record for the coverage report
+        const plan = planInterior(rec);
+        if (!plan || plan.errors.length) {
+          rec.planErrors = plan ? plan.errors : ['no plan'];
+          rec.door = door = null;
+          rec.template = null;
+        } else rec.plan = plan;
+      }
+    }
     const plainTile = t === 'civic' || t === 'apartments' || westEnd || t === 'university' ? TILE.SMOOTH : key === 'oldstone' ? TILE.STONE : TILE.PLAIN;
     if (key === 'oldstone') tileSide = TILE.ROW_WIN;
     // ---- walls
@@ -253,9 +290,17 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       const doorBay = isFront ? (t === 'terrace' || t === 'house' ? (rnd() < 0.5 ? 0 : nb - 1) : Math.floor(nb / 2)) : 255;
       const gTile = isFront || w.street ? tileGround : t === 'retail' || t === 'commercial' ? tileSide : tileGround === TILE.SHOP ? TILE.ROW_WIN : tileGround;
       const gH = ground || STOREY;
-      fquad(fac, w, y0, y0 + gH, 0, nb, 0, 1, col, gTile, isFront ? tileDoor : gTile, doorBay, seedByte);
+      const wr = rec.walls[walls.indexOf(w)];
+      if (door && isFront) doorWall(fac, grd, w, wr, door, nb, bay, y0, gH, col, gTile, plainTile, seedByte);
+      else {
+        fquad(fac, w, y0, y0 + gH, 0, nb, 0, 1, col, gTile, isFront ? tileDoor : gTile, doorBay, seedByte);
+        wr.bands.push({ s0: 0, s1: w.len, y0, y1: y0 + gH, tile: gTile, cols: nb, rows: 1 });
+      }
       // upper floors
-      if (levels > 1) fquad(fac, w, y0 + gH, yTop, 0, nb, 0, levels - 1, col, tileUp, tileUp, 255, seedByte);
+      if (levels > 1) {
+        fquad(fac, w, y0 + gH, yTop, 0, nb, 0, levels - 1, col, tileUp, tileUp, 255, seedByte);
+        wr.bands.push({ s0: 0, s1: w.len, y0: y0 + gH, y1: yTop, tile: tileUp, cols: nb, rows: levels - 1 });
+      }
       // parapet band
       if (roof === 'flat') fquad(fac, w, yTop, yTop + PARAPET, 0, w.len / 3, 0, PARAPET / STOREY, col, plainTile, plainTile, 255, seedByte);
       // cornice on street walls
@@ -282,7 +327,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           }
         }
         if (isFront && doorBay !== 255 && stoop > 0.2 && (t === 'terrace' || t === 'house')) {
-          const s = (doorBay + 0.5) * bw;
+          const s = door ? door.s : (doorBay + 0.5) * bw;
           const px = w.ax + w.ux * s, pz = w.az + w.uz * s;
           // the flight runs from the door sill down to the pavement in front of THIS door (on a sloping street that
           // differs from the wall's middle, which set the floor height): rise and step count from the ground there
@@ -402,7 +447,8 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       hv = Math.max(hv, Math.abs((p[0] - cx) * w0.nx + (p[1] - cz) * w0.nz));
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
-    if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
+    if (door) openCollider(rec, door, P, yMin, y0, top);
+    else if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
     else {
       // a prism is a convex hull: over an L- or U-shaped footprint (a third of the real buildings) it filled the notch,
       // an invisible wall across courtyards, driveways and pavements. Concave footprints are cut into convex pieces.
@@ -413,6 +459,100 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   }
 
   // -------------------------------------------------------------------------------------------- helpers
+  /**
+   * The front wall of an enterable building, ground floor: a real opening for the door (left, right and above it),
+   * the reveal (jambs, head, sill) through the wall's thickness and a door case. Houses: a plain door zone at the
+   * door's end of the wall and the window bays beside it; shops: the shopfront tiles across the wall with the door
+   * cut out of them. The window bands are recorded for the interior's openings.
+   */
+  function doorWall(fac: MeshBuf, grd: MeshBuf, w: Wall, wr: WallRec, d: DoorRec, nb: number, bay: number, y0: number, gH: number, col: number, gTile: number, plainTile: number, seedByte: number) {
+    const sL = d.s - d.width / 2, sR = d.s + d.width / 2, yH = y0 + d.height, yG = y0 + gH;
+    const flip = (w.bz - w.az) * w.nx - (w.bx - w.ax) * w.nz > 0;
+    if (d.style === 'house') {
+      const z0 = d.atStart ? 0 : Math.max(0, sL - 0.35), z1 = d.atStart ? Math.min(w.len, sR + 0.35) : w.len;
+      // the door zone (plain wall round the opening)
+      fspan(fac, w, z0, sL, y0, yG, 2.2, 0, 0, 1, col, plainTile, plainTile, 255, seedByte);
+      fspan(fac, w, sR, z1, y0, yG, 2.2, 0, 0, 1, col, plainTile, plainTile, 255, seedByte);
+      fspan(fac, w, sL, sR, yH, yG, 2.2, 0, (yH - y0) / gH, 1, col, plainTile, plainTile, 255, seedByte);
+      // the window bays beside it
+      const a = d.atStart ? z1 : 0, b2 = d.atStart ? w.len : z0;
+      if (b2 - a > 0.05) {
+        const nW = b2 - a < 1.3 ? 0 : Math.max(1, Math.round((b2 - a) / bay));
+        const tile = nW ? gTile : plainTile, cols = nW || 1;
+        fspan(fac, w, a, b2, y0, yG, (b2 - a) / cols, flip ? b2 : a, 0, 1, col, tile, tile, 255, seedByte);
+        if (nW) wr.bands.push({ s0: a, s1: b2, y0, y1: yG, tile: gTile, cols, rows: 1 });
+      }
+    } else {
+      const bw = w.len / nb, ref = flip ? w.len : 0;
+      fspan(fac, w, 0, sL, y0, yG, bw, ref, 0, 1, col, gTile, gTile, 255, seedByte);
+      fspan(fac, w, sR, w.len, y0, yG, bw, ref, 0, 1, col, gTile, gTile, 255, seedByte);
+      fspan(fac, w, sL, sR, yH, yG, bw, ref, (yH - y0) / gH, 1, col, gTile, gTile, 255, seedByte);
+      wr.bands.push({ s0: 0, s1: w.len, y0, y1: yG, tile: gTile, cols: nb, rows: 1 });
+    }
+    // reveal through the wall: jambs, head, sill (painted timber for houses, dark metal for shops)
+    const D = IN.outerWall;
+    const rc = d.style === 'house' ? lin(0xf2efe6) : lin(0x2f3236);
+    const ix = -w.nx, iz = -w.nz;
+    const Pw = (s: number, v: number): [number, number] => [w.ax + w.ux * s + ix * v, w.az + w.uz * s + iz * v];
+    chunks.tag('decor');
+    const [l0x, l0z] = Pw(sL, 0), [l1x, l1z] = Pw(sL, D), [r0x, r0z] = Pw(sR, 0), [r1x, r1z] = Pw(sR, D);
+    grd.quad(l0x, y0, l0z, l1x, y0, l1z, l1x, yH, l1z, l0x, yH, l0z, rc, w.ux, 0, w.uz);
+    grd.quad(r0x, y0, r0z, r1x, y0, r1z, r1x, yH, r1z, r0x, yH, r0z, rc, -w.ux, 0, -w.uz);
+    grd.quad(l0x, yH, l0z, r0x, yH, r0z, r1x, yH, r1z, l1x, yH, l1z, rc, 0, -1, 0);
+    const sill = lin(0xb8b1a4);
+    grd.quad(l0x, y0 + 0.004, l0z, r0x, y0 + 0.004, r0z, r1x, y0 + 0.004, r1z, l1x, y0 + 0.004, l1z, sill, 0, 1, 0);
+    // door case proud of the wall (architrave and head)
+    const cw = d.style === 'house' ? 0.14 : 0.07, out = 0.04;
+    const [cmx, cmz] = Pw(d.s, -out / 2);
+    grd.obox(cmx - w.ux * (d.width / 2 + cw / 2), y0, cmz - w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yH + cw, w.ux, w.uz, rc);
+    grd.obox(cmx + w.ux * (d.width / 2 + cw / 2), y0, cmz + w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yH + cw, w.ux, w.uz, rc);
+    grd.obox(cmx, yH, cmz, d.width / 2 + cw, out / 2 + (d.style === 'house' ? 0.03 : 0), yH + cw + (d.style === 'house' ? 0.06 : 0), w.ux, w.uz, rc);
+    chunks.tag('untagged');
+  }
+  /** A facade quad over part of a wall: s from s0 to s1 (from the wall's a end), tile u = (s - sRef) / bw read from the
+   * left as seen from outside, v from v0 at y0 to v1 at y1. */
+  function fspan(buf: MeshBuf, w: Wall, s0: number, s1: number, y0: number, y1: number, bw: number, sRef: number, v0: number, v1: number, col: number, tileA: number, tileB: number, alt: number, seedByte: number) {
+    if (y1 - y0 < 0.02 || s1 - s0 < 0.01) return;
+    const flip = (w.bz - w.az) * w.nx - (w.bx - w.ax) * w.nz > 0;
+    const sl = flip ? s1 : s0, sr = flip ? s0 : s1;
+    const lx = w.ax + w.ux * sl, lz = w.az + w.uz * sl, rx = w.ax + w.ux * sr, rz = w.az + w.uz * sr;
+    if (buf.rec) { const k = buf.rec.kind; buf.rec.tag('building'); buf.rec.wall(lx, lz, rx, rz, y0, y1, y0, y1, w.nx, w.nz); buf.rec.kind = k; }
+    buf.exA = tileA; buf.exB = tileB; buf.exC = alt; buf.exD = seedByte;
+    const tl = (flip ? sRef - sl : sl - sRef) / bw, tr = (flip ? sRef - sr : sr - sRef) / bw;
+    const nx = w.nx, nz = w.nz;
+    buf.vert(lx, y0, lz, nx, 0, nz, col, tl, v0); buf.vert(rx, y0, rz, nx, 0, nz, col, tr, v0); buf.vert(rx, y1, rz, nx, 0, nz, col, tr, v1);
+    buf.vert(lx, y0, lz, nx, 0, nz, col, tl, v0); buf.vert(rx, y1, rz, nx, 0, nz, col, tr, v1); buf.vert(lx, y1, lz, nx, 0, nz, col, tl, v1);
+  }
+  /**
+   * Collision of an enterable building: a permanent plinth up to the ground floor (it is the ground floor's floor),
+   * and above it the core, the footprint's convex pieces with the doorway notched out in front of the closed leaf,
+   * plus a box where the closed leaf is. The interior system disables the core (record.core) once the interior's
+   * walls, floors and door exist, and enables it again before taking the interior down.
+   */
+  function openCollider(rec: BuildingRecord, d: DoorRec, P: Pt[], yMin: number, y0: number, top: number) {
+    const pieces = convexPieces(P);
+    for (const piece of pieces) phys.prism(piece.flat(), yMin, y0, 'building');
+    const ux = d.ux, uz = d.uz, ix = -d.nx, iz = -d.nz;
+    const cu = d.x * ux + d.z * uz, cv = d.x * ix + d.z * iz;
+    const uL = cu - d.width / 2, uR = cu + d.width / 2, vLeaf = cv + IN.leafRecess;
+    const add = (Q: P2[], ya: number, yb: number) => {
+      if (Q.length < 3 || footArea(Q as Pt[]) < 0.01) return;
+      const c = phys.prism(Q.flat(), ya, yb, 'building');
+      if (c) rec.core.push(c);
+    };
+    for (const piece of pieces) {
+      const back = clipHalf(piece as P2[], ix, iz, vLeaf);
+      const front = clipHalf(piece as P2[], -ix, -iz, -vLeaf);
+      add(back, y0, top);
+      if (front.length < 3) continue;
+      add(clipHalf(front, -ux, -uz, -uL), y0, top);
+      add(clipHalf(front, ux, uz, uR), y0, top);
+      add(clipHalf(clipHalf(front, ux, uz, uL), -ux, -uz, -uR), y0 + d.height, top);
+    }
+    const t = IN.leafThickness, o = IN.leafRecess + t / 2;
+    rec.plug = phys.box(d.x + ix * o, y0 + d.height / 2, d.z + iz * o, d.width / 2, d.height / 2, t / 2, ux, uz, 'door');
+    rec.core.push(rec.plug);
+  }
   /**
    * A stoop's colliders: one convex ramp under the steps (flat on the landing, then down through the middle of each
    * tread, so feet sink or float at most half a riser; a half-riser lip at the foot that autostep takes), and a thin
@@ -716,6 +856,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   if (signMesh) { root.add(signMesh); extraTris += signBuf.count * 2; }
   return {
     extraTris,
+    records,
     stoops: Float32Array.from(stoopBottoms),
     stoopInfo: Float32Array.from(stoopInfo),
     update(_cam: THREE.Vector3, _detail: number) { /* chunk LOD is handled by the world */ },
@@ -728,7 +869,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
  * triangles merged while the union stays convex (Hertel-Mehlhorn). A footprint the triangulation cannot cover (self-
  * intersecting data) stays whole (its hull, as before).
  */
-function convexPieces(P: Pt[]): Pt[][] {
+export function convexPieces(P: Pt[]): Pt[][] {
   const n = P.length;
   const cross = (a: Pt, b: Pt, c: Pt) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
   const area2 = (idx: number[]) => { let a = 0; for (let i = 0; i < idx.length; i++) { const p = P[idx[i]], q = P[idx[(i + 1) % idx.length]]; a += p[0] * q[1] - q[0] * p[1]; } return a; };

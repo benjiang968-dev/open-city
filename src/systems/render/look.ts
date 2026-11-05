@@ -27,6 +27,12 @@ export interface LookUniforms {
   uTime: THREE.IUniform<number>;
   /** share of the sky light (environment) on diffuse surfaces; specular reflections keep all of it */
   uSkyDiffuse: THREE.IUniform<number>;
+  /**
+   * Built interiors whose windows see through from outside (interiors/interiors.ts): per slot the footprint's box,
+   * A = (centre x, centre z, axis x, axis z), B = (half length, half depth, bottom y, top y); B = 0: slot unused.
+   */
+  uOpenA: THREE.IUniform<THREE.Vector4[]>;
+  uOpenB: THREE.IUniform<THREE.Vector4[]>;
 }
 
 export interface Look {
@@ -69,6 +75,8 @@ export function createLook(quality: LookQuality): Look {
       uAlbTex: { value: null }, uNrmTex: { value: null }, uMacro: { value: null }, uSurfTab: { value: surfaceTable() },
       uWet: { value: 0 }, uSnow: { value: 0 }, uDetail: { value: 1 }, uNight: { value: 0 }, uDaylight: { value: 1 },
       uWin: { value: new THREE.Color(0x8899aa) }, uTime: { value: 0 }, uSkyDiffuse: { value: 1 },
+      uOpenA: { value: Array.from({ length: TUNING.interiors.openSlots }, () => new THREE.Vector4()) },
+      uOpenB: { value: Array.from({ length: TUNING.interiors.openSlots }, () => new THREE.Vector4()) },
     },
     maps: null,
     quality,

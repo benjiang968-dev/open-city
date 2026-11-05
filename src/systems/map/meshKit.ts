@@ -321,13 +321,13 @@ export class PhysChunks {
     return c;
   }
   /** Oriented box: centre (cx, cy, cz), half extents (hx along (ux,uz), hy up, hz across). */
-  box(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ux = 1, uz = 0, kind: SolidKind = 'untagged') {
+  box(cx: number, cy: number, cz: number, hx: number, hy: number, hz: number, ux = 1, uz = 0, kind: SolidKind = 'untagged'): RAPIER.Collider {
     const yaw = Math.atan2(-uz, ux);
     const d = this.R.ColliderDesc.cuboid(hx, hy, hz).setTranslation(cx, cy, cz).setRotation({ x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) });
-    this.add(d, cx, cz, kind);
+    return this.add(d, cx, cz, kind);
   }
   /** Vertical prism over a convex footprint (x, z pairs), from y0 to y1: a convex hull collider. */
-  prism(pts: ArrayLike<number>, y0: number, y1: number, kind: SolidKind = 'untagged') {
+  prism(pts: ArrayLike<number>, y0: number, y1: number, kind: SolidKind = 'untagged'): RAPIER.Collider | null {
     const n = pts.length / 2;
     const v = new Float32Array(n * 6);
     let cx = 0, cz = 0;
@@ -337,8 +337,7 @@ export class PhysChunks {
       cx += pts[i * 2] / n; cz += pts[i * 2 + 1] / n;
     }
     const d = this.R.ColliderDesc.convexHull(v);
-    if (d) this.add(d, cx, cz, kind);
-    return !!d;
+    return d ? this.add(d, cx, cz, kind) : null;
   }
   /** Convex hull of arbitrary points (x, y, z triples): ramps under steps, rails, canopies. */
   hull(pts: ArrayLike<number>, kind: SolidKind): boolean {

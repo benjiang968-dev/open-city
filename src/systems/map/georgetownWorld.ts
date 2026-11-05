@@ -29,6 +29,7 @@ import { upgradePropMaterials } from '../render/propMaterials';
 import { createTreeLod } from '../render/trees';
 import { upgradeWater } from '../render/water';
 import { SURF, surf } from '../render/surfaces';
+import type { BuildingRecord } from '../interiors/records';
 
 const G = TUNING.geo;
 
@@ -157,6 +158,8 @@ export interface GeoWorld {
   audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array; stoopInfo: Float32Array };
   /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
   droppedBuildings: ReadonlySet<string>;
+  /** One record per building drawn (walls, floors, windows, the door of enterable ones; interiors/records.ts). */
+  buildingRecords: BuildingRecord[];
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number; surfaceTris: number };
   /** Collider handle -> solid kind of every static collider the world made. */
   solidTags: SolidTags;
@@ -455,6 +458,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     omitted,
     audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops, stoopInfo: bld.stoopInfo },
     droppedBuildings: dropped,
+    buildingRecords: bld.records,
     stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris, surfaceTris: surf.count },
     solidTags: phys.tags,
     solidRecorder: chunks.rec,

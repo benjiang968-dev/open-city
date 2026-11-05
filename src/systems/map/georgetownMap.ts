@@ -269,7 +269,10 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   // ------------------------------------------------------------------ lookups
   const isBlocked = (x: number, z: number) => x < bounds.minX || x > bounds.maxX || z < bounds.minZ || z > bounds.maxZ || geo.isBlocked(x, z);
   /** Terrain without y; with y, the deck or ground under a point at that height (see LEVELS in cityMap.ts). */
+  /** Built interiors (systems/interiors/interiors.ts): a floor inside an open building wins over the ground. */
+  let interiorFloor: ((x: number, z: number, y?: number) => number) | null = null;
   const heightAt = (x: number, z: number, y?: number) => {
+    if (interiorFloor) { const f = interiorFloor(x, z, y); if (f === f) return f; }
     if (y === undefined || y !== y) return geo.heightAt(x, z);
     const near = geo.walkSurfaceAt(x, z, y);
     return near <= y + M.levelStep ? near : geo.heightAt(x, z); // a deck overhead (falling past it): the ground
@@ -437,6 +440,9 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     setQuality: (q) => geo.setQuality(q),
     solidTags: geo.solidTags,
     solidRecorder: geo.solidRecorder,
+    buildingRecords: geo.buildingRecords,
+    get interiorFloorAt() { return interiorFloor; },
+    set interiorFloorAt(f: ((x: number, z: number, y?: number) => number) | null) { interiorFloor = f; },
     geo,
     buildStats: stats,
   };

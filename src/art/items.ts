@@ -2,8 +2,11 @@
 import * as THREE from 'three';
 import { GeoBuilder } from './geo';
 
-export type ItemId = 'bottle' | 'can' | 'bag' | 'box' | 'cone' | 'brick' | 'wrench' | 'bat';
-export const ITEM_IDS: ItemId[] = ['bottle', 'can', 'bag', 'box', 'cone', 'brick', 'wrench', 'bat'];
+// The catalogue's gameplay numbers (name, mass, value, category, use) live in TUNING.items.defs, one entry per id.
+// Street items: bottle can bag box cone brick wrench bat. Interior items (systems/interiors/: kitchens, shelves, shops):
+// mug book phone cereal milk tin jar chips.
+export type ItemId = 'bottle' | 'can' | 'bag' | 'box' | 'cone' | 'brick' | 'wrench' | 'bat' | 'mug' | 'book' | 'phone' | 'cereal' | 'milk' | 'tin' | 'jar' | 'chips';
+export const ITEM_IDS: ItemId[] = ['bottle', 'can', 'bag', 'box', 'cone', 'brick', 'wrench', 'bat', 'mug', 'book', 'phone', 'cereal', 'milk', 'tin', 'jar', 'chips'];
 
 export interface ItemArt {
   geo: THREE.BufferGeometry;
@@ -98,6 +101,54 @@ export function buildItemArt(id: ItemId): ItemArt {
       b.box(0.1, -0.012, 0.012, 0.15, 0.012, 0.04, steel);
       b.box(-0.15, -0.013, -0.019, -0.04, 0.013, 0.019, C('#c1121f')); // grip
       return { geo: b.build(), collider: { kind: 'box', hx: 0.15, hy: 0.013, hz: 0.04 }, restY: 0.013, restRotZ: 0, holdPos: [0, -0.66, 0.05], holdRot: [0, 0, -Math.PI / 2] };
+    }
+    case 'mug': {
+      const b = new GeoBuilder();
+      b.box(0.04, -0.025, -0.008, 0.062, 0.03, 0.008, C('#e8e4da'));
+      return { geo: merge([cylinder(0.04, 0.042, 0.095, 12, C('#e8e4da')), cylinder(0.036, 0.036, 0.004, 10, C('#4a3324'), 0.042), b.build()]), collider: { kind: 'cyl', r: 0.042, hh: 0.048 }, restY: 0.048, restRotZ: 0, holdPos: [0, -0.62, 0.04], holdRot: [0, 0, 0] };
+    }
+    case 'book': {
+      const b = new GeoBuilder();
+      b.box(-0.02, -0.115, -0.08, 0.02, 0.115, 0.08, C('#7a2c2c'), C('#f1ebdc'));
+      b.box(-0.021, -0.112, -0.081, 0.021, 0.112, -0.075, C('#6a2424'));
+      return { geo: b.build(), collider: { kind: 'box', hx: 0.02, hy: 0.115, hz: 0.08 }, restY: 0.115, restRotZ: 0, holdPos: [0, -0.62, 0.05], holdRot: [0, 0, 0] };
+    }
+    case 'phone': {
+      const b = new GeoBuilder();
+      b.box(-0.037, -0.004, -0.075, 0.037, 0.004, 0.075, C('#16181b'), C('#2a2d31'));
+      b.box(-0.033, 0.004, -0.068, 0.033, 0.0045, 0.068, C('#20303e'));
+      return { geo: b.build(), collider: { kind: 'box', hx: 0.037, hy: 0.0045, hz: 0.075 }, restY: 0.0045, restRotZ: 0, holdPos: [0, -0.64, 0.05], holdRot: [Math.PI / 2, 0, 0] };
+    }
+    case 'cereal': {
+      const b = new GeoBuilder();
+      b.box(-0.095, -0.14, -0.035, 0.095, 0.14, 0.035, C('#e0a62c'), C('#c8402e'));
+      b.box(-0.06, 0.0, 0.0355, 0.06, 0.08, 0.036, C('#f4ecd6'));
+      return { geo: b.build(), collider: { kind: 'box', hx: 0.095, hy: 0.14, hz: 0.035 }, restY: 0.14, restRotZ: 0, holdPos: [0, -0.7, 0.06], holdRot: [0, Math.PI / 2, 0] };
+    }
+    case 'milk': {
+      const b = new GeoBuilder();
+      b.box(-0.035, -0.1, -0.035, 0.035, 0.07, 0.035, C('#f4f4f0'), C('#3a6fb0'));
+      b.box(-0.035, 0.07, -0.02, 0.035, 0.1, 0.02, C('#e9e9e4'));
+      return { geo: b.build(), collider: { kind: 'box', hx: 0.035, hy: 0.1, hz: 0.035 }, restY: 0.1, restRotZ: 0, holdPos: [0, -0.66, 0.04], holdRot: [0, 0, 0] };
+    }
+    case 'tin': {
+      return {
+        geo: merge([cylinder(0.038, 0.038, 0.1, 12, C('#b8402c')), cylinder(0.038, 0.038, 0.012, 12, C('#c0c4c8'), 0.056), cylinder(0.038, 0.038, 0.012, 12, C('#c0c4c8'), -0.056)]),
+        collider: { kind: 'cyl', r: 0.038, hh: 0.062 }, restY: 0.062, restRotZ: 0, holdPos: [0, -0.62, 0.03], holdRot: [0, 0, 0],
+      };
+    }
+    case 'jar': {
+      return {
+        geo: merge([cylinder(0.045, 0.045, 0.1, 12, C('#a8b8a0')), cylinder(0.046, 0.046, 0.025, 12, C('#c03a2a'), 0.062), cylinder(0.044, 0.044, 0.05, 12, C('#7a3a22'), -0.02)]),
+        collider: { kind: 'cyl', r: 0.046, hh: 0.075 }, restY: 0.075, restRotZ: 0, holdPos: [0, -0.62, 0.04], holdRot: [0, 0, 0],
+      };
+    }
+    case 'chips': {
+      const b = new GeoBuilder();
+      b.box(-0.08, -0.105, -0.03, 0.08, 0.105, 0.03, C('#2e7d5b'), C('#246247'));
+      b.box(-0.08, 0.105, -0.008, 0.08, 0.115, 0.008, C('#d9c25a'));
+      b.box(-0.05, -0.02, 0.0305, 0.05, 0.05, 0.031, C('#f2c14e'));
+      return { geo: b.build(), collider: { kind: 'box', hx: 0.08, hy: 0.11, hz: 0.03 }, restY: 0.11, restRotZ: 0, holdPos: [0, -0.68, 0.05], holdRot: [0, Math.PI / 2, 0] };
     }
     case 'bat': {
       const g = merge([cylinder(0.018, 0.036, 0.6, 8, C('#c8a165'), 0.12), cylinder(0.018, 0.018, 0.22, 6, C('#3d2b1f'), -0.29), cylinder(0.026, 0.026, 0.02, 8, C('#3d2b1f'), -0.405)]);
