@@ -192,7 +192,20 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   rasterizeNet(net, ras, doc.parking);
   const lotInfo = rasterizeLots(doc, ras, net);
   const { plazaH } = rasterizePlaza(doc, ras);
-  const stairs = rasterizeStairs(doc, ras);
+  // the walking surface of the street nearest (x, z): carriageway, or its sidewalk one kerb up (where stairs end)
+  const streetY = (x: number, z: number) => {
+    let best = NaN, bd = Infinity;
+    for (const e of net.edges) {
+      if (e.deck) continue;
+      const pr = net.project(e, x, z);
+      const lim = e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 1;
+      if (pr.d > lim || pr.d >= bd) continue;
+      bd = pr.d;
+      best = net.profAt(e, pr.s) + (pr.d > e.hw ? G.kerbHeight : 0);
+    }
+    return best;
+  };
+  const stairs = rasterizeStairs(doc, ras, streetY);
   ras.blendBands();
   ras.finish();
   phase('raster');
@@ -229,7 +242,15 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   phase('buildings');
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff1c4 });
   const lampPoolMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
-  const props = buildProps(doc, ras, net, info, bridges.lamps, chunks, phys, root, lampMat, lampPoolMat);
+  // props stand on the boardwalk and piers where those cover the ground (benches on the waterfront)
+  const deckIdx = buildDeckIndex(net, [...water.walkDecks, ...pierDecks]);
+  const standAt = (x: number, z: number) => {
+    const g = ras.heightAt(x, z);
+    let best = g;
+    deckIdx.query(x, z, true, (h) => { if (h > best && h < g + 2.5) best = h; });
+    return best;
+  };
+  const props = buildProps(doc, ras, net, info, bridges.lamps, chunks, phys, root, lampMat, lampPoolMat, standAt);
   phase('props');
 
   // ---------------------------------------------------------------- materials and chunk meshes
@@ -288,7 +309,6 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     id: n.id, x: n.x, z: n.z, y: n.h, degree: n.arms.length, signals: n.signals, stop: n.stop, roundabout: n.roundabout, outline: Float32Array.from(n.outline),
   }));
   const decks: GeoDeck[] = net.edges.filter((e) => e.deck).map((e) => ({ roadId: e.road.id, edge: e.id, name: e.name, layer: e.layer, centre: centreOf(net, e), halfWidth: e.hw }));
-  const deckIdx = buildDeckIndex(net, [...water.walkDecks, ...pierDecks]);
   const omitted = doc.roads.filter((r) => OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`)).map((r) => ({
     roadId: r.id, name: r.name ?? '', reason: 'K St underpass beneath Washington Circle: not rendered (ramps would need >15% grades between the split nodes and the ring); remove from the graph',
   }));

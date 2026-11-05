@@ -32,7 +32,7 @@ export function createPauseMenu(w: World): void {
         <b>Controls</b><br>
         W/S walk · A/D turn · Shift run · Space jump / handbrake · E use / talk / pick up<br>
         1–9 or mouse wheel: hotbar · Left click (or F): throw / swing · Q drop · R flip car · H horn<br>
-        N weather · M mute · \` or F3 stats · Esc or P pause
+        N weather · M mute · \` or F3 stats · F4 collision shapes · Esc or P pause
       </div>
       <div class="attrib"></div>
     </div>`;

@@ -286,6 +286,9 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
       // outer face of the coping, down into the land (closes the gap to the apron)
       buf.wall(e0[0] + ux * 0.45, e0[1] + uz * 0.45, e1[0] + ux * 0.45, e1[1] + uz * 0.45, t0 - 0.4, Math.max(bankA, t0) + 0.25, t1 - 0.4, Math.max(bankC, t1) + 0.25, shade(COL.stone, 0.95), ux, uz);
       pb.quad(e0[0], Math.min(bankA, t0) - 0.3, e0[1], e1[0], Math.min(bankC, t1) - 0.3, e1[1], e1[0], Math.max(bankC, t1) + 0.25, e1[1], e0[0], Math.max(bankA, t0) + 0.25, e0[1]);
+      // the coping is solid: its top and its outer face toward the land
+      pb.quad(e0[0], Math.max(bankA, t0) + 0.25, e0[1], e1[0], Math.max(bankC, t1) + 0.25, e1[1], e1[0] + ux * 0.45, Math.max(bankC, t1) + 0.25, e1[1] + uz * 0.45, e0[0] + ux * 0.45, Math.max(bankA, t0) + 0.25, e0[1] + uz * 0.45);
+      pb.quad(e0[0] + ux * 0.45, t0 - 0.4, e0[1] + uz * 0.45, e1[0] + ux * 0.45, t1 - 0.4, e1[1] + uz * 0.45, e1[0] + ux * 0.45, Math.max(bankC, t1) + 0.25, e1[1] + uz * 0.45, e0[0] + ux * 0.45, Math.max(bankA, t0) + 0.25, e0[1] + uz * 0.45);
       void sgn;
     }
     // aprons under the jagged edge of the terrain mesh hole: ground geometry a little below the surface (so roads,
@@ -332,10 +335,14 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
       const mx = (ax + bx) / 2, mz = (az + bz) / 2;
       const L = Math.hypot(bx - ax, bz - az);
       buf.obox(mx, lvl - G.canalDepth - 1.4, mz, L / 2, 0.22, lvl + 0.35, (bx - ax) / L, (bz - az) / L, COL.darkWood, COL.wood, false);
+      const yLeaf0 = lvl - G.canalDepth - 1.4, yLeaf1 = lvl + 0.35;
+      phys.box(mx, (yLeaf0 + yLeaf1) / 2, mz, L / 2, (yLeaf1 - yLeaf0) / 2, 0.22, (bx - ax) / L, (bz - az) / L, 'lockGate');
       // balance beam on the bank
       const px = ax + rx * s * 0.6, pz = az + rz * s * 0.6;
       buf.obox(px - dx * 3, lvl + 0.55, pz - dz * 3, 3.2, 0.18, lvl + 0.85, dx, dz, COL.wood);
       buf.obox(px, lvl, pz, 0.25, 0.25, lvl + 0.6, dx, dz, COL.darkWood);
+      phys.box(px - dx * 3, lvl + 0.7, pz - dz * 3, 3.2, 0.15, 0.18, dx, dz, 'lockGate');
+      phys.box(px, lvl + 0.25, pz, 0.25, 0.35, 0.25, dx, dz, 'lockGate');
     }
   }
 
@@ -447,6 +454,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     chunks.tag('decor');
     buf.cyl(cx, y + 1.4, cz, 0.35, 0.05, 2.6, 6, COL.jet, false);
     phys.cylinder(cx, y - 0.2, cz, r + 0.5, 0.75, 'fountain');
+    phys.cylinder(cx, y + 0.5, cz, 0.8, 0.9, 'fountain'); // the centre pedestal
   }
   {
     const m = new THREE.Mesh(fw.geometry(), creekMat);
@@ -593,6 +601,8 @@ export function buildPlazaAndPiers(doc: GeoDoc, ras: GeoRaster, chunks: RenderCh
         const bl = Math.min(L * 0.7, 9) / 2;
         buf.obox(bx, -0.5, bz, bl, 1.3, 0.75, ux, uz, col, shade(col, 0.85), true);
         buf.obox(bx - ux * bl * 0.2, 0.75, bz - uz * bl * 0.2, bl * 0.35, 0.9, 1.7, ux, uz, lin(0xf2f2ee));
+        phys.box(bx, 0.125, bz, bl, 0.625, 1.3, ux, uz, 'boat');
+        phys.box(bx - ux * bl * 0.2, 1.225, bz - uz * bl * 0.2, bl * 0.35, 0.475, 0.9, ux, uz, 'boat');
       }
     }
   }

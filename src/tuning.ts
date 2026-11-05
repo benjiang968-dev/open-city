@@ -643,7 +643,6 @@ const RAW = {
     canalLevels: [5.2, 4.4, 3.6, 2.8, 2.0], // m: canal water west of lock 4, then after locks 4, 3, 2, 1 (east)
     canalDepth: 1.6, // m of water in the canal
     creekDepth: 1.2, // m of water in Rock Creek
-    treeColliderRoadDist: 9, // m: trees closer than this to a carriageway get a trunk collider
     stallWidth: 2.6, // m: painted parking bay width in car parks
     stallLength: 5.2, // m: parking bay length
     lotAisle: 6.6, // m: aisle between bay rows
@@ -660,6 +659,10 @@ const RAW = {
   debug: {
     spikeMs: 33, // a frame longer than this counts as a spike in the F3 overlay
     spikeWindow: 10, // seconds of history for the spike counter and worst frame
+    physRadius: 22, // m: the F4 collision view draws the colliders within this distance of the player
+    physHeight: 14, // m: ... and this far above or below them
+    physRefresh: 0.25, // s between rebuilds of the F4 collision view
+    physMaxSegments: 90000, // line segments the F4 view can draw (preallocated when first switched on)
   },
 
   hud: {

@@ -8,7 +8,7 @@ import { Rng } from '../rng';
 import { POI_TEMPLATES, STREET_WORDS } from '../names';
 import { GeoBuilder } from '../art/geo';
 import { GROUPS } from '../physicsGroups';
-import { SolidRecorder, SolidTags, type SolidKind } from './objects/solidKinds';
+import { PROP_COLLIDERS, PROP_KIND, SolidRecorder, SolidTags, type ColliderPart, type PropColliderName, type SolidKind } from './objects/solidKinds';
 
 const T = TUNING.world;
 
@@ -221,6 +221,13 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     const c = physics.createCollider(R.ColliderDesc.cylinder(h / 2, r).setTranslation(x, y0 + h / 2, z).setCollisionGroups(GROUPS.static), staticAt(x, z));
     solidTags.set(c.handle, kind);
   };
+  /** A prop's colliders from the registry (axis-aligned props: the grid draws them unrotated). */
+  const placeProp = (name: PropColliderName, x: number, y: number, z: number) => {
+    for (const p of PROP_COLLIDERS[name] as readonly ColliderPart[]) {
+      if (p.shape === 'box') addBoxCollider(x + p.c[0] - p.h[0], y + p.c[1] - p.h[1], z + p.c[2] - p.h[2], x + p.c[0] + p.h[0], y + p.c[1] + p.h[1], z + p.c[2] + p.h[2], PROP_KIND[name]);
+      else addCylCollider(x + p.c[0], y + p.c[1], z + p.c[2], p.r, p.h, PROP_KIND[name]);
+    }
+  };
 
   // land base (grass) and the ground collider
   const landX0 = bounds.minX - 40, landX1 = bounds.maxX + 40, landZ0 = bounds.minZ - 40;
@@ -325,7 +332,10 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
       }
       // benches
       tag('bench');
-      for (const [bx, bz] of [[mx + 4, mz - 6], [mx - 4, mz + 6], [mx + 6, mz + 4]]) props.box(bx - 1, 0.4, bz - 0.3, bx + 1, 0.5, bz + 0.3, COL.wood);
+      for (const [bx, bz] of [[mx + 4, mz - 6], [mx - 4, mz + 6], [mx + 6, mz + 4]]) {
+        props.box(bx - 1, 0.4, bz - 0.3, bx + 1, 0.5, bz + 0.3, COL.wood);
+        placeProp('gridBench', bx, 0, bz);
+      }
       tag('ground');
       const p = addPoi('park', b, rng.pick(['n', 's', 'e', 'w'] as const));
       p.name = poiName('park', p.street);
@@ -508,9 +518,19 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     for (let z = coastZ + 8; z < r.z1; z += 11) {
       for (const s of [-1, 1]) {
         if (!rng.chance(0.7)) continue;
-        const boat = makeBoat(C(rng.pick(boatColours)), rng.range(7, 11));
+        const hull = C(rng.pick(boatColours)); // (draw order unchanged: colour, then length)
+        const len = rng.range(7, 11);
+        const boat = makeBoat(hull, len);
         boat.position.set(px + s * 5, T.waterLevel + 0.1, z);
         boat.rotation.y = rng.chance(0.5) ? 0 : Math.PI;
+        // static colliders at the resting pose (the hull bobs 0.12 m about it): hull and cabin
+        {
+          const bw = len * 0.32, flip = boat.rotation.y ? -1 : 1, y0 = boat.position.y, bx = boat.position.x;
+          addBoxCollider(bx - bw / 2, y0, z - len / 2, bx + bw / 2, y0 + 1.1, z + len / 2, 'boat');
+          const c0 = z + flip * (-len / 4), c1 = z + flip * (len / 6);
+          addBoxCollider(bx - bw / 2 + 0.5, y0 + 1.1, Math.min(c0, c1), bx + bw / 2 - 0.5, y0 + 2.2, Math.max(c0, c1), 'boat');
+          boat.userData.solidKind = 'boat';
+        }
         scene.add(boat);
         boats.push({ mesh: boat, baseY: boat.position.y, phase: rng.range(0, Math.PI * 2) });
       }
@@ -750,6 +770,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     const px = n.x + roadHalfX[n.i] + 1.2, pz = n.z + roadHalfZ[n.j] + 1.2;
     tag('signPost');
     props.box(px - 0.05, 0, pz - 0.05, px + 0.05, 3.3, pz + 0.05, C('#4a4e54'));
+    placeProp('gridSignPost', px, 0, pz);
     const kz = streetSignIdx.get(streetNamesZ[n.j])!;
     const kx = streetSignIdx.get(streetNamesX[n.i])!;
     tag('overhead');
@@ -766,6 +787,7 @@ export function generateCity(scene: THREE.Scene, R: typeof RAPIER, physics: RAPI
     if (p.kind === 'taxiRank') {
       tag('signPost');
       props.box(p.x - 0.06, 0, p.z - 0.06, p.x + 0.06, 2.6, p.z + 0.06, C('#4a4e54'));
+      placeProp('gridTaxiPost', p.x, 0, p.z);
       tag('overhead');
       signs.wall(p.x + nx * 0.08, 2.75, p.z + nz * 0.08, 1.4, 0.5, nx, nz, white, uvRow(k));
       signs.wall(p.x - nx * 0.08, 2.75, p.z - nz * 0.08, 1.4, 0.5, -nx, -nz, white, uvRow(k));

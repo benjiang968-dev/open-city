@@ -125,6 +125,60 @@ export class SolidTags {
   }
 }
 
+// ------------------------------------------------------------------------------------------ prop colliders
+/**
+ * One part of a prop's collider in the prop's own frame (x along the prop, z across, y up from its base), matching
+ * the prop's drawn geometry. box: centre c and half extents h. cyl: upright cylinder standing at c with radius r and
+ * height h (r scales with the prop's horizontal scale, h with its vertical scale).
+ */
+export type ColliderPart =
+  | { readonly shape: 'box'; readonly c: readonly [number, number, number]; readonly h: readonly [number, number, number] }
+  | { readonly shape: 'cyl'; readonly c: readonly [number, number, number]; readonly r: number; readonly h: number };
+
+/**
+ * Colliders of the instanced props, per kind, in metres of the prop's own geometry (props.ts / cityGen.ts draw the
+ * same shapes). A generator places a prop with PhysChunks.placeProp(kind, x, y, z, yaw, scale): one static collider
+ * per part in the 120 m chunk body. Stage 2 can give a kind its own body instead without touching the generators.
+ */
+export const PROP_COLLIDERS = {
+  // Georgetown street furniture (props.ts)
+  lamp: [
+    { shape: 'cyl', c: [0, 0, 0], r: 0.22, h: 0.6 }, // cast-iron base
+    { shape: 'cyl', c: [0, 0.6, 0], r: 0.09, h: 3.6 }, // pole (the globe 4.6 m up is out of reach)
+  ],
+  signalPole: [{ shape: 'cyl', c: [0, 0, 0], r: 0.15, h: 6.3 }],
+  stopPost: [{ shape: 'cyl', c: [0, 0, 0], r: 0.07, h: 2.6 }],
+  tree: [{ shape: 'cyl', c: [0, -0.1, 0], r: 0.22, h: 2.7 }], // trunk: 0.24 m at the foot, 0.16 at 2.7 m
+  bench: [
+    { shape: 'box', c: [-0.75, 0.225, 0], h: [0.05, 0.225, 0.25] }, // iron legs
+    { shape: 'box', c: [0.75, 0.225, 0], h: [0.05, 0.225, 0.25] },
+    { shape: 'box', c: [0, 0.445, -0.01], h: [0.95, 0.025, 0.23] }, // seat slats
+    { shape: 'box', c: [0, 0.75, 0.265], h: [0.95, 0.15, 0.025] }, // back rails
+  ],
+  busShelter: [
+    { shape: 'box', c: [0, 1.2, 0.585], h: [2.0, 1.2, 0.04] }, // back panel
+    { shape: 'box', c: [-2, 1.2, 0.01], h: [0.05, 1.2, 0.61] }, // side panels
+    { shape: 'box', c: [2, 1.2, 0.01], h: [0.05, 1.2, 0.61] },
+    { shape: 'box', c: [0, 2.525, -0.025], h: [2.15, 0.075, 0.775] }, // roof
+    { shape: 'box', c: [0, 0.485, 0.35], h: [1.4, 0.035, 0.15] }, // bench slab (drawn without legs)
+    { shape: 'box', c: [2.63, 1.3, -0.72], h: [0.04, 1.3, 0.04] }, // sign post
+  ],
+  gravestone: [
+    { shape: 'box', c: [0, 0.425, 0], h: [0.35, 0.475, 0.08] }, // stone
+    { shape: 'box', c: [0, 0.975, 0], h: [0.22, 0.075, 0.08] }, // rounded top
+  ],
+  // grid city (cityGen.ts)
+  gridBench: [{ shape: 'box', c: [0, 0.45, 0], h: [1, 0.05, 0.3] }], // a slab, as drawn
+  gridSignPost: [{ shape: 'box', c: [0, 1.65, 0], h: [0.05, 1.65, 0.05] }],
+  gridTaxiPost: [{ shape: 'box', c: [0, 1.3, 0], h: [0.06, 1.3, 0.06] }],
+} as const satisfies Record<string, readonly ColliderPart[]>;
+export type PropColliderName = keyof typeof PROP_COLLIDERS;
+/** The solid kind each prop collider is tagged with. */
+export const PROP_KIND: Record<PropColliderName, SolidKind> = {
+  lamp: 'lamp', signalPole: 'signalPole', stopPost: 'signPost', tree: 'tree', bench: 'bench', busShelter: 'busShelter',
+  gravestone: 'gravestone', gridBench: 'bench', gridSignPost: 'signPost', gridTaxiPost: 'signPost',
+};
+
 // ------------------------------------------------------------------------------------------ audit recorder
 /** Record types the recorder stores (drawn primitives the audit probes). */
 export const REC = { OBOX: 0, CYL: 1, WALL: 2 } as const;

@@ -244,6 +244,10 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
         chunks.tag('deck');
         buf.wall(aLx, aLz, bLx, bLz, hp - th, hp + kL, hq - th, hq + kL, COL.deck, -(p.rx + q.rx) / 2, -(p.rz + q.rz) / 2);
         buf.wall(aRx, aRz, bRx, bRz, hp - th, hp + kR, hq - th, hq + kR, COL.deck, (p.rx + q.rx) / 2, (p.rz + q.rz) / 2);
+        // the deck's edges collide too (where the ground beside a deck end is near deck height nothing slips under)
+        const pd = phys.trimesh(mx, mz, 'deck');
+        pd.quad(aLx, hp - th, aLz, bLx, hq - th, bLz, bLx, hq + kL, bLz, aLx, hp + kL, aLz);
+        pd.quad(aRx, hp - th, aRz, bRx, hq - th, bRz, bRx, hq + kR, bRz, aRx, hp + kR, aRz);
         buf.quad(aLx, hp - th, aLz, aRx, hp - th, aRz, bRx, hq - th, bRz, bLx, hq - th, bLz, COL.deckUnder, 0, -1, 0);
       }
     }

@@ -21,7 +21,7 @@ const SHOPPING = [{ name: 'M St NW', maxX: 362 }, { name: 'Wisconsin Ave NW', mi
 
 interface TreeSpot { x: number; y: number; z: number; s: number; sp: number; c: number; yaw: number; rank: number }
 
-export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetMeshInfo, extraLamps: { x: number; y: number; z: number; ax: number; az: number }[], chunks: RenderChunks, phys: PhysChunks, root: THREE.Group, lampMat: THREE.MeshBasicMaterial, lampPoolMat: THREE.MeshBasicMaterial) {
+export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetMeshInfo, extraLamps: { x: number; y: number; z: number; ax: number; az: number }[], chunks: RenderChunks, phys: PhysChunks, root: THREE.Group, lampMat: THREE.MeshBasicMaterial, lampPoolMat: THREE.MeshBasicMaterial, standAt: (x: number, z: number) => number) {
   let tris = 0;
   const near = new SegGrid(16);
   const roadDist = (x: number, z: number) => {
@@ -70,7 +70,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       poles.setMatrixAt(i, m);
       globe.setMatrixAt(i, m);
       pools.setMatrixAt(i, m);
-      phys.cylinder(l.x, l.y, l.z, 0.16, 4.3, 'lamp');
+      phys.placeProp('lamp', l.x, l.y, l.z);
     });
     pools.renderOrder = 1;
     poles.name = 'lamp-poles'; globe.name = 'lamp-globes'; pools.name = 'lamp-pools';
@@ -147,7 +147,8 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       im.setMatrixAt(i, m);
       col.setHex(t.c);
       im.setColorAt(i, col.setRGB(col.r / base.r, col.g / base.g, col.b / base.b));
-      if (roadDist(t.x, t.z) < G.treeColliderRoadDist) phys.cylinder(t.x, t.y, t.z, 0.2 * t.s, 2.4 * t.s, 'tree');
+      // every trunk collides (a cylinder in the chunk body; the crown is foliage)
+      phys.placeProp('tree', t.x, t.y, t.z, 0, t.s, sc.y);
     });
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.castShadow = true;
@@ -181,8 +182,10 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         const qx = S[o] + (S[o + 2] - S[o]) * t, qz = S[o + 1] + (S[o + 3] - S[o + 1]) * t;
         yaw = Math.atan2(p[0] - qx, p[1] - qz); // +z of the bench (its back) points away from the path
       });
-      m.makeRotationY(yaw).setPosition(p[0], ras.heightAt(p[0], p[1]), p[1]);
+      const y = standAt(p[0], p[1]); // on the boardwalk where it covers the ground
+      m.makeRotationY(yaw).setPosition(p[0], y, p[1]);
       im.setMatrixAt(i, m);
+      phys.placeProp('bench', p[0], y, p[1], yaw);
     });
     im.castShadow = true;
     im.computeBoundingSphere();
@@ -220,7 +223,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
         for (let k = 0; k < nIn; k++) heads.push(off - e.hw + (k + 0.5) * lw);
         sigSpots.push({ x: px, y, z: pz, ux, uz, len: off - e.hw + nIn * lw + 0.3, heads });
       } else stopSpots.push({ x: px, y, z: pz, ux, uz });
-      phys.cylinder(px, y, pz, 0.12, 3, n.signals ? 'signalPole' : 'signPost');
+      phys.placeProp(n.signals ? 'signalPole' : 'stopPost', px, y, pz);
     }
   }
   void ({} as RNode);
@@ -323,7 +326,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       // local +z (the back panel) points away from the road
       const bx = -q.uz * side, bz = q.ux * side;
       shelters.push({ x: ex, y: ras.heightAt(ex, ez), z: ez, yaw: Math.atan2(bx, bz) });
-      phys.box(ex + bx * 0.58, ras.heightAt(ex, ez) + 1.2, ez + bz * 0.58, 2, 1.2, 0.06, q.ux, q.uz, 'busShelter');
+      phys.placeProp('busShelter', ex, ras.heightAt(ex, ez), ez, Math.atan2(bx, bz));
     }
     const im = inst(g.toGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.4, metalness: 0.2 }), shelters.length);
     im.name = 'bus-shelters';
@@ -363,6 +366,7 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
     for (let i = 0; i < spots.length / 4; i++) {
       m.makeRotationY(spots[i * 4 + 3]).setPosition(spots[i * 4], spots[i * 4 + 1] - 0.05, spots[i * 4 + 2]);
       im.setMatrixAt(i, m);
+      phys.placeProp('gravestone', spots[i * 4], spots[i * 4 + 1] - 0.05, spots[i * 4 + 2], spots[i * 4 + 3]);
     }
     im.computeBoundingSphere();
     root.add(im);

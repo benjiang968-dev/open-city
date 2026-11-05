@@ -24,6 +24,7 @@ import type { InventoryState } from './systems/inventory';
 import type { CombatState } from './systems/combat';
 import type { CrowdRender } from './systems/crowdRender';
 import type { HurtFxState } from './systems/hurtFx';
+import type { PhysDebugState } from './systems/physicsDebug';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
 export type GameEvent =
@@ -66,6 +67,8 @@ export interface World {
   combat: CombatState;
   crowd: CrowdRender;
   hurtFx: HurtFxState;
+  /** F4 collision view (physicsDebug.ts). */
+  physDebug: PhysDebugState;
   /** The map (road and walk graphs, places, lookups). Every system reads the city through this interface. */
   city: CityMap;
   player: PlayerState;

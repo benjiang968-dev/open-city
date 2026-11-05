@@ -34,8 +34,6 @@ export interface AuditOptions {
   randomSamples?: number;
   /** At most this many recorded primitives probed per kind (deterministic stride). */
   maxPerKind?: number;
-  /** Building footprints probed (deterministic stride). */
-  maxBuildings?: number;
 }
 
 export interface AuditReport {
@@ -150,6 +148,24 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
     return physics.castRay(ray, max, true, undefined, STATIC_ONLY);
   };
 
+  // drawn meshes (merged chunks and solid instanced props) for checking a suspected invisible collider: is something
+  // drawn where the ray hit it?
+  const drawn: THREE.Object3D[] = [];
+  w.scene.updateMatrixWorld(true);
+  w.scene.traverse((o) => {
+    const kind = o.userData.solidKind as string | undefined;
+    if (/^(geo-(ground|detail|facade)-|grid-(ground|buildings|props|seafloor)$)/.test(o.name) || (kind && kind !== 'tree' && SOLID_KINDS[kind as SolidKind]?.solid)) drawn.push(o);
+  });
+  const caster = new THREE.Raycaster();
+  const cO = new THREE.Vector3(), cD = new THREE.Vector3();
+  const drawnAt = (x: number, y: number, z: number, dx: number, dz: number, t: number, tol: number) => {
+    cO.set(x, y, z); cD.set(dx, 0, dz).normalize();
+    caster.set(cO, cD);
+    caster.far = t + tol + 0.05;
+    const hits = caster.intersectObjects(drawn, false);
+    return hits.length > 0 && Math.abs(hits[0].distance - t) <= tol + 0.03;
+  };
+
   // ---------------------------------------------------------------------------------------- side probes
   const probes: Record<string, KindStats> = {};
   const stat = (k: string): KindStats => (probes[k] ??= { probes: 0, ok: 0, missing: 0, short: 0, long: 0, occluded: 0, unreachable: 0, worstLong: 0, worstShort: 0, examples: [] });
@@ -158,7 +174,8 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
    * One face: drawn face at distance `dist` from (cx, cz) along (nx, nz), drawn from y0 to y1. Probes at a height the
    * body reaches above the floor in front of the face.
    */
-  const probeFace = (kind: string, cx: number, cz: number, nx: number, nz: number, dist: number, y0: number, y1: number, label: string) => {
+  const probeFace = (kind: string, cx: number, cz: number, nx: number, nz: number, dist0: number, y0: number, y1: number, label: string, ownR = Infinity, distTop = dist0, self = -1) => {
+    let dist = dist0;
     const def = SOLID_KINDS[kind as SolidKind] ?? SOLID_KINDS.untagged;
     const S = stat(kind);
     const fx = cx + nx * (dist + 0.6), fz = cz + nz * (dist + 0.6);
@@ -167,6 +184,7 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
     const lo = Math.max(y0, floor) + Math.min(0.05, (y1 - y0) / 3), hi = Math.min(y1, floor + def.band) - 0.02;
     if (hi - lo < 0.005) { S.unreachable++; return; }
     const yp = lo + Math.min(0.3, (hi - lo) / 2);
+    if (distTop !== dist0 && y1 > y0) dist = dist0 + (distTop - dist0) * Math.min(1, Math.max(0, (yp - y0) / (y1 - y0))); // a tapered cylinder
     const ox = cx + nx * (dist + OUT), oz = cz + nz * (dist + OUT);
     S.probes++;
     const inside = castH(ox, yp, oz, -nx, -nz, 0.001);
@@ -179,29 +197,31 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
     const hk = kindOfCollider(hit.collider.handle);
     if (dev > def.tol) {
       if (hk !== kind && hk !== 'untagged') { S.occluded++; S.probes--; return; } // something else stands in front
+      // the collider matches another drawn part there (a pier's cutwater in front of the pier): not invisible
+      const t = hit.timeOfImpact;
+      if (explained(ox - nx * t, yp, oz - nz * t, self) || drawnAt(ox, yp, oz, -nx, -nz, t, def.tol)) { S.occluded++; S.probes--; return; }
       if (hit.collider.shapeType() !== R.ShapeType.TriMesh) {
         const ct = hit.collider.translation();
         // a neighbour of the same kind (two trees side by side): its centre is not this object's
-        if (Math.hypot(ct.x - cx, ct.z - cz) > dist + 0.5 && kind !== 'building' && kind !== 'boundary') { S.occluded++; S.probes--; return; }
+        if (Math.hypot(ct.x - cx, ct.z - cz) > Math.min(dist + 0.5, ownR) && kind !== 'building' && kind !== 'boundary') { S.occluded++; S.probes--; return; }
       }
       S.long++; S.worstLong = Math.max(S.worstLong, dev); note(`LONG ${f2(dev)} (${hk})`);
     } else if (dev < -def.tol) {
-      if (-dev > dist * 2 + 0.05) { S.missing++; note(`MISSING (ray went through, hit ${hk} ${f2(-dev)} m in)`); return; }
+      if (-dev > dist * 2 + 0.3) { S.missing++; note(`MISSING (ray went through, hit ${hk} ${f2(-dev)} m in)`); return; }
       S.short++; S.worstShort = Math.max(S.worstShort, -dev); note(`SHORT ${f2(-dev)} (${hk})`);
     } else S.ok++;
   };
-  const probeObox = (kind: string, cx: number, cz: number, y0: number, y1: number, hx: number, hz: number, ux: number, uz: number, label: string) => {
+  const probeObox = (kind: string, cx: number, cz: number, y0: number, y1: number, hx: number, hz: number, ux: number, uz: number, label: string, ownR = Infinity, self = -1) => {
     const vx = -uz, vz = ux;
-    probeFace(kind, cx, cz, ux, uz, hx, y0, y1, label);
-    probeFace(kind, cx, cz, -ux, -uz, hx, y0, y1, label);
-    probeFace(kind, cx, cz, vx, vz, hz, y0, y1, label);
-    probeFace(kind, cx, cz, -vx, -vz, hz, y0, y1, label);
+    probeFace(kind, cx, cz, ux, uz, hx, y0, y1, label, ownR, hx, self);
+    probeFace(kind, cx, cz, -ux, -uz, hx, y0, y1, label, ownR, hx, self);
+    probeFace(kind, cx, cz, vx, vz, hz, y0, y1, label, ownR, hz, self);
+    probeFace(kind, cx, cz, -vx, -vz, hz, y0, y1, label, ownR, hz, self);
   };
-  const probeCyl = (kind: string, cx: number, cz: number, y0: number, y1: number, r0: number, r1: number, label: string) => {
-    const r = Math.max(r0, r1 > 0 ? r1 : 0, 0.01);
+  const probeCyl = (kind: string, cx: number, cz: number, y0: number, y1: number, r0: number, r1: number, label: string, self: number) => {
     for (let k = 0; k < 8; k++) {
       const a = (k / 8) * Math.PI * 2 + 0.2;
-      probeFace(kind, cx, cz, Math.cos(a), Math.sin(a), r0 > 0 ? r0 : r, y0, y1, label);
+      probeFace(kind, cx, cz, Math.cos(a), Math.sin(a), Math.max(0.01, r0), y0, y1, label, Infinity, Math.max(0.01, r1), self);
     }
   };
   const isSolid = (kind: string) => kind === 'untagged' || (SOLID_KINDS[kind as SolidKind]?.solid ?? false);
@@ -212,6 +232,46 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
   const recIdx = new Map<number, number[]>();
   if (rec) for (let i = 0; i < rec.n; i++) { const k = rec.data[i * REC_STRIDE + 1]; let l = recIdx.get(k); if (!l) recIdx.set(k, (l = [])); l.push(i); }
   const maxPer = opts.maxPerKind ?? 2500;
+  // drawn solid primitives on an 8 m grid: is a point on (or in) some drawn solid part?
+  const RC = 8, cells = new Map<number, number[]>();
+  const ckey = (i: number, j: number) => (i + 4096) * 8192 + (j + 4096);
+  if (rec) for (let i = 0; i < rec.n; i++) {
+    const o = i * REC_STRIDE, D = rec.data;
+    if (!isSolid(solidKindName(D[o + 1]))) continue;
+    let x0: number, x1: number, z0: number, z1: number;
+    if (D[o] === REC.WALL) { x0 = Math.min(D[o + 2], D[o + 4]); x1 = Math.max(D[o + 2], D[o + 4]); z0 = Math.min(D[o + 3], D[o + 5]); z1 = Math.max(D[o + 3], D[o + 5]); }
+    else { const r = D[o] === REC.CYL ? Math.max(D[o + 6], D[o + 7]) : Math.hypot(D[o + 6], D[o + 7]); x0 = D[o + 2] - r; x1 = D[o + 2] + r; z0 = D[o + 3] - r; z1 = D[o + 3] + r; }
+    if (x1 - x0 > 400 || z1 - z0 > 400) continue;
+    for (let a = Math.floor(x0 / RC); a <= Math.floor(x1 / RC); a++) for (let c = Math.floor(z0 / RC); c <= Math.floor(z1 / RC); c++) {
+      const k = ckey(a, c);
+      let l = cells.get(k);
+      if (!l) cells.set(k, (l = []));
+      l.push(i);
+    }
+  }
+  const explained = (x: number, y: number, z: number, self: number) => {
+    const l = cells.get(ckey(Math.floor(x / RC), Math.floor(z / RC)));
+    if (!l || !rec) return false;
+    const e = 0.06, D = rec.data;
+    for (const i of l) {
+      if (i === self) continue;
+      const o = i * REC_STRIDE;
+      if (D[o] === REC.WALL) {
+        const ax = D[o + 2], az = D[o + 3], dx = D[o + 4] - ax, dz = D[o + 5] - az, L2 = dx * dx + dz * dz || 1;
+        const t = Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / L2));
+        if (Math.hypot(ax + dx * t - x, az + dz * t - z) > e) continue;
+        const yb = D[o + 6] + (D[o + 8] - D[o + 6]) * t, yt = D[o + 7] + (D[o + 9] - D[o + 7]) * t;
+        if (y >= yb - e && y <= yt + e) return true;
+        continue;
+      }
+      if (y < D[o + 4] - e || y > D[o + 5] + e) continue;
+      const dx = x - D[o + 2], dz = z - D[o + 3];
+      if (D[o] === REC.CYL) { if (Math.hypot(dx, dz) <= Math.max(D[o + 6], D[o + 7]) + e) return true; continue; }
+      const ux = D[o + 8], uz = D[o + 9];
+      if (Math.abs(dx * ux + dz * uz) <= D[o + 6] + e && Math.abs(-dx * uz + dz * ux) <= D[o + 7] + e) return true;
+    }
+    return false;
+  };
   for (const [kid, list] of recIdx) {
     const kind = solidKindName(kid);
     if (!isSolid(kind)) continue;
@@ -219,8 +279,8 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
     for (let q = 0; q < list.length; q += step) {
       const o = list[q] * REC_STRIDE, D = rec!.data;
       if (kind === 'untagged') untaggedProbed++;
-      if (D[o] === REC.OBOX) probeObox(kind, D[o + 2], D[o + 3], D[o + 4], D[o + 5], D[o + 6], D[o + 7], D[o + 8], D[o + 9], `${kind} box`);
-      else if (D[o] === REC.CYL) probeCyl(kind, D[o + 2], D[o + 3], D[o + 4], D[o + 5], D[o + 6], D[o + 7], `${kind} cyl`);
+      if (D[o] === REC.OBOX) probeObox(kind, D[o + 2], D[o + 3], D[o + 4], D[o + 5], D[o + 6], D[o + 7], D[o + 8], D[o + 9], `${kind} box`, Infinity, list[q]);
+      else if (D[o] === REC.CYL) probeCyl(kind, D[o + 2], D[o + 3], D[o + 4], D[o + 5], D[o + 6], D[o + 7], `${kind} cyl`, list[q]);
       else {
         const ax = D[o + 2], az = D[o + 3], bx = D[o + 4], bz = D[o + 5];
         const L = Math.hypot(bx - ax, bz - az);
@@ -229,12 +289,14 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
         const nl = Math.hypot(nx, nz) || 1; nx /= nl; nz /= nl;
         for (const t of L > 3 ? [0.25, 0.5, 0.75] : [0.5]) {
           const y0 = D[o + 6] + (D[o + 8] - D[o + 6]) * t, y1 = D[o + 7] + (D[o + 9] - D[o + 7]) * t;
-          probeFace(kind, ax + (bx - ax) * t, az + (bz - az) * t, nx, nz, 0, y0, y1, `${kind} wall`);
+          probeFace(kind, ax + (bx - ax) * t, az + (bz - az) * t, nx, nz, 0, y0, y1, `${kind} wall`, Infinity, 0, list[q]);
         }
       }
     }
   }
-  // instanced props: the part of each instance's own geometry the body reaches
+  // instanced props (and single meshes with a kind, the grid's boats): horizontal rays at the drawn triangles of each
+  // instance's own geometry (the part the body reaches) and at Rapier, so open shapes (a bus shelter's front, the
+  // space under a bench's back) are judged by what is really drawn
   const instKinds: { mesh: THREE.InstancedMesh; kind: string }[] = [];
   const single: { mesh: THREE.Mesh; kind: string }[] = [];
   w.scene.traverse((o) => {
@@ -245,60 +307,95 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
     else if ((o as THREE.Mesh).isMesh) single.push({ mesh: o as THREE.Mesh, kind });
   });
   {
-    const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), e = new THREE.Euler();
+    const m = new THREE.Matrix4(), mi = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    const lr = new THREE.Ray(), tA = new THREE.Vector3(), tB = new THREE.Vector3(), tC = new THREE.Vector3(), hitP = new THREE.Vector3(), o3 = new THREE.Vector3(), d3 = new THREE.Vector3();
     w.scene.updateMatrixWorld(true);
-    const all = [...instKinds.map((q) => ({ ...q, n: q.mesh.count, inst: true })), ...single.map((q) => ({ mesh: q.mesh as THREE.InstancedMesh, kind: q.kind, n: 1, inst: false }))];
+    const all = [...instKinds.map((e) => ({ ...e, n: e.mesh.count, inst: true })), ...single.map((e) => ({ mesh: e.mesh as THREE.InstancedMesh, kind: e.kind, n: 1, inst: false }))];
     for (const { mesh, kind, n, inst } of all) {
-      const band = (SOLID_KINDS[kind as SolidKind] ?? SOLID_KINDS.untagged).band;
-      const pos = mesh.geometry.getAttribute('position');
+      const def = SOLID_KINDS[kind as SolidKind] ?? SOLID_KINDS.untagged;
+      const S = stat(kind);
+      const g = mesh.geometry, pos = g.getAttribute('position'), idx = g.getIndex();
+      const nT = (idx ? idx.count : pos.count) / 3;
+      const V = (t: number, k: number) => (idx ? idx.getX(t * 3 + k) : t * 3 + k);
       const step = Math.max(1, Math.ceil(n / maxPer));
       for (let i = 0; i < n; i += step) {
-        if (inst) mesh.getMatrixAt(i, m); else m.copy(mesh.matrixWorld);
+        if (inst) { mesh.getMatrixAt(i, m); m.premultiply(mesh.matrixWorld); } else m.copy(mesh.matrixWorld);
         m.decompose(p, q, sc);
         if (sc.x === 0) continue;
-        const lim = band / sc.y;
-        let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-        for (let v = 0; v < pos.count; v++) {
-          const y = pos.getY(v);
-          if (y > lim) continue;
-          const x = pos.getX(v), z = pos.getZ(v);
-          if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; if (y < y0) y0 = y; if (y > y1) y1 = y;
+        mi.copy(m).invert();
+        const lim = def.band / sc.y;
+        // the body part: triangles that start below the band (a trunk, not the crown)
+        const tris: number[] = [];
+        let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, yTop = -Infinity;
+        for (let t = 0; t < nT; t++) {
+          const a = V(t, 0), b2 = V(t, 1), c = V(t, 2);
+          if (Math.min(pos.getY(a), pos.getY(b2), pos.getY(c)) > lim) continue;
+          tris.push(a, b2, c);
+          for (const v of [a, b2, c]) {
+            const x = pos.getX(v), z = pos.getZ(v), y = Math.min(pos.getY(v), lim);
+            if (x < x0) x0 = x; if (x > x1) x1 = x; if (z < z0) z0 = z; if (z > z1) z1 = z; if (y > yTop) yTop = y;
+          }
         }
-        if (x0 === Infinity) continue;
-        e.setFromQuaternion(q, 'YXZ');
-        const yaw = e.y, ux = Math.cos(yaw), uz = -Math.sin(yaw); // local +x in world
-        const lcx = (x0 + x1) / 2 * sc.x, lcz = (z0 + z1) / 2 * sc.z;
-        const cx = p.x + ux * lcx + Math.sin(yaw) * lcz, cz = p.z + uz * lcx + Math.cos(yaw) * lcz;
-        // the top of the part the body reaches: the band, or the whole object if it is lower (a bench)
-        if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-        const top = p.y + Math.max(y1, Math.min(lim, mesh.geometry.boundingBox!.max.y)) * sc.y;
-        probeObox(kind, cx, cz, p.y + y0 * sc.y, top, ((x1 - x0) / 2) * sc.x, ((z1 - z0) / 2) * sc.z, ux, uz, `${kind} #${i}`);
+        if (!tris.length) continue;
+        const visualHit = (ox: number, oy: number, oz: number, dx: number, dz: number) => {
+          o3.set(ox, oy, oz).applyMatrix4(mi);
+          d3.set(ox + dx, oy, oz + dz).applyMatrix4(mi).sub(o3);
+          lr.set(o3, d3.normalize());
+          let best = Infinity;
+          for (let k = 0; k < tris.length; k += 3) {
+            tA.fromBufferAttribute(pos, tris[k]); tB.fromBufferAttribute(pos, tris[k + 1]); tC.fromBufferAttribute(pos, tris[k + 2]);
+            if (!lr.intersectTriangle(tA, tB, tC, false, hitP)) continue;
+            hitP.applyMatrix4(m);
+            const dd = Math.hypot(hitP.x - ox, hitP.y - oy, hitP.z - oz);
+            if (dd < best) best = dd;
+          }
+          return best;
+        };
+        const ux = m.elements[0] / sc.x, uz = m.elements[2] / sc.x; // local +x in world (unit)
+        const vx = m.elements[8] / sc.z, vz = m.elements[10] / sc.z; // local +z
+        const cxl = (x0 + x1) / 2, czl = (z0 + z1) / 2;
+        const cx = p.x + ux * cxl * sc.x + vx * czl * sc.z, cz = p.z + uz * cxl * sc.x + vz * czl * sc.z;
+        const hx = ((x1 - x0) / 2) * sc.x, hz = ((z1 - z0) / 2) * sc.z;
+        const yTopW = p.y + yTop * sc.y;
+        for (const [dx, dz, ext, ax, az, across] of [[ux, uz, hx, vx, vz, hz], [-ux, -uz, hx, vx, vz, hz], [vx, vz, hz, ux, uz, hx], [-vx, -vz, hz, ux, uz, hx]] as number[][]) {
+          const floor = floorAt(cx + dx * (ext + 0.6), cz + dz * (ext + 0.6), yTopW + 0.6);
+          if (floor !== floor || floor > yTopW + 0.5) { S.unreachable++; continue; }
+          const lo = Math.max(p.y, floor) + 0.05, hi = Math.min(yTopW, floor + def.band) - 0.02;
+          if (hi < lo) { S.unreachable++; continue; }
+          for (const yp of hi - lo > 0.5 ? [lo + 0.25, Math.min(hi, lo + 0.9)] : [(lo + hi) / 2]) {
+            for (const lat of [-0.6, 0, 0.6]) {
+              const ox = cx + dx * (ext + OUT) + ax * across * lat, oz = cz + dz * (ext + OUT) + az * across * lat;
+              const where = `${kind} #${i} @(${f2(ox - dx * OUT)}, ${f2(yp)}, ${f2(oz - dz * OUT)}) n(${f2(dx)},${f2(dz)})`;
+              const note = (msg: string) => { if (S.examples.length < MAX_EXAMPLES) S.examples.push(`${msg} ${where}`); };
+              const inside = castH(ox, yp, oz, -dx, -dz, 0.001);
+              if (inside && inside.timeOfImpact === 0) { S.occluded++; continue; }
+              const tv = visualHit(ox, yp, oz, -dx, -dz);
+              const max = OUT + ext * 2 + 0.3;
+              const hit = castH(ox, yp, oz, -dx, -dz, max);
+              const tp = hit ? hit.timeOfImpact : Infinity;
+              const mine = hit ? kindOfCollider(hit.collider.handle) === kind : false;
+              const ct = hit && hit.collider.shapeType() !== R.ShapeType.TriMesh ? hit.collider.translation() : null;
+              const own = !ct || !POSTS.has(kind) || Math.hypot(ct.x - p.x, ct.z - p.z) < 0.15;
+              if (tv === Infinity) {
+                // nothing drawn on this line: only a collider of this very prop there is wrong (an invisible part)
+                if (hit && mine && own && tp < OUT + ext * 2 - def.tol) { S.probes++; S.long++; S.worstLong = Math.max(S.worstLong, ext * 2 + OUT - tp); note(`LONG (nothing drawn) ${f2(OUT + ext * 2 - tp)}`); }
+                continue;
+              }
+              S.probes++;
+              const dev = tv - tp; // + = the collider is in front of the drawn surface
+              if (Math.abs(dev) <= def.tol) { S.ok++; continue; }
+              if (dev > 0) {
+                if (!mine || !own) { S.occluded++; S.probes--; continue; }
+                S.long++; S.worstLong = Math.max(S.worstLong, dev); note(`LONG ${f2(dev)}`);
+              } else if (tp === Infinity || tp > tv + ext * 2) { S.missing++; note(tp === Infinity ? 'MISSING' : `MISSING (went through, hit ${hit ? kindOfCollider(hit.collider.handle) : '-'} ${f2(tp - tv)} m in)`); }
+              else { S.short++; S.worstShort = Math.max(S.worstShort, -dev); note(`SHORT ${f2(-dev)}`); }
+            }
+          }
+        }
       }
     }
   }
-  // buildings: every footprint edge, three points each
-  {
-    const B = city.buildings;
-    const maxB = opts.maxBuildings ?? 1500;
-    const step = Math.max(1, Math.ceil(B.length / maxB));
-    for (let bi = 0; bi < B.length; bi += step) {
-      const P = B[bi].pts, n = P.length / 2;
-      let cx = 0, cz = 0;
-      for (let i = 0; i < n; i++) { cx += P[i * 2] / n; cz += P[i * 2 + 1] / n; }
-      for (let i = 0; i < n; i++) {
-        const ax = P[i * 2], az = P[i * 2 + 1], bx = P[((i + 1) % n) * 2], bz = P[((i + 1) % n) * 2 + 1];
-        const L = Math.hypot(bx - ax, bz - az);
-        if (L < 1) continue;
-        let nx = -(bz - az) / L, nz = (bx - ax) / L;
-        if (((ax + bx) / 2 - cx) * nx + ((az + bz) / 2 - cz) * nz < 0) { nx = -nx; nz = -nz; }
-        for (const t of [0.25, 0.5, 0.75]) {
-          const px = ax + (bx - ax) * t, pz = az + (bz - az) * t;
-          const g = city.heightAt(px, pz);
-          probeFace('building', px, pz, nx, nz, 0, g - 1, g + B[bi].h, `building ${bi}`);
-        }
-      }
-    }
-  }
+  // (buildings: their facade walls are recorded like any other drawn wall)
 
   // ---------------------------------------------------------------------------------------- surfaces
   const b = city.bounds;
@@ -469,5 +566,6 @@ export function runPhysicsAudit(w: World, opts: AuditOptions = {}): AuditReport 
   };
 }
 
+const POSTS = new Set(['tree', 'lamp', 'signalPole', 'signPost']);
 /** Physics floors the surface check skips (side probes cover them; their tops are out of reach or tiny). */
 const NOT_FLOORS = new Set(['boundary', 'building', 'tower', 'bridgePier', 'column', 'lamp', 'signalPole', 'signPost', 'tree', 'kiosk', 'container', 'monument', 'railing', 'stoopRail']);

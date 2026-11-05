@@ -38,6 +38,7 @@ import { updateCarDamage } from './systems/carDamage';
 import { createHealthUi, updateHealth } from './systems/health';
 import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtFx';
+import { createPhysDebug, physDebugKeys, updatePhysDebug } from './systems/physicsDebug';
 
 async function boot() {
   await RAPIER.init();
@@ -95,6 +96,7 @@ async function boot() {
   assignCarOwners(w); // every parked car that isn't yours belongs to someone (or nobody)
   w.crowd = createCrowd(w, TUNING.peds.maxPopulation + 4);
   w.hurtFx = createHurtFx(w);
+  w.physDebug = createPhysDebug();
   w.hud = createHud();
   w.chat = createChat(w);
   w.jobs.bind(w);
@@ -189,6 +191,7 @@ async function boot() {
       w.cam.yaw = Math.PI / 2;
     }
     if (act.debug(w.input)) w.debugVisible = !w.debugVisible;
+    physDebugKeys(w);
     updatePauseKeys(w);
     if (!w.paused) inventoryKeys(w);
     if (w.paused) {
@@ -233,7 +236,7 @@ async function boot() {
     P.begin('hud'); updateHud(w, dt); P.end('hud');
     if (render) {
       P.begin('minimap'); updateMinimap(w); P.end('minimap');
-      P.begin('debug'); updateDebug(w); P.end('debug');
+      P.begin('debug'); updateDebug(w); updatePhysDebug(w); P.end('debug');
       P.begin('render'); renderCrowd(w); renderer.render(scene, camera); P.end('render');
     }
     P.endFrame(realMs, w.time);

@@ -19,7 +19,11 @@ export function buildMonuments(doc: GeoDoc, ras: GeoRaster, chunks: RenderChunks
     g.box(x - 3.6, y + 0.5, z - 2.4, x + 3.6, y + 1.0, z + 2.4, shade(granite, 1.05));
     g.box(x - 2.8, y + 1.0, z - 1.6, x + 2.8, y + 4.4, z + 1.6, marble);
     g.box(x - 3.1, y + 4.4, z - 1.9, x + 3.1, y + 4.8, z + 1.9, granite);
-    phys.box(x, y + 2.4, z, 4.5, 2.4, 3.2, 1, 0, 'monument');
+    // the plinth's tiers as drawn (one box over all of them made an invisible wall round the 0.5 m first tier)
+    phys.box(x, y, z, 4.5, 0.5, 3.2, 1, 0, 'monument');
+    phys.box(x, y + 0.75, z, 3.6, 0.25, 2.4, 1, 0, 'monument');
+    phys.box(x, y + 2.7, z, 2.8, 1.7, 1.6, 1, 0, 'monument');
+    phys.box(x, y + 4.6, z, 3.1, 0.2, 1.9, 1, 0, 'monument');
     const t = y + 4.8;
     chunks.tag('roof'); // the bronze rider stands on top of the 4.8 m plinth, out of reach
     // horse facing east: body, legs, neck, head, tail; the rider with a raised arm
@@ -53,15 +57,17 @@ export function buildMonuments(doc: GeoDoc, ras: GeoRaster, chunks: RenderChunks
       const y = ras.heightAt(x, z);
       chunks.buf('detail', x, z).obox(x, y, z, 0.04, 0.04, y + 1.8, ux, uz, iron);
       const s1 = Math.min(L, s + 2.4);
-      if (Math.abs((s + s1) / 2 - tGate) < 4.4) continue;
+      if (Math.abs((s + s1) / 2 - tGate) < 4.4) {
+        phys.box(x, y + 0.9, z, 0.05, 0.95, 0.05, ux, uz, 'railing'); // a post with no rail beside the gate
+        continue;
+      }
       const mx = a[0] + (ux * (s + s1)) / 2, mz = a[1] + (uz * (s + s1)) / 2;
       const ym = ras.heightAt(mx, mz);
       for (const h of [0.35, 1.55]) chunks.buf('detail', mx, mz).obox(mx, ym + h, mz, (s1 - s) / 2, 0.03, ym + h + 0.06, ux, uz, iron);
-    }
-    for (const [s0, s1] of [[0, tGate - 3.2], [tGate + 3.2, L]]) {
-      if (s1 - s0 < 1) continue;
-      const mx = a[0] + (ux * (s0 + s1)) / 2, mz = a[1] + (uz * (s0 + s1)) / 2;
-      phys.box(mx, ras.heightAt(mx, mz) + 0.9, mz, (s1 - s0) / 2, 0.9, 0.05, ux, uz, 'railing');
+      // one slab per bay, following the ground (a single slab along the whole side floated or sank on the slope)
+      const y1 = ras.heightAt(a[0] + ux * s1, a[1] + uz * s1);
+      const bot = Math.min(y, y1, ym) - 0.1, top = Math.max(y, y1, ym) + 1.8;
+      phys.box(mx, (bot + top) / 2, mz, (s1 - s) / 2 + 0.02, (top - bot) / 2, 0.05, ux, uz, 'railing');
     }
     const x = a[0] + ux * tGate, z = a[1] + uz * tGate, y = ras.heightAt(x, z);
     const g = chunks.buf('ground', x, z);
@@ -78,6 +84,7 @@ export function buildMonuments(doc: GeoDoc, ras: GeoRaster, chunks: RenderChunks
     for (const sd of [-1, 1]) {
       const hx = x + ux * 2.2 * sd, hz = z + uz * 2.2 * sd;
       chunks.buf('detail', hx, hz).obox(hx - uz * 1.0, y, hz + ux * 1.0, 0.04, 1.0, y + 2.6, ux, uz, iron);
+      phys.box(hx - uz * 1.0, y + 1.3, hz + ux * 1.0, 0.04, 1.3, 1.0, ux, uz, 'railing');
     }
   }
   // ---- metro entrance: pit, parapets, glass barrel canopy, pylon (long axis north-south, along 23rd St)
@@ -98,11 +105,19 @@ export function buildMonuments(doc: GeoDoc, ras: GeoRaster, chunks: RenderChunks
     phys.box(x, y + 0.5, z + 6.25, 2.65, 0.5, 0.25, 1, 0, 'wall');
     chunks.tag('canopy');
     const n = 8, R = 2.6, top = y + 1.0;
+    // the glass barrel: a thin slab per facet (its ends are open: people walk in under it)
+    for (let k = 0; k < n; k++) {
+      const a0 = (k / n) * Math.PI, a1 = ((k + 1) / n) * Math.PI;
+      const slab: number[] = [];
+      for (const f of [0.99, 1.01]) for (const a of [a0, a1]) for (const zz of [-6, 6]) slab.push(x + Math.cos(a) * R * f, top + Math.sin(a) * R * 0.9 * f, z + zz);
+      phys.hull(slab, 'canopy');
+    }
     for (let k = 0; k < n; k++) {
       const a0 = (k / n) * Math.PI, a1 = ((k + 1) / n) * Math.PI;
       const x0 = x + Math.cos(a0) * R, y0 = top + Math.sin(a0) * R * 0.9, x1 = x + Math.cos(a1) * R, y1 = top + Math.sin(a1) * R * 0.9;
       g.quad(x0, y0, z - 6, x1, y1, z - 6, x1, y1, z + 6, x0, y0, z + 6, glass, (Math.cos(a0) + Math.cos(a1)) / 2, (Math.sin(a0) + Math.sin(a1)) / 2, 0);
       const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+      chunks.tag('decor'); // steel ribs on the glass
       for (const zz of [-6, -3, 0, 3, 6]) g.obox((x0 + x1) / 2, (y0 + y1) / 2 - 0.06, z + zz, len / 2, 0.06, (y0 + y1) / 2 + 0.06, (x1 - x0) / len, 0, steel);
     }
     const px = x + 3.6, pz = z - 7.5;

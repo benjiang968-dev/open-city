@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { GROUPS } from '../../physicsGroups';
-import { SolidTags, type SolidKind, type SolidRecorder } from '../objects/solidKinds';
+import { PROP_COLLIDERS, PROP_KIND, SolidTags, type ColliderPart, type PropColliderName, type SolidKind, type SolidRecorder } from '../objects/solidKinds';
 
 // ------------------------------------------------------------------------------------------ colours
 /** sRGB hex (0xRRGGBB) to packed LINEAR bytes, which is what three.js expects in vertex colours. */
@@ -321,6 +321,19 @@ export class PhysChunks {
   }
   cylinder(cx: number, y0: number, cz: number, r: number, h: number, kind: SolidKind = 'untagged') {
     this.add(this.R.ColliderDesc.cylinder(h / 2, r).setTranslation(cx, y0 + h / 2, cz), cx, cz, kind);
+  }
+  /**
+   * A prop's colliders from the registry (PROP_COLLIDERS), for a prop drawn at (x, y, z) turned by yaw about +y
+   * (three.js makeRotationY: local +x -> (cos yaw, -sin yaw)) and scaled sxz across, sy up.
+   */
+  placeProp(name: PropColliderName, x: number, y: number, z: number, yaw = 0, sxz = 1, sy = 1) {
+    const kind = PROP_KIND[name];
+    const c = Math.cos(yaw), s = Math.sin(yaw);
+    for (const p of PROP_COLLIDERS[name] as readonly ColliderPart[]) {
+      const px = x + (p.c[0] * c + p.c[2] * s) * sxz, pz = z + (-p.c[0] * s + p.c[2] * c) * sxz;
+      if (p.shape === 'box') this.box(px, y + p.c[1] * sy, pz, p.h[0] * sxz, p.h[1] * sy, p.h[2] * sxz, c, -s, kind);
+      else this.cylinder(px, y + p.c[1] * sy, pz, p.r * sxz, p.h * sy, kind);
+    }
   }
   /** Build every accumulated trimesh. Returns the number of triangles. */
   finishTrimeshes(): number {
