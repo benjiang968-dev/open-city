@@ -5,12 +5,13 @@
 // Everything is deterministic from the building id; only shop names use the world seed.
 import * as THREE from 'three';
 import type { GeoDoc, GeoBuilding, Pt } from './geoDoc';
-import { centroid, clamp, hashStr, lerp, project, rand, type SegGrid } from './geoDoc';
+import { centroid, clamp, hashStr, lerp, pointInPoly, project, rand, type SegGrid } from './geoDoc';
 import { lin, mixc, shade, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
 import type { RoadNet } from './roadNet';
 import { B, K, type GeoRaster } from './terrain';
 import { TILE, makeFacadeTexture } from './facadeTex';
 import { POI_NAMES, poiName } from '../../data/poiNames';
+import { TUNING } from '../../tuning';
 
 // ----------------------------------------------------------------------------------------- art constants
 const STOREY = 3.2; // m
@@ -434,7 +435,13 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
     if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
-    else if (!phys.prism(P.flat(), yMin, top)) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    else {
+      // a prism is a convex hull: over an L- or U-shaped footprint (a third of the real buildings) it filled the notch,
+      // an invisible wall across courtyards, driveways and pavements. Concave footprints are cut into convex pieces.
+      let made = 0;
+      for (const piece of convexPieces(P)) if (phys.prism(piece.flat(), yMin, top)) made++;
+      if (!made) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz);
+    }
   }
 
   // -------------------------------------------------------------------------------------------- helpers
@@ -521,14 +528,23 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     if (Math.abs(long.ux * ax + long.uz * az) < 0.5) { ax = long.ux; az = long.uz; if ((front.ax + front.bx) / 2 - cx < 0 === ax > 0 && Math.abs(ax) > 0.3) { ax = -ax; az = -az; } }
     const half = Math.max(...walls.map((w) => Math.abs(((w.ax + w.bx) / 2 - cx) * ax + ((w.az + w.bz) / 2 - cz) * az)));
     const ts = Math.min(3.4, front.len * 0.22 + 1.5);
-    const tx = cx + ax * (half - ts * 0.6), tz = cz + az * (half - ts * 0.6);
-    const towerTop = yTop + 7 + rnd() * 5;
+    // the tower stands on the church's own footprint (it may project a little from the front wall) and off the road:
+    // on an irregular (real) outline the end of the long axis could lie outside it, and a tower stood in Q St. Step
+    // back toward the middle until it fits.
+    const foot: Pt[] = walls.map((w) => [w.ax, w.az]);
+    const ux = -az, uz = ax;
+    const cornersAt = (x: number, z: number): Pt[] => [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b2]) => [x + ux * a * ts + ax * b2 * ts, z + uz * a * ts + az * b2 * ts]);
+    let along = half - ts * 0.6;
+    const fits = (d: number) => pointInPoly(cx + ax * d, cz + az * d, foot) && cornersAt(cx + ax * d, cz + az * d).every((p) => !(ras.kindAt(p[0], p[1]) & K.ROAD));
+    while (along > 0 && !fits(along)) along -= 0.5;
+    const towerTop = yTop + 7 + rnd() * 5; // (drawn before the fit test result is used: the building's random stream stays the same)
+    if (!fits(Math.max(0, along))) return;
+    const tx = cx + ax * Math.max(0, along), tz = cz + az * Math.max(0, along);
     const fac = chunks.buf('facade', tx, tz);
     const grd = chunks.buf('ground', tx, tz);
     const sb = hashStr(String(tx)) & 255;
     const yBase = ras.heightAt(tx, tz) - 0.5;
-    const ux = -az, uz = ax;
-    const corners: Pt[] = [[-1, -1], [1, -1], [1, 1], [-1, 1]].map(([a, b2]) => [tx + ux * a * ts + ax * b2 * ts, tz + uz * a * ts + az * b2 * ts]);
+    const corners: Pt[] = cornersAt(tx, tz);
     for (let i = 0; i < 4; i++) {
       const p = corners[i], q = corners[(i + 1) % 4];
       const L = Math.hypot(q[0] - p[0], q[1] - p[1]);
@@ -694,6 +710,55 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
 }
 
 // ======================================================================================================
+/**
+ * A footprint as convex pieces: itself when convex (within a few cm), else its triangulation with neighbouring
+ * triangles merged while the union stays convex (Hertel-Mehlhorn). A footprint the triangulation cannot cover (self-
+ * intersecting data) stays whole (its hull, as before).
+ */
+function convexPieces(P: Pt[]): Pt[][] {
+  const n = P.length;
+  const cross = (a: Pt, b: Pt, c: Pt) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const area2 = (idx: number[]) => { let a = 0; for (let i = 0; i < idx.length; i++) { const p = P[idx[i]], q = P[idx[(i + 1) % idx.length]]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
+  const all = Array.from({ length: n }, (_, i) => i);
+  const sgn = Math.sign(area2(all)) || 1;
+  // convex enough: no vertex more than TUNING.geo.footprintNotchTol inside the line past it (a bay window or a shallow jog is
+  // filled, as the hull did; a courtyard, a driveway notch or an L's inner corner is not)
+  const convex = (idx: number[]) => {
+    for (let i = 0; i < idx.length; i++) {
+      const a = P[idx[(i + idx.length - 1) % idx.length]], b = P[idx[i]], c = P[idx[(i + 1) % idx.length]];
+      const L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
+      if ((cross(a, b, c) * sgn) / L < -TUNING.geo.footprintNotchTol) return false;
+    }
+    return true;
+  };
+  if (convex(all)) return [P];
+  if (n > 400) return [P];
+  const tris = THREE.ShapeUtils.triangulateShape(P.map((p) => new THREE.Vector2(p[0], p[1])), []);
+  let polys = tris.map((t) => (Math.sign(area2(t)) === sgn ? [...t] : [t[0], t[2], t[1]]));
+  const total = polys.reduce((s, q) => s + Math.abs(area2(q)), 0);
+  if (!polys.length || Math.abs(total - Math.abs(area2(all))) > Math.abs(area2(all)) * 0.02 + 1) return [P];
+  for (let merged = true; merged;) {
+    merged = false;
+    for (let i = 0; i < polys.length && !merged; i++) {
+      const A = polys[i];
+      for (let j = i + 1; j < polys.length && !merged; j++) {
+        const B2 = polys[j];
+        for (let k = 0; k < A.length && !merged; k++) {
+          const a = A[k], b = A[(k + 1) % A.length];
+          const m = B2.findIndex((v, q) => v === b && B2[(q + 1) % B2.length] === a);
+          if (m < 0) continue;
+          // A from b round to a, then B from a round to b (shared edge dropped)
+          const ra: number[] = [], rb: number[] = [];
+          for (let q = 0; q < A.length; q++) ra.push(A[(k + 1 + q) % A.length]);
+          for (let q = 0; q < B2.length; q++) rb.push(B2[(m + 1 + q) % B2.length]);
+          const U = [...ra, ...rb.slice(1, -1)];
+          if (convex(U)) { polys[i] = U; polys.splice(j, 1); merged = true; }
+        }
+      }
+    }
+  }
+  return polys.map((q) => q.map((v) => P[v]));
+}
 function footArea(P: Pt[]) {
   let a = 0;
   for (let i = 0, j = P.length - 1; i < P.length; j = i++) a += (P[j][0] - P[i][0]) * (P[j][1] + P[i][1]);

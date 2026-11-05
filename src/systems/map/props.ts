@@ -325,6 +325,9 @@ export function buildProps(doc: GeoDoc, ras: GeoRaster, net: RoadNet, info: NetM
       if (ras.kindAt(ex, ez) & (K.BUILDING | K.ROAD)) continue;
       // local +z (the back panel) points away from the road
       const bx = -q.uz * side, bz = q.ux * side;
+      // the whole shelter (4.3 m long) clear of roads and buildings, not just its middle: next to a driveway mouth
+      // (real data) its end stood 2 m into Wisconsin Ave
+      if ([[-2.2, -0.8], [2.2, -0.8], [-2.2, 0.8], [2.2, 0.8]].some(([a, b2]) => ras.kindAt(ex + q.ux * a + bx * b2, ez + q.uz * a + bz * b2) & (K.BUILDING | K.ROAD))) continue;
       shelters.push({ x: ex, y: ras.heightAt(ex, ez), z: ez, yaw: Math.atan2(bx, bz) });
       phys.box(ex + bx * 0.58, ras.heightAt(ex, ez) + 1.2, ez + bz * 0.58, 2, 1.2, 0.06, q.ux, q.uz);
     }
