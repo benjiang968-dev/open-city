@@ -348,3 +348,113 @@ Format: date · what changed · what to test · known issues.
       - **Trees on footpaths:** trees and lamps stand on the footpath centre lines on Dumbarton St and Potomac St, blocking 114 walk links for a person.
       - **Low bridges:** the camera goes inside the deck of the low canal bridges when you walk under them.
     - **Merge note:** merging `m3-geo-art-review` conflicts in `georgetownWorld.ts` (keep both `droppedBuildings` and `audit`; that branch already adds its street-clipped drops to the same set) and in DEVLOG.md.
+
+## 2026-11-05: Stage 1 (fix the foundation)
+
+### Stairs and universal collisions (Stage 1 item 1, branch `s1-physics`)
+
+- **The bug.** The owner could walk through stairs. The house stoops (about 2,600 on Georgetown, 2 to 13 steps each) were drawn with no collider at all. The canal steps ran up into the sidewalks of the streets they climb to, so their top half was buried under the pavement, and the canal's retaining wall stood across them: they could not be climbed. Many other solid things had no collider either: benches, bus shelters (except the back panel), gravestones, most trees (only those within 9 m of a road), lock gates, moored boats, arcade and portico columns, the metro canopy, the stair middle hand rail and the canal coping. The statue plinth had one box over all its tiers (an invisible wall round the 0.5 m first tier). On the grid: benches, street-sign posts, taxi-rank posts and boats.
+- **Solid kinds registry** (`src/systems/objects/solidKinds.ts`): every prop and structure kind declares its Stage 2 class (static / dynamic / interactive), its collider shape (trimesh, box, cylinder, hull, ramp, boxes, own body, none), whether it must stop the player, an audit tolerance and its F4 colour. The instanced props' colliders are data there too (`PROP_COLLIDERS`: lamp base and pole, bench legs + slats + back, the six parts of a bus shelter, gravestone, signal pole, stop post, tree trunk, the grid's bench and posts). They are placed with `PhysChunks.placeProp`. Every static collider is tagged with its kind (`CityMap.solidTags`). Stair ramps, stair walls, parapets, decks and arches are separate per-chunk trimeshes by kind. Stage 2 can give a kind its own body (a bin, a chair) without touching the generators. Nothing of pickup, inventory or interiors is built.
+- **Physics audit** (`src/systems/physicsAudit.ts`, scenario `physaudit`, run with `QUERY=physaudit=1`): with `?physaudit=1` the map records every box, cylinder and wall it draws, with its kind. The audit then compares the drawing with Rapier and prints each mismatch with coordinates:
+  - horizontal rays at every drawn solid face, every instanced prop's own triangles and every facade (MISSING / SHORT / LONG);
+  - vertical rays at 3,000 random points, inside every solid part and along every stair, against the drawn triangles (UNSOLID: drawn within reach above the physics floor; UNDRAWN: a physics floor with nothing drawn);
+  - per stair, the drawn-vs-ramp height and the largest jump in the physics surface.
+
+  | | before (f13af69) | after |
+  |---|---|---|
+  | Georgetown side-probe mismatches (solid kinds) | 26,965 | 3 (stair risers 0.13–0.17 m set back) |
+  | Georgetown floor mismatches | 3,714 | 8 (metro canopy 5, a bench edge 1, stair flights 2) |
+  | grid side-probe mismatches | 329 (292 street-sign posts, 36 benches, 1 tree) | 2 (two trees, 0.10 m) |
+  | grid floor mismatches | 45 (benches) | 0 |
+  | stairs: largest physics step between samples 0.1 m apart | up to 3.06 m | 0.066 m |
+  | stairs: ramp vs drawn tread | −0.17 to +0.6 m | −0.115 to +0.113 m |
+
+- **Colliders added or fixed (Georgetown):**
+  - stoops: one convex ramp each (flat landing, then down through the middle of every tread, a half-riser lip at the foot) and a thin slab for each iron rail;
+  - every tree trunk; lamps (base and pole); benches; bus shelters; gravestones; signal poles to their full 6.3 m;
+  - lock gate leaves, balance beams and posts; moored boats; the round fountains' pedestals;
+  - Washington Harbour's arcade columns and setback tiers; the mansion portico's platform and columns; the smokestack's tapered stack;
+  - the steel freeway columns as boxes (the round collider stuck out 0.17 m); the statue plinth as its four tiers; the cemetery railing per 2.4 m bay, following the slope; the gate leaves;
+  - the metro canopy as thin glass slabs (its ends stay open); the canal coping's top and outer face; deck edges; the stone arches' undersides and spandrels, abutments and cutwaters;
+  - the stair walls as solid slabs; the Exorcist Steps' middle hand rail;
+  - benches on the boardwalk now stand on it (they were drawn on the ground under it).
+- **Stairs:**
+  - the ramp runs half a riser above the risers' feet (tread error ±0.09 m, was 0 to −0.17 m);
+  - landings and the flat top are drawn (they were holes);
+  - a stair's footprint is cut out of the terrain, sidewalks, junction corners and canal aprons (render and physics). The canal retaining walls stop either side, and the side walls stand a balustrade (0.9 m) above the ground outside;
+  - stair ends are cut back out of carriageways. A stair too short for its rise gets a longer foot (`geo.stairMaxSlope` 0.84, `geo.stairMaxExtend` 3.5 m, never into water);
+  - footbridge ends land on the canal bank (the north end hung 0.8 m above it).
+- **Grid:** benches, street-sign posts, taxi-rank posts (moved a metre along the kerb, off the rank's spot where the player starts) and moored boats.
+- **Character controller:** its numbers moved to `TUNING.player`:
+  - `ccOffset`;
+  - `autostepHeight` 0.45;
+  - `autostepMinWidth` 0.2 (was 0.25);
+  - `snapToGround` 0.45 (was 0.4);
+  - `maxSlopeDeg` 52 (was 50);
+  - `minSlopeSlideDeg` 52 (new: standing on a 32–40° stair no longer creeps);
+  - `groundedVy`.
+- **F4 collision view** (`src/systems/physicsDebug.ts`): wireframes of the colliders within 22 m of the player, coloured by kind, bright in front of geometry and faint behind it, rebuilt 4 times a second. When it's off, nothing is built or added to the scene. The help line and the pause-menu controls mention it. Its numbers are `TUNING.debug.phys*`.
+- **Test:** `npm run build`, then:
+  - `QUERY=physaudit=1 MAP=georgetown node scripts/shot.mjs x physaudit` (and `MAP=grid`);
+  - `MAP=georgetown node scripts/shot.mjs 31-physics-stairs stairs`: every stair up and down with held keys, a footbridge, stoops of 2, 3, 5, 7 and 10 steps (and sideways into the rail), a kerb, the statue plinth (jump twice), a bench (jump onto the seat), Key Bridge and the freeway deck, and into one of every solid prop kind;
+  - `SAMPLES=3000 MAP=georgetown node scripts/shot.mjs x fallthrough` (and `SAMPLES=2000 MAP=grid`);
+  - `MAP=georgetown node scripts/shot.mjs x physf4`: the `31-physics-f4-*` screenshots;
+  - in the game: press F4 and walk up a stoop, the Exorcist Steps (Prospect St at 36th St) or the canal steps from the towpath.
+- **Results (final build):**
+  - `physaudit`: the table above.
+  - `stairs` on Georgetown: pass, no failures.
+    - All 8 built stairs were walked up and down holding W. The Exorcist Steps (8.56 m rise) took 6.7 s up and 4.7 s down. The six canal steps (3.65–3.72 m rise) took 2.75–3.0 s up and 1.6–1.7 s down. The short path stair has a 0.15 m rise.
+    - The feet never went below the collider surface.
+    - Standing 3 s mid-flight: 0.010 m creep, 0.015 m jitter.
+    - Stoops of 2/3/5/7/10 steps: the landing is reached in 0.32–1.35 s, and walking sideways into the rail stops the player.
+    - The footbridge was crossed, and the kerb walked up and down.
+    - Statue plinth: each tier stops the player, and two jumps reach the top (1.04 m each).
+    - Bench: one jump lands on the seat.
+    - Key Bridge: 32.7 m along the sidewalk at a constant height. Whitehurst Freeway deck: 33.7 m, no sinking.
+    - Props: lock gate, railing, column, monument, wall, lamp, tree, bench, signal pole, sign post, bus shelter and gravestone stop the player 0.04–0.08 m from their collider. Fountain, boat, building and tower are skipped, because the scenario finds no clear straight approach to one; the audit covers them.
+  - `stairs` on the grid (props only): pass. Bench, railing, kiosk, column, lamp, tree and sign post stop the player at 0.04 m. Building, fountain, boat and container are skipped.
+  - `fallthrough` on Georgetown (3,000 drops, 1,898 on land): fails its own criteria.
+    - 1,876 within 5 cm of `map.heightAt`; 0 below the surface; 0 inside a building; 0 not settled.
+    - 1 on a parked car, and 3 resting on a ledge's edge.
+    - 15 (0.8 %) where `map.heightAt` is 5–19 cm off the collider. The limit is 0.2 %.
+    - 3 hovering (the limit is 0): (699.7, −467.2) 0.26 m up on a steep slope; (681.1, −333.2) and (568.2, −319.7) 2.0 m above the floor with nothing found under the capsule. These two are not explained yet.
+  - `fallthrough` on the grid (2,000 drops, 823 on land): 815 ok, 5 on piers, 2 on cars. It fails on 1 drop that sank 5.3 cm into the big ground box at (37.8, −384).
+  - `physf4`: 4 screenshots, wireframes in each.
+  - `world walk drive handling crashspikes gate2 mapcheck theft`:
+    - Grid, on the final build: all exit 0 with a clean console. Walk 4.8 m (as on the base). Crashspikes: 0 frames over 33 ms.
+    - Georgetown, on the 766cd44 build (the later commits change only the grid generator and the scenario scripts): all exit 0 with a clean console.
+    - Georgetown crashspikes: 11 frames over 33 ms, worst 150 ms (physics, the wreck test). The base build spikes the same way (worst 148 ms, physics).
+- **Performance against the base (f13af69).** Georgetown, 4x CPU throttle, after a 600-frame warm-up, 3 interleaved base/new runs. Medians, with the range in brackets:
+
+  | | base | s1-physics |
+  |---|---|---|
+  | colliders | 10,779 | 24,180 |
+  | boot to first frame | 19.0 s | 21.4 s |
+  | Rapier step alone | 7.2 ms (4.7–8.7) | 7.6 ms (7.4–8.4) |
+  | frame CPU on foot | 11.9 ms (11.3–14.6) | 13.1 ms (12.8–15.2) |
+  | physics section on foot | 7.7 ms (7.2–9.5) | 10.2 ms (7.7–11.0) |
+  | frame CPU in a car | 12.5 ms | 9.2 ms |
+  | garbage per frame | 68.9 KB | 66.2 KB |
+  | draw calls / triangles in view | ~640 / 1.0 M | same |
+
+  - With F4 on, one rebuild every 0.25 s costs 0.4–20 ms (at 4x throttle). With F4 off it costs nothing.
+  - Grid (runs without the warm-up): colliders 1,836 → 1,972; step 2.0 → 2.1 ms; frame on foot 9.6 → 10.0 ms.
+  - An earlier experiment that removed the prop colliders at runtime made no measurable difference to the step. The on-foot physics section is up to 2.5 ms slower at 4x throttle (about 0.6 ms unthrottled), but the base and new ranges overlap, so it is not proven either way.
+- **Known issues:**
+  - Three of the eleven stairs in the (knowledge-based) data run along carriageways for their whole length (by Rock Creek and under the freeway) and are no longer built: (495.3, 119.4), (664.2, −330.5) and (724.8, −479.2). Their walk links remain. One more is cut to 5 m with a 0.15 m rise.
+  - Every tree is solid now, so trees the data puts on footpaths (Dumbarton St, Potomac St) block the player there.
+  - `map.heightAt` is 5–19 cm off the collider at 0.8 % of the fallthrough points, all within 2.5 m of a band edge (kerbs, sidewalk skirts: the 1 m raster smooths the 0.15 m step). People placed by `heightAt` float or sink that much there. On the Whitehurst Freeway deck, the map's walk height is 0.3 m above the collider.
+  - Over the top 3 m of the canal steps by Wisconsin Ave, `map.heightAt(x, z, top)` returns the bridge sidewalk (10.15) above the stair (9.25–9.95). The bridge footprint in the map query overlaps the stair.
+  - Two unexplained fallthrough hovers (above), and the grid's 5.3 cm sink.
+  - The canal steps climb at up to 40°, steeper than real steps, because the data gives them little room between the towpath and the street.
+  - The footbridges still can't be entered from the north: their north end is on the canal's north bank, behind the retaining wall (known since the C0 review).
+  - Stairwell walls are plain boxes. Where a stair runs below a sidewalk, they read as a tall wall along the pavement.
+  - The audit leaves:
+    - 3 stair risers 0.13–0.17 m behind their drawn face;
+    - the metro canopy's curved glass against its slabs (up to 0.4 m);
+    - one bench-edge sample;
+    - two stair-flight samples.
+  - The capsule rests up to 0.16 m above a slope, and on ledge edges with its centre over a lower floor. This is inherent to a capsule.
+  - The `stairs` scenario does not walk into a fountain, boat, building or tower (no clear approach found). The audit's side probes cover them.
+  - Boot to first frame on Georgetown is 2.4 s longer at 4x throttle (about 0.6 s unthrottled): the extra colliders and the stairwell clipping.
+  - Crashspikes on Georgetown spikes up to 150 ms in physics in both the base and this branch. `gate2` and `handling` on Georgetown don't reach their test conditions in the base either.

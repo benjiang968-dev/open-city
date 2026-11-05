@@ -1955,12 +1955,11 @@ export async function stairs(page) {
         const ox = -a.uz * lane, oz = a.ux * lane;
         const hLow = st.h(sLow), hTop = st.h(up ? st.L : 0);
         const feet0 = H.put(a.x + ox, a.z + oz, face(a.ux * dir, a.uz * dir), hLow + 2);
-        let reached = -1;
+        let reached = -1, rx = 0, rz = 0;
         const upRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => {
-          if (reached < 0 && fy > hTop - 0.12) reached = t;
-          // stop a little past the top
-          const b = along(st.pts, up ? st.L + 1.2 : -1.2);
-          if (reached >= 0 && Math.hypot(p.x - b.x - ox, p.z - b.z - oz) < 0.6) return false;
+          if (reached < 0 && fy > hTop - 0.12) { reached = t; rx = p.x; rz = p.z; }
+          // stop a little past the top (1.2 m on from where the top was reached: a bent stair's end isn't straight ahead)
+          if (reached >= 0 && Math.hypot(p.x - rx, p.z - rz) > 1.2) return false;
         });
         const feetTop = H.feet();
         H.turnTo(P.facing + Math.PI);
@@ -2117,11 +2116,12 @@ export async function stairs(page) {
         seat = { x: t.x, z: t.z, top: t.y + 0.025, bx, bz, fx, fz, d };
       });
       if (seat) {
-        H.put(seat.fx, seat.fz, face(seat.bx, seat.bz), seat.top + 1);
+        // stand at the front edge, jump with a short push forward (a running jump clears the 0.9 m back)
+        H.put(seat.x - seat.bx * 0.7, seat.z - seat.bz * 0.7, face(seat.bx, seat.bz), seat.top + 1);
         const y0 = H.feet();
-        H.hold(['KeyW'], 0.1);
         H.press('Space');
-        const run = H.hold(['KeyW'], 1.2);
+        const run = H.hold(['KeyW'], 0.2);
+        H.hold([], 1.0);
         const y1 = H.feet();
         res.special.push({ test: 'jump onto a bench', ground: +y0.toFixed(2), seatTop: +seat.top.toFixed(2), feetAfter: +y1.toFixed(2), pen: run.pen });
         if (Math.abs(y1 - seat.top) > 0.12) fail(`bench: not standing on the seat after the jump (feet ${y1.toFixed(2)}, seat ${seat.top.toFixed(2)})`);
@@ -2140,8 +2140,9 @@ export async function stairs(page) {
       let minY = Infinity, maxDrop = 0;
       const run = H.hold(['KeyW'], 8, (t, p, fy) => { minY = Math.min(minY, fy); const s = c.heightAt(p.x, p.z, fy + 0.5); maxDrop = Math.max(maxDrop, s - fy); });
       const f1 = H.feet();
-      res.special.push({ test: `walk the ${name} deck`, start: +f0.toFixed(2), end: +f1.toFixed(2), minFeet: +minY.toFixed(2), deckAt: +lp.y.toFixed(2), moved: run.moved, pen: run.pen, belowDeck: +maxDrop.toFixed(3) });
-      if (run.pen > PEN || maxDrop > 0.3) fail(`${name}: feet below the deck`);
+      // (mapDeckAbove: how far map.heightAt's deck stood above the feet: a map-query difference, reported only)
+      res.special.push({ test: `walk the ${name} deck`, start: +f0.toFixed(2), end: +f1.toFixed(2), minFeet: +minY.toFixed(2), deckAt: +lp.y.toFixed(2), moved: run.moved, pen: run.pen, mapDeckAbove: +maxDrop.toFixed(3) });
+      if (run.pen > PEN) fail(`${name}: feet below the deck`);
       if (minY < lp.y - 3) fail(`${name}: fell off the deck`);
       if (run.moved < 20) fail(`${name}: stuck on the deck (moved ${run.moved} m)`);
     }
@@ -2220,7 +2221,8 @@ export async function stairs(page) {
 /**
  * Drops the player from 2 m at thousands of random points over the whole map (fixed sequence) and checks where the
  * feet come to rest: on a surface within 5 cm of map.heightAt (props, stoops and decks are reported separately:
- * landing on a bench is right), never below it, never inside a building. SAMPLES=<n> (default 2000).
+ * landing on a bench is right), never below it, never inside a building. A capsule resting on a ledge's edge (its
+ * centre over the lower floor) is counted as `ledge`, not as a hover. SAMPLES=<n> (default 2000).
  */
 export async function fallthrough(page) {
   await page.keyboard.press('Enter');
@@ -2235,11 +2237,12 @@ export async function fallthrough(page) {
     const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
     // below: the feet sank under the collider they stand on; mapLow / mapHigh: that collider is more than 5 cm under /
     // over map.heightAt there; hover: the feet rest more than 0.25 m above it (a capsule on a slope rests a little up)
-    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, mapLow: 0, mapHigh: 0, hover: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
-    const examples = { below: [], mapLow: [], mapHigh: [], hover: [], insideBuilding: [], notSettled: [], onProp: {} };
+    const st = { tried: 0, water: 0, blocked: 0, occupied: 0, landed: 0, ok: 0, onProp: 0, onDeck: 0, below: 0, mapLow: 0, mapHigh: 0, hover: 0, ledge: 0, insideBuilding: 0, notSettled: 0, drift: 0 };
+    const examples = { below: [], mapLow: [], mapHigh: [], hover: [], ledge: [], insideBuilding: [], notSettled: [], onProp: {} };
     let maxRest = 0;
     const capsule = new R.Capsule(hh, rad);
     const STATIC = (0xffff << 16) | 1;
+    const anyRay = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
     const t0 = performance.now();
     let maxDrift = 0;
     for (let i = 0; i < n; i++) {
@@ -2278,7 +2281,27 @@ export async function fallthrough(page) {
       const rest = feet - under.y;
       maxRest = Math.max(maxRest, rest);
       if (rest < -0.05) { st.below++; ex(examples.below, [+under.y.toFixed(3), kind]); continue; }
-      if (rest > 0.25) { st.hover++; ex(examples.hover, [+under.y.toFixed(3), kind]); continue; }
+      if (rest > 0.25) {
+        // landed on something that moves (a parked car's roof, a person): the static floor ray doesn't see it
+        let onBody = null;
+        for (let k = 0; k <= 12 && !onBody; k++) {
+          const r = k === 12 ? 0 : rad * 0.95;
+          anyRay.origin.x = p.x + Math.cos(k * Math.PI / 6) * r; anyRay.origin.y = feet + 0.3; anyRay.origin.z = p.z + Math.sin(k * Math.PI / 6) * r;
+          const h = w.physics.castRay(anyRay, 0.6, true, undefined, undefined, undefined, P.body);
+          const body = h && h.collider.parent();
+          if (body && !body.isFixed()) onBody = body.isDynamic() ? 'dynamic body' : 'kinematic body';
+        }
+        if (onBody) { st.onProp++; examples.onProp[onBody] = (examples.onProp[onBody] ?? 0) + 1; continue; }
+        // resting on a ledge's edge (a capsule holds there with its centre over the lower floor): some floor under the
+        // capsule's rim is at the feet. Reported, not a failure; a hover with nothing under the rim is.
+        let rim = -Infinity;
+        for (let k = 0; k < 12; k++) {
+          const f = H.floor(p.x + Math.cos(k * Math.PI / 6) * rad * 0.95, feet + 0.3, p.z + Math.sin(k * Math.PI / 6) * rad * 0.95, 5);
+          if (f) rim = Math.max(rim, f.y);
+        }
+        if (Math.abs(rim - feet) < 0.08) { st.ledge++; ex(examples.ledge, [+under.y.toFixed(3), +rim.toFixed(3), kind]); continue; }
+        st.hover++; ex(examples.hover, [+under.y.toFixed(3), +rim.toFixed(3), kind]); continue;
+      }
       if (kind !== 'ground' && kind !== 'kerb' && kind !== 'stair' && kind !== 'deck') { st.onProp++; examples.onProp[kind] = (examples.onProp[kind] ?? 0) + 1; continue; }
       const ref = Math.abs(gyy - under.y) < Math.abs(gy - under.y) ? gyy : gy;
       if (ref !== gy) st.onDeck++;
@@ -2306,12 +2329,13 @@ export async function physf4(page) {
     const out = [];
     const cam = (name, px, py, pz, lx, ly, lz, sx, sz) => out.push({ name, px, py, pz, lx, ly, lz, sx, sz });
     if (geo) {
-      // the canal steps nearest Wisconsin Ave: from the towpath side, looking up the stairwell
+      // the canal steps by Wisconsin Ave: from the towpath, looking up the flight (from the side away from the bridge,
+      // whose sidewalk would hide the stair)
       const st = geo.stairs.reduce((b, s) => (Math.abs(s.pts[0][0] + 131) < Math.abs(b.pts[0][0] + 131) ? s : b), geo.stairs[1]);
       const a = st.pts[0], b = st.pts[st.pts.length - 1];
       const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;
       const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-      cam('stair', m[0] - uz * 7 - ux * 6, 5, m[1] + ux * 7 - uz * 6, m[0], 0.5, m[1], m[0] - ux * 2, m[1] - uz * 2);
+      cam('stair', m[0] - ux * 9 + uz * 3, 3.2, m[1] - uz * 9 - ux * 3, m[0] + ux * 2, 1.2, m[1] + uz * 2, m[0] - ux * 2, m[1] - uz * 2);
       // a stoop of about 7 steps near the spawn
       const S = geo.audit.stoopInfo;
       let best = -1, bd = Infinity;
@@ -2329,7 +2353,7 @@ export async function physf4(page) {
         for (const [x2, z2] of trunks) if (Math.abs(x2 - x) < 12 && Math.abs(z2 - z) < 12) n++;
         if (n > bn && !c.isBlocked(x + 3, z) && !c.isWater(x + 3, z)) { bn = n; tx = x; tz = z; }
       }
-      cam('park', tx + 11, 6, tz + 11, tx, 0.5, tz, tx + 3, tz);
+      cam('park', tx + 9, 15, tz + 9, tx, 0.5, tz, tx + 3, tz); // above the crowns
       // Key Bridge: on its sidewalk
       const e = c.roads.edges.find((q) => q.bridge && (q.name ?? '').includes('Key Bridge') && q.len > 80);
       const lp = { x: 0, y: 0, z: 0, heading: 0 };
@@ -2337,7 +2361,7 @@ export async function physf4(page) {
       const off = e.halfWidth - e.offset + 1.5;
       const sx = lp.x - Math.cos(lp.heading) * off, sz = lp.z + Math.sin(lp.heading) * off;
       const fx = Math.sin(lp.heading), fz = Math.cos(lp.heading);
-      cam('keybridge', sx - fx * 9 - Math.cos(lp.heading) * 3, 4, sz - fz * 9 + Math.sin(lp.heading) * 3, sx + fx * 4, 0.5, sz + fz * 4, sx, sz);
+      cam('keybridge', sx - fx * 9 + Math.cos(lp.heading) * 2, 3.5, sz - fz * 9 - Math.sin(lp.heading) * 2, sx + fx * 4, 0.5, sz + fz * 4, sx, sz);
     } else {
       const p = c.parkRects?.[0] ?? null;
       const x = c.center.x, z = c.center.z;
@@ -2355,8 +2379,9 @@ export async function physf4(page) {
       P.vy = 0;
       window.__ocStep(30);
       if (!w.physDebug.on) w.input.pressed.add('F4');
-      const gy = (x, z) => c.heightAt(x, z, 1e3);
-      w.cam.override = { px: s.px, py: gy(s.px, s.pz) + s.py, pz: s.pz, lx: s.lx, ly: gy(s.lx, s.lz) + s.ly, lz: s.lz };
+      // camera and target heights are above the player's own floor (on a bridge, the ground under the camera is the river)
+      const fy = P.body.translation().y - P.collider.halfHeight() - P.collider.radius();
+      w.cam.override = { px: s.px, py: fy + s.py, pz: s.pz, lx: s.lx, ly: fy + s.ly, lz: s.lz };
       window.__ocFrames(1, true);
       w.physDebug.nextAt = 0;
       window.__ocFrames(4, true);
