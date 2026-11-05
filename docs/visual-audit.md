@@ -6,6 +6,24 @@ patchy disconnected foliage, washed-out artificial lighting. This document finds
 one with a controlled experiment, and sets the acceptance standard the render, people, vehicles and facade lanes will
 be judged by. It changes no game code.
 
+The causes in brief (details, file:line and proof in sections 3-7):
+- **Grainy asphalt:** the baked asphalt is a 6.6:1 contrast of near-black binder and pale 1-2 cm stones with
+  per-texel noise; mipmaps, filtering, anisotropy, colour spaces and the metre-scaled projection are all correct, and a
+  4x finer bake (High) leaves the screen grain unchanged. Not shadow acne, not normal maps, not z-fighting (markings
+  do lie under other road surfaces at some junctions: a small roads issue).
+- **Flat facades:** each wall is one flat quad per band with windows, doors and frames painted into a tile; the only
+  relief is a weak normal map; one tile for every upper bay of a building.
+- **Block people and cars:** they are literally boxes: 7 boxes per person with rigid swinging limbs; two boxes per car
+  with box wheels (round wheels only on the car you drive).
+- **Patchy foliage:** single 6-9 cm leaves under an alpha test on ~40 big plates around an opaque dark ball; branch
+  ends poke out; near trees cast no shadow; 20-face gems beyond 110 m; and a random 20 % (Medium) or 55 % (Low) of all
+  trees is never drawn, even next to you.
+- **Washed-out light:** the sky is reflected and lets in diffuse light everywhere with no occlusion (no AO, no
+  buildings in the environment, the bright horizon reflected at street level); removing either its reflection or its
+  diffuse part alone raises the street frame's saturation from 0.23 to 0.30; shade is lit by blue sky alone; clear-day
+  fog from 180 m milks every
+  elevated view. Tone mapping, exposure and colour management are not the cause.
+
 ## 1. What was compared, and how
 
 | | build | how it was made |
@@ -34,22 +52,36 @@ Tools (both new in this branch):
   baked texture arrays back from the GPU level by level.
 
 Test conditions, stated honestly: headless Chromium (Playwright) with SwiftShader (software Vulkan through ANGLE), no
-GPU; MSAA 4x (`gl.SAMPLES` 4), max anisotropy 16; Medium preset (512 px surface maps, anisotropy 8, 1536 px shadow
-cascades to 320 m, near trees to 110 m); a shared 4-core machine at load 13-14. SwiftShader renders the same pixels a
-GPU would for everything measured here except speed (frame times below are not meaningful) and possibly the exact
-alpha-to-coverage pattern. Image metrics come from `scratchpad/av/tools/metrics.py` (luminance of the sRGB PNG; "grain"
-= standard deviation of the luminance minus its 2 px Gaussian blur, x1000, in a fixed region).
+GPU; MSAA 4x (`gl.SAMPLES` 4), max anisotropy 16; Medium preset unless stated (512 px surface maps, anisotropy 8,
+1536 px shadow cascades to 320 m, near trees to 110 m); 1280x720 at device pixel ratio 1; a shared 4-core machine (load
+13-14 during the first experiments x1-x3, 0-7 during the final captures). SwiftShader renders the same pixels a GPU
+would for everything measured here except speed (no frame time in this document is meaningful) and possibly the exact
+alpha-to-coverage pattern. Image metrics come from `scripts/viewMetrics.py` (luminance of the sRGB PNG; "grain" = the
+standard deviation of the luminance minus its 2 px Gaussian blur, x1000, in three fixed road regions of `road-far`:
+near 3-8 m, mid 10-20 m, far 60-150 m).
 
-Reproduce:
+Reproduce (each line is one browser; run them one at a time):
 
     npm run build
     node scripts/viewShots.mjs --dist <before-dist> --prefix 40-before rep street2 street3 door people car tree road-far aerial spawn
     node scripts/viewShots.mjs --dist dist --prefix 40-base rep street2 street3 door people car tree road-far aerial spawn
+    python3 -I scripts/viewMetrics.py compare screenshots 40-before 40-base
+    # experiments (x1 road, x5 lighting and overlap, x4 Low, x6 High, x7 junction)
     node scripts/viewShots.mjs --dist dist --prefix x1 --out <scratch> --exp scripts/viewExperiments.js \
       road-far@texinfo road-far road-far@nomip road-far@avgalb road-far@nonrm road-far@nomacro road-far@miplod road-far@noshadow road-far@env0
+    node scripts/viewShots.mjs --dist dist --prefix x5 --out <scratch> --exp scripts/viewExperiments.js \
+      rep rep@env0 rep@envspec0 rep@envdiff0 rep@hemi0 rep@sun0 rep@onlysun rep@skydiff1 rep@exp1 rep@agx rep@neutral rep@nofog \
+      rep@noshadow rep@avgalb road-far road-far@zfight road-far@envspec0 road-far@avgalb road-far@nonrm aerial aerial@nofog tree tree@nocards
     node scripts/viewShots.mjs --dist dist --prefix x2 --out <scratch> --exp scripts/viewExperiments.js \
-      rep rep@env0 rep@hemi0 rep@sun0 rep@onlysun rep@exp1 rep@agx rep@neutral rep@nofog rep@skydiff1 rep@noshadow rep@avgalb \
-      tree tree@a2coff tree@nocards door@wire door@nonrm people@wire car@wire aerial aerial@nofog
+      tree tree@a2coff tree@nocards door@wire door@nonrm people@wire car@wire
+    node scripts/viewShots.mjs --dist dist --prefix x4 --quality low --out <scratch> --exp scripts/viewExperiments.js rep tree road-far road-far@texinfo aerial
+    node scripts/viewShots.mjs --dist dist --prefix x6 --quality high --out <scratch> --exp scripts/viewExperiments.js rep tree road-far road-far@texinfo
+    node scripts/viewShots.mjs --dist dist --prefix x7 --out <scratch> --exp scripts/viewExperiments.js junction junction@zfight junction-top
+    python3 -I scripts/viewMetrics.py stats <scratch>/x5-*.png
+
+(x1 and x2 were shot before the script pinned camera heights and held the loop from boot; their cameras differ from
+the final ones by under 1 cm, and the static pixels of road-far match the final capture: grain 95.5 / 34.0 / 28.2 in
+both. x2's tree shots used the earlier tree framing, FOV 62 and look-at 3.1 m.)
 
 ## 2. The views
 
@@ -130,6 +162,40 @@ screen-space derivatives of the world-space uv (worldMaterial.ts:80-84), tiles s
 colour shows level 0 only in the bottom rows of the frame (the first ~3 m), levels 1-2 to ~15 m, 3-4 to ~50 m. Normal
 map: mean tilt 0.10 at level 0 (none over 0.3), 0.01 at level 3: modest, no specular sparkle.
 
+*It is not a texture-resolution problem.* The same view on the three presets (x4 Low, x5 Medium, x6 High; Low's
+0.7-scale canvas resized to 1280x720 for the metric):
+
+| preset | surface map | texel | asphalt mip 0: sd/mean, 10th-90th pct, neighbour corr. | grain near / mid / far |
+|---|---|---|---|---|
+| Low | 256 px | 15.6 mm | 74 %, 0.032-0.210, -0.07 (pure per-texel noise) | 52.0 / 17.1 / 16.1 (blurred by the 0.7 canvas) |
+| Medium | 512 px | 7.8 mm | 74 %, 0.032-0.210, 0.30 | 95.5 / 34.0 / 28.2 |
+| High | 1024 px | 3.9 mm | 74 %, 0.032-0.210, 0.64 (the 22 mm stones resolved) | 94.4 / 32.5 / 28.3 |
+
+Four times the texels per tile resolves the stones but leaves the screen grain where it was: the material itself is a
+6.6:1 contrast between near-black binder and pale stones at the 1-2 cm scale, and that is what the eye reads as salt
+and pepper. Removing the sky reflection (`road-far@envspec0`) makes the near grain worse (112.5): the reflection
+lowers the contrast, it does not cause it.
+
+*Overlapping surfaces and z-fighting* (`zfight` probe on the ground and marking meshes, 0.2 m sample grid, exact
+triangle hits; x5/x7):
+
+| study box | ground samples with a 2nd ground triangle within 3 cm of the top one | of which a different surface on top | marking samples under the top ground | marking less than 5 mm above it | paint on paint within 3 mm |
+|---|---|---|---|---|---|
+| M St 3200 block (rep, road-far) | 2.42 % (2.36 % exactly coplanar) | 0.02 % (painted trim 2 cm over concrete at (-262.5, 138-139)) | 0 of 1,204 | 0 | 0 |
+| M St / Wisconsin Ave junction | 2.98 % | 0.21 % | **12.1 %** of 3,472 | 3.6 % | 0 |
+| Wisconsin Ave (street3) | 2.70 % | 0.09 % | 5.8 % of 2,356 | 2.3 % | 0.1 % |
+| N St 3300 block (street2) | 1.87 % | 0 | 1.8 % of 1,041 | 0.2 % | 4.2 % |
+
+Coplanar ground overlaps are the same surface on both sides (asphalt on asphalt where two carriageway polygons meet at
+a junction, or paving on paving) and sample the same world-space texture, so they cannot flicker between two looks.
+Markings under another road surface exist at junctions: at M St / Wisconsin 157 samples within 2 cm under (these can
+flicker through the decal's polygon offset at grazing angles), 117 at 2-5 cm and 145 deeper (hidden for good, down to
+15 m under at (-170, 112.5) and 8 m at (-120.5, 130-134): markings of a road that runs under a raised surface); on
+Wisconsin Ave 5-9 cm under at (-146.5, 104.5) and (-136..-133, 104.5). The eye-level and top-down junction views
+(x7-junction, x7-junction-top) show clean markings and no flicker in a still frame; a moving-camera check is still
+open. Conclusion: overlapping surfaces are not the grain; they are a small road-geometry issue at junctions for the
+roads lane (the probe is in the tool to re-run).
+
 **Fix plan (render lane).**
 - Replace the asphalt (and the other ground layers) with a restrained material: either a properly licensed CC0 asphalt
   PBR set (albedo, normal, roughness; 2-4 m tile, KTX2) from the asset scout, or a rebuilt bake whose finest feature
@@ -141,7 +207,10 @@ map: mean tilt 0.10 at level 0 (none over 0.3), 0.01 at level 3: modest, no spec
 - Markings: keep them as geometry; give the paint wear at centimetre scale with clean edges, no aggregate speckle;
   fade distant decal chunks instead of hiding them at 0.6 x draw distance.
 - Keep the mip chain, filtering and metre-scaled projection (verified); add specular anti-aliasing (roughness from the
-  normal-map variance per mip) when stronger normal maps arrive.
+  normal-map variance per mip) when stronger normal maps arrive. A higher bake resolution alone changes nothing
+  (High = Medium in grain).
+- Roads lane: no marking under another road surface within 5 cm (re-run `zfight` on the four boxes: 0 % under, 0 %
+  less than 5 mm above); trim or drop the decals of a road where another surface covers it.
 
 ## 4. Complaint (b): flat, repetitive facades
 
@@ -232,6 +301,12 @@ Low).
 6. *LOD.* Beyond `treeNear` (110 m Medium, 200 m High, **0 on Low**: src/tuning.ts:864-866) a tree is a 6-sided trunk
    under a 20-face icosahedron (props.ts:447-482, flat-shaded material props.ts:175, later given the leaf texture). The
    switch is a hard cut at the radius.
+7. *Trees are missing at random, also right next to you.* The quality's tree share (`GEO_QUALITY.*.trees`: Low 0.45,
+   Medium 0.8, High 1; src/systems/map/georgetownWorld.ts:39-43, outside tuning.ts) cuts each species' instance count
+   (props.ts:432-434) after the instances were sorted by a random rank (props.ts:120, 177), and the near set skips
+   the cut instances too (trees.ts:237). So Medium never draws a random 20 % of all trees and Low 55 %, wherever the
+   player stands: rows of street trees have gaps. Proof: on Low (`x4-tree`, probe x8) the M St tree 6 m in front of
+   the `tree` camera is not drawn at all; the nearest drawn tree is 20.5 m away (0 far-tree instances within 15 m).
 
 **Fix plan (render lane, trees).**
 - Use coherent tree models (licensed CC0/CC BY or generated) per species with a connected trunk, branch structure and
@@ -241,6 +316,8 @@ Low).
 - Near trees cast their own shadows (a depth material with the alpha test); mid distance a simplified crown with the
   same silhouette; far an impostor (octahedral or a few crossed billboards) with a dithered cross-fade instead of a
   hard cut. Low gets a cheap but rounded far model, not a gem.
+- Thin trees by distance, not at random: every tree within ~150 m is drawn on every preset (a preset may thin the far
+  field only); the share moves to src/tuning.ts.
 
 ## 7. Complaint (e): washed-out, artificial lighting
 
@@ -253,11 +330,17 @@ tyres, asphalt) look light blue-grey; objects look pasted onto the ground; the d
    occlusion anywhere (no post-processing at all: main.ts draws `renderer.render(scene, camera)` directly; no SSAO,
    no AO maps). The only occlusion applied is the texture-scale cavity term (worldMaterial.ts:236,
    facadeMaterial.ts:161). So every surface, in a street canyon, under an awning or a tree, reflects the full bright
-   sky dome at Fresnel strength. At street level's grazing angles that reflection dominates dark materials: in `rep`,
-   the sky light adds 0.148 to the mean frame luminance (0.571 with it, 0.423 without, `rep@env0`) and halves the mean
-   saturation (0.23 vs 0.375); only ~0.04 of that is diffuse sky light (from `rep@skydiff1`), the rest is specular
-   sky reflection. Dark painted lamp posts and rails turn light blue (`door`, `rep`), the road turns blue-grey, car
-   paint (clearcoat on every car, vehicleMaterials.ts:11-15) turns pastel.
+   sky dome at Fresnel strength. At street level the reflection vector of the road and of every wall points near the
+   horizon, which in the capture is the brightest, palest part of the sky and in a real street is the buildings
+   opposite. Measured on `rep` (x5; the two halves of the sky light switched off separately, every material):
+   the sky light as a whole lifts the mean frame luminance from 0.360 to 0.535 and cuts the mean saturation from 0.351
+   to 0.232; its reflection (indirect specular) alone accounts for 0.076 of the luminance and 0.070 of the
+   saturation (`envspec0`: 0.459 / 0.302), its diffuse part for 0.073 and 0.067 (`envdiff0`: 0.462 / 0.299). With
+   the reflection off, the door, the lamp posts, the car paint and the asphalt take their own colours back (dark
+   teal door, saturated paint); with the diffuse part off, everything in shade turns sky-blue, because what is left
+   there is the reflection of the sky. Dark painted lamp posts and rails turn light blue (`door`, `rep`), the road
+   turns blue-grey, car paint (clearcoat on every car, vehicleMaterials.ts:11-15) turns pastel. Switching the sky
+   light off altogether is not the answer: `env0` crushes 22 % of the frame to black (luminance under 10/255).
 2. *Shade is lit only by blue sky.* With the sun off (`rep@sun0`) the street is uniformly blue. The sky's diffuse share
    is cut to 0.42 and desaturated to 0.55 (src/tuning.ts:884-889; applied at worldMaterial.ts:234-235) as a stand-in
    for warm bounce light, but there is no bounce light from sunlit facades and pavements and no occlusion, so shaded
@@ -267,29 +350,36 @@ tyres, asphalt) look light blue-grey; objects look pasted onto the ground; the d
 4. *Haze from 180 m.* Clear weather keeps linear fog from 180 m to 750 m in the sky-horizon colour
    (src/systems/dayNight.ts:58, src/systems/weather.ts:22, 152-155). In the street views it has no measurable effect
    (`rep@nofog` identical), but from any height (bridges, the aerial view) half the frame is milky: `aerial` mean
-   luminance 0.697 with fog, 0.646 without. Real clear-day visibility is tens of kilometres.
+   luminance 0.708 with fog, 0.661 without (x5). Real clear-day visibility is tens of kilometres.
 5. *Pale, clipped sky.* The Preetham sky (sky.ts:28-51, turbidity 3.2) goes white towards the horizon under ACES at
    exposure 0.86: 12.9 % of the aerial frame is clipped (any channel > 250).
-6. Tone mapping and exposure are not the main cause: ACES (main.ts:60) at 0.86 (src/tuning.ts:899) clips 2.9 % of the
-   `rep` frame; AgX gives 0.02 % clipped and lower contrast (paler still); Khronos Neutral clips 17.9 %; exposure 1.0
-   clips 4.7 %. The hemisphere fill (0.12) has no measurable effect (`rep@hemi0` identical). Shadow settings are fine
+6. Tone mapping and exposure are not the main cause: ACES (main.ts:60) at 0.86 (src/tuning.ts:899) clips 0.5 % of the
+   `rep` frame; AgX gives 0.07 % clipped and a flatter, paler frame (sd 0.184, saturation 0.194); Khronos Neutral
+   clips 15.5 %; exposure 1.0 clips 1.9 % and is paler. The hemisphere fill (0.12) has no measurable effect
+   (`rep@hemi0`: mean 0.534 vs 0.535). Shadow settings are fine
    (PCF, radius 2.2, two cascades; `noshadow` changes nothing but the shadows). Colour management is correct: vertex
    colours linear, albedo arrays and facade tiles sRGB, data maps linear, sRGB output.
 
-Tone statistics of the `rep` frame (sRGB luminance):
+Tone statistics of the `rep` frame (x5, final rep camera; sRGB luminance; `viewMetrics.py stats`):
 
-| variant | mean | sd | % clipped | mean saturation |
-|---|---|---|---|---|
-| as built | 0.571 | 0.223 | 2.87 | 0.230 |
-| `env0` sky light off | 0.423 | 0.295 | 2.80 | 0.375 |
-| `onlysun` | 0.422 | 0.295 | 2.80 | 0.374 |
-| `sun0` | 0.433 | 0.262 | 2.83 | 0.371 |
-| `skydiff1` all sky light on diffuse | 0.628 | 0.202 | 2.93 | 0.210 |
-| `hemi0` | 0.571 | 0.224 | 2.87 | 0.231 |
-| `nofog` | 0.571 | 0.223 | 2.87 | 0.230 |
-| `exp1` exposure 1.0 | 0.606 | 0.218 | 4.68 | 0.214 |
-| `agx` | 0.561 | 0.174 | 0.02 | 0.191 |
-| `neutral` | 0.479 | 0.198 | 17.87 | 0.336 |
+| variant | mean | sd | 5th pct | % clipped | % crushed (<10/255) | mean saturation |
+|---|---|---|---|---|---|---|
+| as built | 0.535 | 0.239 | 0.132 | 0.52 | 0.33 | 0.232 |
+| `envspec0` sky reflections off | 0.459 | 0.268 | 0.049 | 0.51 | 4.11 | 0.302 |
+| `envdiff0` sky diffuse light off | 0.462 | 0.262 | 0.062 | 0.51 | 2.00 | 0.299 |
+| `env0` sky light off | 0.360 | 0.297 | 0.000 | 0.50 | 22.17 | 0.351 |
+| `onlysun` | 0.359 | 0.297 | 0.000 | 0.50 | 22.28 | 0.347 |
+| `sun0` | 0.427 | 0.244 | 0.113 | 0.51 | 0.38 | 0.309 |
+| `skydiff1` all sky light on diffuse (game 0.42) | 0.600 | 0.223 | 0.159 | 0.55 | 0.18 | 0.208 |
+| `hemi0` | 0.534 | 0.239 | 0.131 | 0.52 | 0.33 | 0.232 |
+| `nofog` | 0.535 | 0.239 | 0.132 | 0.52 | 0.33 | 0.232 |
+| `noshadow` | 0.551 | 0.232 | 0.137 | 0.52 | 0.31 | 0.233 |
+| `exp1` exposure 1.0 (game 0.86) | 0.568 | 0.239 | 0.152 | 1.93 | 0.24 | 0.216 |
+| `agx` | 0.528 | 0.184 | 0.208 | 0.07 | 0.07 | 0.194 |
+| `neutral` (Khronos) | 0.446 | 0.207 | 0.099 | 15.47 | 0.40 | 0.353 |
+| `avgalb` tile-average albedo | 0.536 | 0.236 | 0.136 | 0.51 | 0.11 | 0.225 |
+
+(The first draft of this table was measured on an earlier rep camera 12 m further west; the conclusions were the same.)
 
 **Fix plan (render lane, lighting).**
 - Occlusion first: a screen-space ambient occlusion pass (GTAO/SAO class, half resolution on Medium, off or cheap on
@@ -318,13 +408,17 @@ Global (every view):
 - [ ] Shaded areas neutral to slightly warm, readable, darker under overhangs and in corners than in the open; contact
       darkening where walls meet the ground and under cars.
 - [ ] Dark materials (asphalt, painted iron, tyres, dark doors) read dark: mean luminance of a sunlit asphalt patch
-      0.30-0.45 sRGB, of a shaded black lamp post under 0.25.
-- [ ] Frame statistics on `rep`: under 3 % clipped, mean saturation at least 0.30, luminance sd at least 0.22.
+      0.30-0.45 sRGB (road-far near region: 0.552 now), of a shaded black lamp post under 0.25.
+- [ ] Frame statistics on `rep` (`viewMetrics.py stats`): clipped at most 2 % (0.52 now), crushed at most 2 % (0.33),
+      mean saturation at least 0.28 (0.232), 5th percentile at most 0.08 (0.132: the shade is too bright and flat),
+      luminance sd at least 0.25 (0.239). Turning the sky reflections off reaches the saturation and the 5th
+      percentile but crushes 4 %: the fix has to occlude and re-colour the sky light, not remove it.
+- [ ] Every preset draws every tree within 150 m (now Medium skips a random 20 %, Low 55 %).
 - [ ] No console errors or warnings; frame cost within the performance budget (measured separately).
 
 rep (M St 3200 block):
-- [ ] Asphalt grain near/mid (road-far regions) at most 30/20 (now 95/34); asphalt reads as one material with
-      metre-scale wear, not as noise.
+- [ ] Asphalt grain near/mid (road-far regions) at most 30/24 (now 95.5/34.0; with a flat albedo 11.2/21.1, so 24 is
+      the geometry floor plus a little texture); asphalt reads as one material with metre-scale wear, not as noise.
 - [ ] Lane markings and the double yellow line with clean edges and subtle wear, no visible speckle, no z-fighting.
 - [ ] Facades: window reveals and recessed doors visibly cast shadow; shopfronts with depth; no two neighbouring
       buildings with identical bay layouts; cornices and sills as geometry.
@@ -345,8 +439,9 @@ door:
       the door and frame.
 
 people:
-- [ ] Six people with human proportions, heads, hands, feet, clothing folds or at least shaped clothing; idle pose
-      with weight shift; no box silhouettes; walk/run/jump clips verified in motion separately.
+- [ ] The people placed in the view (six spots; five are visible in the BEFORE shot, one stands behind another) with
+      human proportions, heads, hands, feet, clothing folds or at least shaped clothing; idle pose with weight shift;
+      no box silhouettes; walk/run/jump clips verified in motion separately.
 
 car:
 - [ ] Wheel arches, wheels at the physics wheel positions touching the ground, rounded body, windscreen rake,
@@ -359,17 +454,67 @@ tree:
 
 road-far:
 - [ ] Road stable to 200 m (no shimmer when the camera moves 1 m forward between two shots); markings visible to at
-      least 150 m without popping; grain mid/far at most 20/the geometry floor (~27 now).
+      least 150 m without popping; grain mid at most 24, far at most 29 (now 34.0/28.2; the far region is geometry:
+      28.1 with a flat albedo). Markings: 0 % of marking samples under another road surface or less than 5 mm above
+      it in the four `zfight` boxes (12.1 % / 3.6 % now at M St / Wisconsin).
 
 aerial:
-- [ ] City visible to the map edge on a clear day with gentle aerial perspective; under 2 % of the frame clipped;
-      roofs and streets with material variation, not flat colour.
+- [ ] City visible to the map edge on a clear day with gentle aerial perspective; under 2 % of the frame clipped
+      (12.9 % now, the white horizon sky); mean luminance with fog within 0.03 of the same frame without fog (0.708 vs
+      0.661 now); roofs and streets with material variation, not flat colour.
 
 ## 9. BEFORE screenshots
 
-`screenshots/40-before-<view>.png` (from before-dist) and `screenshots/40-base-<view>.png` (from s1-integrate) for
-rep, street2, street3, door, people, car, tree, road-far, aerial and spawn. See section 10 for what differs between them.
+`screenshots/40-before-<view>.png` (from before-dist, the bundle the owner played) and `screenshots/40-base-<view>.png`
+(from s1-integrate 7183f1f, the same code as main) for rep, street2, street3, door, people, car, tree, road-far, aerial
+and spawn, shot with the final script (pinned camera heights, loop held from boot, seed 1, 11:00, clear, Medium,
+1280x720). What each one shows, bluntly:
 
-## 10. BEFORE vs base
+- rep: flat brick walls with painted doors and windows; the near street tree is a dark faceted ball inside speckled
+  plates, its branches poking out; parked cars are two boxes on four box "wheels"; the asphalt is salt and pepper;
+  pale blue-grey shade on the pavement; the double yellow line and the lane lines are fine.
+- street2: rowhouses as flat walls with painted windows and shutters; a stop sign seen from behind reads as a pale
+  blue disc (sky reflection on grey metal); stoop rails light blue.
+- street3: the same facades; the shop sign is the only depth on the corner building; trees speckled.
+- door: the door, its case and fanlight are paint on a flat wall; the rails read bright blue; the granite steps
+  speckle; no contact shadow where the stoop meets the wall.
+- people: box people in pastel shirts with an eye band, one arm raised stiffly; no hands, feet or necks.
+- car: a pink box on a box, glass and lamps as flat dark and white quads, four black box wheels standing outside the
+  body.
+- tree: a dark opaque faceted ball, about 40 speckled plates around it, a tapered trunk; the near tree casts no shadow.
+- road-far: asphalt grain strong to about 20 m; markings clean; far trees as speckled blobs; parked cars as boxes.
+- aerial: the city reads as a model: flat roofs, identical window grids, half the frame milky from the 180 m fog, a
+  white clipped horizon, a large empty lawn between M St and the canal around (-300, 220) (not investigated: map
+  lane).
+- spawn: the box player at the Key Bridge end of M St; traffic signal poles light blue; a soft dark blob under the
+  player.
 
-(filled in below from the capture runs)
+## 10. BEFORE vs base, and reproducibility
+
+The render code is the same in both builds (no change under src/systems/render between before-preview and
+s1-integrate), and `viewMetrics.py compare screenshots 40-before 40-base` confirms it: the same tone statistics in
+every view, and the pixels that differ by more than 24 levels are actors and a few geometry details, never a material
+or the light:
+
+| view | mean abs. difference (0-255) | pixels differing by > 24 | what differs |
+|---|---|---|---|
+| rep | 0.05 | 0.1 % | two distant pedestrians |
+| street2 | 0.33 | 0.5 % | a distant car |
+| street3 | 0.25 | 0.4 % | pedestrians |
+| door | 2.75 | 4.1 % | the neighbouring rowhouse's window and shutter sit a few cm narrower (a Stage 1 facade change) |
+| people | 3.95 | 8.3 % | other people stand on the six spots (the crowd differs between the builds) |
+| car | 0.32 | 0.6 % | distant cars |
+| tree | 0.19 | 0.3 % | distant cars |
+| road-far | 3.45 | 4.4 % | parked car colours, a pedestrian, a red disc on the carriageway in BEFORE only |
+| aerial | 0.45 | 0.6 % | cars |
+| spawn | 0.93 | 1.3 % | distant people and cars |
+
+So every complaint applies unchanged to the current main: Stage 1 did not change the look.
+
+Reproducibility of the script itself: two separate runs of `people rep` on the same build gave 100.000 % identical
+pixels in both views (maximum difference 0). Before the loop was held from boot, two runs differed in the moving
+traffic and the crowd (3-7 % of the pixels), because the game ran a variable number of real-time frames before the
+first view; before the camera heights were pinned, the BEFORE and base shots of street3 differed in 30 % of the
+pixels from a 6 cm camera height difference (the Stage 1 ground under the camera moved). Views in one run share the
+game clock, so the people and traffic in a view depend on the views shot before it: compare runs that use the same
+view list in the same order (the default list). The sky's cloud clock is pinned per view.
