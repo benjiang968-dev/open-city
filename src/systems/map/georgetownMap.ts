@@ -2,7 +2,8 @@
 // road / water queries; this file turns its road polygons and junctions into the lane graph traffic drives on, lays
 // the walk graph (sidewalks, crossings, paths, the towpath, the waterfront), names the places (POIs from the data,
 // homes, parks, the waterfront), places taxi ranks and parking, and paints the minimap. Contract: map/cityMap.ts.
-// The data is a hand-authored approximation (meta.synthetic, see meta.attribution), not OpenStreetMap.
+// The data is real (OpenStreetMap via Overture Maps, scripts/importOverture.mjs) or, as a fallback, the hand-authored
+// approximation (meta.synthetic, scripts/georgetownFromSpec.mjs); see meta.attribution.
 import * as THREE from 'three';
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../../tuning';
