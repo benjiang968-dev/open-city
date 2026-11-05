@@ -191,7 +191,7 @@ Object.assign(R, await page.evaluate(() => {
   }
   out.solidity = { tested, pointAt1p2mInsideBuildingCollider: solid1, pointAtHalfHeightInside: solidMid, rayFromAboveFirstHit: roofKinds, rayFromAboveHitsBuildingFirst: roofFirst, floorUnderIfSolidRemoved: under, notSolidSamples: notSolid };
   // 3. POI doors: ray from the pavement through the door
-  const doorRays = { tested: 0, blockedAtFacade: 0, open: 0, byKind: {}, gaps: [], samples: [] };
+  const doorRays = { tested: 0, blockedAtFacade: 0, open: 0, byKind: {}, gaps: [], samples: [], notBlocked: [] };
   for (const p of c.pois) {
     const f = H.facadeOf(p);
     if (!f || f.L < 0.3 || f.L > 8) continue; // not a building door
@@ -202,6 +202,7 @@ Object.assign(R, await page.evaluate(() => {
     const h1 = hs[1];
     if (h1) { doorRays.byKind[h1.kind] = (doorRays.byKind[h1.kind] ?? 0) + 1; doorRays.gaps.push(+(h1.d - L).toFixed(2)); }
     if (hs.every((h) => h && h.d <= L + 0.35)) doorRays.blockedAtFacade++;
+    else if (doorRays.notBlocked.length < 20) doorRays.notBlocked.push({ name: p.name, kind: p.kind, cat: p.cat ?? null, street: p.street, at: [+p.x.toFixed(1), +p.z.toFixed(1)], doorDist: +L.toFixed(2), i: f.building, hits: hs });
     if (hs.some((h) => !h)) doorRays.open++;
     if (doorRays.samples.length < 6) doorRays.samples.push({ name: p.name, kind: p.kind, street: p.street, doorDist: +L.toFixed(2), hits: hs });
   }
@@ -357,6 +358,7 @@ if (R.droppedIds) {
   const standing = all.filter((b) => !drop.has(b.id));
   const idOf = (i) => (i >= 0 && standing[i] ? `${standing[i].id} (${standing[i].type}, ${standing[i].levels} storeys)` : null);
   for (const s of R.solidity.notSolidSamples) s.id = idOf(s.i);
+  for (const s of R.doorRays.notBlocked) s.id = idOf(s.i);
   for (const wk of R.walks) wk.buildingId = idOf(wk.building);
 }
 R.console = consoleMsgs.filter((e) => !/GPU stall|ReadPixels|WebGL-|swiftshader|Automatic fallback/i.test(e));
