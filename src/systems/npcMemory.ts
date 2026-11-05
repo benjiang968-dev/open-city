@@ -70,8 +70,9 @@ export function updateNpcMemory(w: World): void {
       case 'carTheft': {
         const label = w.vehicles[e.carId]?.spec.label.toLowerCase() ?? 'car';
         const owner = e.ownerId >= 0 ? w.peds[e.ownerId] : null;
-        // the owner (if around at all) knows it was you and holds a grudge
-        if (owner && owner.active) {
+        // the owner knows it was you and holds a grudge (also when they are off-stage right now: the crowd near you
+        // follows the map's density, so most owners are elsewhere when their car goes; they find out)
+        if (owner) {
           remember(owner.npc, 'stoleMyCar', e.ownerSaw ? `stole my ${label} right in front of me` : `stole my ${label}`, hour, day);
           adjustRelationship(owner.npc, N.relationshipOnCarTheft);
           owner.npc.mood = Math.max(-1, owner.npc.mood - 0.5);

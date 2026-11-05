@@ -150,6 +150,8 @@ export interface Poi {
   walkNode: number;
   /** The name is painted on the building's sign (real maps): systems that rename places must keep it. */
   signed?: boolean;
+  /** The map data's category (OSM-style, e.g. 'shop=car', 'amenity=parking'), if the map has one. */
+  cat?: string;
 }
 
 export interface ParkingSpot {
@@ -163,6 +165,8 @@ export interface ParkingSpot {
   /** The parking lane this kerbside spot stands in (-1 in a car park), and the distance along it. */
   edge: number;
   s: number;
+  /** Metres of kerb this kerbside spot stands for (spot spacing); default TUNING.vehicles.kerbSlotSpacing. */
+  span?: number;
 }
 
 /** A named street for minimap labels: its centre line as x,z pairs. */
@@ -757,17 +761,22 @@ export class WalkRouter {
     this.heap = new Heap(n * 4);
   }
 
-  /** Path from walk node a to b, both included: node count, or -1 if unreachable. */
-  path(a: number, b: number): number {
+  /**
+   * Path from walk node a to b, both included: node count, or -1 if unreachable. `cost` (optional, per walk node):
+   * a link costs its length times the mean of its two nodes' factors (e.g. < 1 on the towpath for people who
+   * prefer it); `minCost` must be the smallest factor in it, so the A* estimate stays a lower bound.
+   */
+  path(a: number, b: number, cost?: Float32Array, minCost = 1): number {
     const nodes = this.map.walk.nodes;
     const st = ++this.stamp;
     const goal = nodes[b];
     const heap = this.heap;
+    const hk = cost ? Math.min(1, minCost) : 1;
     heap.n = 0;
     this.g[a] = 0;
     this.prev[a] = -1;
     this.seen[a] = st;
-    heap.push(Math.hypot(nodes[a].x - goal.x, nodes[a].z - goal.z), a);
+    heap.push(Math.hypot(nodes[a].x - goal.x, nodes[a].z - goal.z) * hk, a);
     let found = false;
     while (heap.n > 0) {
       const n = heap.pop();
@@ -779,12 +788,12 @@ export class WalkRouter {
         const m = nb[i];
         if (this.done[m] === st) continue;
         const o = nodes[m];
-        const g = this.g[n] + Math.hypot(o.x - node.x, o.z - node.z);
+        const g = this.g[n] + Math.hypot(o.x - node.x, o.z - node.z) * (cost ? (cost[n] + cost[m]) * 0.5 : 1);
         if (this.seen[m] !== st || g < this.g[m]) {
           this.seen[m] = st;
           this.g[m] = g;
           this.prev[m] = n;
-          heap.push(g + Math.hypot(o.x - goal.x, o.z - goal.z), m);
+          heap.push(g + Math.hypot(o.x - goal.x, o.z - goal.z) * hk, m);
         }
       }
     }

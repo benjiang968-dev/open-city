@@ -519,3 +519,190 @@ Format: date · what changed · what to test · known issues.
     - **Narrow streets:** opposing straight moves count as conflicting at junctions, so cars cross one at a time.
     - **Lane discipline:** Key Bridge lane 606 has no allowed move at node 5, so a car on it takes any move.
     - **geodrive:** it reports `stuck` without failing the run (the harness fails only on console errors), so read its `completed` field.
+- **M3 Life on Georgetown's streets (branch `m3-geo-life`, step C2):** crowds that follow the map, parked cars that match the street, three dealerships, taxi fares to named places, a readable minimap and seeded items kept in sane spots. Built on `m3-geo-citymap` (merged in). Everything works on both maps; `?map=grid` stays the default.
+  - **Crowd density from the map** (`src/systems/pedDensity.ts`, numbers in `TUNING.peds.density`):
+    - Every walk link gets a number of people per metre. Sidewalks start from the class of the road beside them; towpath, park paths, waterfront and plazas from their kind. Each shop, cafe, restaurant, bar or market within 40 m adds `perShop`. Each part follows its own day curve: `shops` (lunch rush, then dinner), `homes` (commutes, quiet nights), `waterfront` (evenings) and `outdoor` (early joggers, after-work walks).
+    - Around you, the links within `radius` (90 m) add up to a real-world head count. At lunch that is about 1 person per 8 m of pavement on M St at Wisconsin Ave and 1 per 41 m on 29th St.
+    - The head count is scaled to the quality's `pedBudget`. `fullBudgetAt` is the count that fills the whole budget: 100 on Georgetown (M St at lunch), 24 on the grid, whose places each stand for a row of shops. There are never fewer than `minActive` (4).
+    - People appear and leave out of view to follow the target. Spawn points are picked by the same scores. Walkers who get past `recycleDistance` (100 m, was 230 m) out of view are moved back to a busy spot. People on a busy street often head to a shop nearby (`errandChance`), so the crowd stays where the shops are.
+    - Dog walkers and joggers spawn 8x more on the towpath, 5x on the waterfront and 3x on park paths. Their routes count those links at half length (`WalkRouter.path` takes per-node cost factors), and most of their trips end at a towpath or waterfront spot.
+    - The budgets are unchanged (Low 30, Medium 45, High 60). Georgetown already uses more CPU than the M2 build (below), so there was no room to raise them. Kids still only come out with their parent and stay invulnerable.
+    - F3 has a new line, e.g. `people  target 45 (real 115 in 90 m, budget 45) · active 44 · near 41`.
+  - **Parked cars by street class** (`src/systems/parkedCars.ts`; `TUNING.vehicles.parkedCarsPer100m` by map and street class):
+    - **Georgetown densities, cars per 100 m of kerb:** primary 11 (M St, Wisconsin Ave, K St, Pennsylvania Ave, Canal Rd), secondary 7, tertiary 6, residential 3.5, service 2, parkway 0.
+    - **Car parks:** `lotFill` 0.5; car parks by the river get `waterfrontLotFill` 0.95.
+    - **Kerb spots:** Georgetown's are now every 6.5 m (`map.kerbSpotSpacing`; was 13 m). Each spot says how much kerb it stands for (`ParkingSpot.span`). The grid keeps its old numbers.
+    - **Measured on Georgetown:** 1,957 parked cars, 1,303 at the kerb and 654 in car parks. Per 100 m of kerb: M St 11.0, Wisconsin Ave 10.9, N St 3.6, Prospect St 4.0. 29th St has none: it is one-way with one lane, so it has no parking lane. The three car parks by the river are 90–95% full; the other two are 51% and 67%.
+    - **Far from you:** a parked car is only drawn, as one instance of a shared InstancedMesh within `parkedDrawDistance` (Low 150, Medium 210, High 300 m). Each car type has two meshes: the paint shell, coloured per instance, and the glass, trim, lights and tyres. The car has no physics body.
+    - **Near you:** within `parkedLiveRadius` (26 m), and within 16 m of where your car will be in 1.6 s, a parked car gets a real drivable car from a pool. `parkedPool` holds 10 hatchbacks, 10 sedans and 8 pickups, never more than there are parked cars of that type.
+      - The pooled car is repainted, put exactly where the parked car stands and left asleep.
+      - It is still drawn as the instance until it is driven, dented or broken into; then its own meshes show.
+      - An untouched one goes back to the pool once you are past `parkedReleaseRadius` (45 m), and the parked car keeps the spot it was pushed to.
+      - A parked car within 9 m always gets one, so E works on every parked car. Beyond that, `parkedPromotePerFrame` (3) are handed out per frame, nearest first.
+    - **Your cars and dealership stock** are also drawn as instances while untouched.
+    - **Ownership:** every parked car belongs to a local (locked at `theft.lockedFraction`) or, at `abandonedFraction`, to nobody. Each grown-up among the simulated people owns the parked car nearest their home or work (`theft.ownerHomeRange`). The prompt says "a local's car".
+    - **The owner can show up:** when you take a local's car, there is a `localOwnerNearby` chance (0.35) that the owner is right there. One of the people within 35 m who can see the car becomes the owner, then chases, shouts, calls 999 and remembers you.
+  - **Dealerships** (`economy/dealership.ts`):
+    - **Where:** car dealers come first (the data's `shop=car`, now on `Poi.cat`), then the biggest car park as a used-car lot, then garages, then shops, up to `maxSites` (Georgetown 3, grid 2).
+    - **Showroom:** a dealer or used-car lot shows its cars in a row of car-park bays, with its sign in the next bay. The others show theirs at the kerb.
+    - **Georgetown:**
+      - the car dealer on K St, in its car park;
+      - a used-car lot in the big car park off Water St;
+      - a garage on Pennsylvania Ave, at the kerb.
+      - With seed 1337 they are Long Haul Autos, Gull Point Autos and Wrench Works. Names vary with the seed.
+    - **Fixed:** restocking takes an idle car from the parked-car pool, so the car list no longer grows with every sale. It held at 42 through a sale and a restock.
+    - **Fixed:** the minimap draws the dealership and taxi rank badges on top at a fixed size (8 px and 6 px). They used to be painted into the base image, where they shrank to a pixel or two.
+    - **Fixed:** on the grid, every POI whose name is on a shop sign is now `signed`. A dealership keeps the name painted on its building ("Grease Monkey Garage") instead of adding a second name.
+  - **Taxi, minimap and items:**
+    - **Taxi:** destinations are shops, restaurants, hotels, museums, churches and parks. Homes come up only at `taxi.homeDestShare` (0.15; it was about a third).
+      - The HUD names the place, its street and the nearest cross street, e.g. "Drop Bram at Brick & Basil (M St NW at Thomas Jefferson St NW)".
+      - A fare who asked for a ride in conversation shows as "Name, street".
+      - A fare taken from off-stage at a quiet hour is brought on-stage.
+    - **Minimap street labels:**
+      - drawn with rounded stroke joins (mitred joins drew spikes round the letters);
+      - major streets first;
+      - a label is left out if it would overlap another label or a badge, run past the rim, or repeat the same name within 110 px;
+      - the " NW" is dropped.
+    - **Seeded items** (`scatterItems`):
+      - never inside a building, in the water, or in the carriageway (cones excepted);
+      - only on level ground, so never at the edge of a deck, pier, kerb or stair (`items.waterClearance`, `edgeProbe`, `maxStep`, `wallProbe`);
+      - items on a bridge deck land on the deck;
+      - bags and boxes sit 0.75–0.8 m out from a shop's pavement spot instead of 1.0–1.1 m, because they stuck into walls on Georgetown.
+      - On Georgetown 411 items are placed and 354 spots are skipped. None is in a building, in water or beside a drop.
+  - **Test:** `npm run build`, then `MAP=georgetown node scripts/shot.mjs x geolife` (new) or `node scripts/shot.mjs x <scenario>` on the grid. `parkcheck` (new, any map) reports parked cars by class and the stand-ins near you.
+    - **geolife, final run, crowds:** each place was held at one hour for 40 s of game time (60 s on the towpath). The F3 target and the active count are the whole crowd near you; "in window" counts people within 60 m.
+
+      | | in window | F3 target / active | real head count |
+      |---|---|---|---|
+      | M St at Wisconsin Ave, 12:30 | 21 | 45 / 44 | 115 (1 per 8 m) |
+      | 29th St between N and P, 12:30 | 4 | 13 / 14 | 30 (1 per 41 m) |
+      | M St at night, 02:30 | 5 | 4 / 5 | 4 |
+      | Waterfront, 19:30 | 8 | 12 / 11 | 27 |
+      | Towpath, 07:30 | 3 | 14 / 13 | 31 |
+
+      - M St at lunch is 5.3x busier than 29th St in the window (3.5x by target). Across five runs the window ratio was 3.6–9.
+      - Dog walkers and joggers were a third of the people near you on the towpath (50% in two earlier runs), against 10% on M St.
+    - **geolife, other checks:**
+      - **Parked car hit:** I drove into a parked car on M St at about 50 km/h. Its drivable stand-in was there when my car was 37 m away. It was pushed 18 m and dented, and then showed its own meshes.
+      - **Taxi:** 3 of 3 fares, to a supermarket, an ice cream shop and a bakery, with addresses like "K St NW at 30th St NW".
+      - **Unseen theft** on O St (residential, nobody near): 0 calls, 0 stars, and the owner remembers it.
+      - **Witnessed theft** of a locked car on M St with 4 people on the pavement: a 3.03 s smash, 4 calls, 2 stars. The owner chased, phoned and remembers.
+      - **Dealership:** I bought a hatchback at Long Haul Autos for $900. The minimap showed 3 dealerships and 2 owned cars. The slot restocked out of the pool, with 42 cars before and after.
+      - **Seeded items:** 0 bad.
+      - **Console:** clean.
+      - **Screenshots** (all looked at): `29-life-mst-lunch`, `29-life-29th`, `29-life-towpath`, `29-life-f3`, `29-life-dealer`.
+    - **Georgetown regression scenarios:** world, walk, drive, taxi, police, witness, theft, dealership, crashspikes, geoplay and mapcheck exit 0 with a clean console.
+      - taxi: 3 of 3 fares, to a pharmacy, a restaurant and a gallery.
+      - police: 0 stars, because no witness called (as in C0).
+      - dealership: 3 sites, a purchase, 2 owned cars on the minimap.
+      - mapcheck: pass, with 30 choices, 0 jumps, 1.71 m off lane, 20/20 walks and 0 height mismatches. There are now 3,920 parking spots.
+      - seed 123: 2,001 parked cars (1,957 with the default seed) on the same map.
+      - theft: the first run failed in the scenario. At 15:00 fewer than four people were out near the car it picked, and the scenario only looked at people already out. It now brings witnesses on-stage. Rerun: unseen 0 calls / 0 stars; on M St 3 calls, 1 star, owner memory.
+    - **Owner memory fix:** an owner who is off-stage now also remembers their stolen car (`npcMemory.ts`). With the crowd following the density, most owners are elsewhere when their car goes, and before this they never found out.
+    - **Grid:** life, crowd, witness, theft, dealership, taxi, gate2, crashspikes and mapcheck exit 0 with a clean console.
+      - crowd: 41 active at the start, the shove works, 44–45 on High.
+      - gate2: 30 active on Low, 59 on High.
+      - theft: unseen 0 stars; witnessed 4–5 calls, 2–3 stars, owner memory.
+      - mapcheck: pass, 0.47 m off lane.
+      - Theft, dealership, taxi, witness and crowd were run again after the last parked-car change, and theft after the owner-memory fix.
+      - `23-dealership` shows that the shop sign and the showroom sign now match.
+    - **Frames over 33 ms** (crashspikes, unthrottled, 3 interleaved rounds against the pre-C2 build 75c14a5): Georgetown 2, 1 and 3 (pre-C2: 4, 3 and 0), with p99 10.6–11.4 ms (pre-C2 9.9–19.2). Grid 2, 0 and 0 (pre-C2: 2, 1 and 0). Spikes of 50–190 ms hit both builds alike, in physics, peds, weather, player or traffic, so they are the busy machine, not one system.
+  - **Performance against the M2 build (529a13c):** 4x CPU throttle, 3 interleaved rounds, on foot at the spawn at 12:30 (the crowd at its lunchtime target). CPU per frame is without rendering; ranges are the 3 runs' medians. The machine was shared and busy (load ~8 on 4 cores), so frames over 33 ms showed up in every build, M2 included.
+
+    | | M2, Low | Georgetown, Low | M2, Medium | Georgetown, Medium | this branch's grid, Medium |
+    |---|---|---|---|---|---|
+    | CPU per frame | 4.3–5.4 ms | 5.3–6.8 ms | 1.2–5.4 ms | 6.0–8.0 ms | 3.3–4.3 ms |
+    | physics | 1.7–2.6 | 3.1–4.3 | 2.0–2.6 | 3.5–5.2 | 1.5–2.3 |
+    | people (`peds`) | 0.22–0.46 (30) | 0.29–0.36 (26) | 0.39–0.74 (45) | 0.40–0.57 (40) | 0.33–0.45 (44) |
+    | parked cars (`parked`) | — | 0.07–0.09 | — | 0.11–0.16 | 0.03–0.05 |
+    | garbage per frame | 46–47 KB | 49–55 KB | 47–52 KB | 56–60 KB | 40–42 KB |
+    | draw calls | 85–98 | 98–105 | 134–141 | 170–172 | 116–118 |
+    | triangles | 133k | 483k | 188k | 1.0M | 179k |
+    | heap | 45–77 MB | 177–199 MB | 43–77 MB | 153–161 MB | 48–85 MB |
+
+    - **Draw calls:** the parked cars brought Georgetown from ~640 (the C0 review's figure, with 42 parked cars) to ~170, with 1,957 parked cars. That is now close to M2 (~140).
+    - **CPU:** Georgetown still uses about 1.3–1.5x M2's CPU per frame. The gap is physics (the world's ~10,800 static colliders), not the crowd or the parked cars.
+    - **The crowd's cost:** the same pages with every pedestrian taken off.
+      - The `peds` section drops by 0.2–0.5 ms at 4x.
+      - Unthrottled, the frame median drops by about 0.1 ms (1.4 to 1.3 ms) and `peds` from 0.14–0.36 ms to 0.03–0.09 ms.
+      - It is 12 draw calls (170 to 158).
+    - **fps:** software GL can't time the GPU, so there is no fps figure. With 5x M2's triangles and more CPU, Georgetown very likely still runs below M2 on the same quality.
+  - **Known issues:**
+    - **The crowd is the budget:** the computed density on M St at lunch is real-world (1 per 8 m), but what you see is the quality budget (45 at Medium) spread over the 90 m around you. M St reads busy and 29th St quiet, but at real-world density M St would be much fuller.
+    - **Window counts are noisy:** the M St / 29th St ratio ranged from 3.6 to 9 across five runs, and the towpath count from 0 to 4.
+    - **Drawn-only parked cars have no physics:** traffic, police or a thrown item further than 26 m from you (and outside the 16 m round the point 1.6 s ahead of your car) passes through them. Traffic keeps out of the parking lanes, so this mostly matters for police in a direct chase.
+    - **Touched stand-ins stay full cars:** a driven, dented or broken-into stand-in keeps its own meshes (~15 draw calls) and never goes back to the pool. The pool grows if it must; it never did in the tests.
+    - **Small drop on waking:** a drawn parked car is pitched to the slope of its street, but its stand-in sleeps at its spawn height until something wakes it. It can then settle a few centimetres.
+    - **The used-car lot counts as a waterfront car park,** so the rest of that car park is 90% full.
+    - **The Long Haul Autos sign** stands on the grass at the end of its car park.
+    - **Fewer seeded items on Georgetown:** 354 spots are skipped there, so Georgetown has only 48 bottles and cans of the 70 litter items.
+    - **The grid follows the clock too:** its crowd now follows the day curves, so it is quiet at night (the M2 grid kept its full budget all day).
+    - **Most taxi pickups are ranks:** only someone who asks for a ride is picked up elsewhere.
+
+- **M3 Life on Georgetown's streets review (step C2 review, branch `m3-geo-life`):** an independent check of the entry above, with fixes. I read the code and wrote my own probes (not committed): every person who appears or is moved, checked the frame it happens; the people the gameplay camera actually sees; every parked car against lanes, crossings, junction boxes, levels and each other; AI cars driving through drawn-only parked cars; quality and hour sweeps; seeds.
+  - **What held up:**
+    - **The density really comes from the map.** Each walk link's people per metre is its road class (or path kind) times that zone's hourly curve, plus `perShop` × min(shops within 40 m, 14) times the `shops` curve. The target is that real head count within 90 m × `pedBudget` / `fullBudgetAt`, capped at the budget. Nothing is hard-coded per street.
+    - **Hours and qualities** (Georgetown, the build as handed over, 30 s at each hour; target / active / people within 60 m):
+
+      | | Low (30) | Medium (45) | High (60) |
+      |---|---|---|---|
+      | M St at Wisconsin, 03:00 | 4 / 6 / 1 | 4 / 9 / 0 | 4 / 7 / 0 |
+      | M St at Wisconsin, 12:30 | 30 / 29 / 19 | 45 / 44 / 17 | 60 / 59 / 32 |
+      | M St at Wisconsin, 18:00 | 30 / 29 / 17 | 45 / 44 / 21 | 52 / 53 / 10 |
+      | 29th St, 12:30 | 9 / 9 / 6 | 16 / 15 / 7 | 19 / 19 / 9 |
+      | 29th St, 21:00 | 4 / 9 / 4 | 9 / 10 / 4 | 12 / 16 / 6 |
+
+      - The computed density is 1 per 7–8 m on M St at lunch and 1 per 31–32 m on 29th St (it has a few shops within 40 m). Q St is 1 per 60 m.
+      - M St hits the budget at every quality (its real count, 105–118, is above `fullBudgetAt` 100), so the contrast with 29th St is set by the budget, not by the map.
+    - **Where people appear** (5 places × 5 hours × 3 qualities, 30 s each; every activation and every move of more than 4 m, 282 in all): 0 on screen, 0 in a building, 0 in the water, 0 at the wrong level. 6 were on the carriageway (fixed, below). After the fixes, 248 more: 0 on screen and 0 anywhere wrong. Driving along M St at up to 115 km/h: 35 placements, 0 on screen.
+    - **Parked cars** (1,921 after the fix below): per 100 m of kerb primary 11.0, secondary 7.4, tertiary 5.7, residential 3.6, service 2.7, against tuning 11 / 7 / 6 / 3.5 / 2. No car overlaps another, a starting car or dealership stock. None sticks into a traffic lane or another road's lane, stands on a crossing, inside a building, in water, on a bridge deck, or more than 0.35 m off the ground under it. E gave a steal or break-in prompt on 30 of 30 random parked cars across the map. Grid: 17 cars, all clean, 30 of 30.
+    - **Driving into parked cars:** at 110 km/h along M St the parked car's stand-in was ready when my car was 59 m away.
+    - **Seeds:** seeds 1 and 2 give identical parking spots, walk graph, places, density and route costs. Parked car types and paint (1,895 against 1,879 cars), people and shop names differ, and so do two dealership names.
+    - **Kids:** grid `hurtfx`: a car at a kid, a thrown bottle and a bat swing all leave it at 100 health. `hurtfx` can't run on Georgetown (it is written for the flat grid and its car never reaches the scene), so I drove a car at a kid standing in an M St lane at 43, 54 and 65 km/h: each time the kid jumped clear (closest 1.9 m), never went down and kept 100 health.
+  - **Fixed:**
+    - **The street you look at was nearly empty.** People only appear out of view, and nothing sent them into it. From the gameplay camera on M St at Wisconsin at lunch (Medium: 44 active, 31–33 within 80 m), only 3.6–5.8 people were on screen on average over 90 s; after turning the camera round, up to 25 were. The F3 numbers and the frozen-camera screenshots (`lifeShot`) hid this. Now 80% of the people who appear or are moved back near you (`peds.density.intoViewChance`) set off for a busy spot in view: a walk node on a link in view, picked by the links' head counts (dog walkers and joggers by their outdoor weights).
+      - On screen, same probe with the player pinned: M St 11.5–15.2 (was 3.6–5.8), 29th St 3.4 (was 0.5), the grid spawn 8.2 (was 1.4; the M2 build: 1.6).
+      - `geolife`: M St at lunch 32 people within 60 m (was 21–25), the towpath at 07:30 10 (was 1–3).
+      - Dog walkers and joggers near the towpath are on the towpath or waterfront 98% of the time, other people 22%. Before the fix it was 32% against 16%.
+      - `screenshots/29-review-mst-camera-before.png` and `-after.png` are the gameplay camera, same spot, same settle.
+    - **People appeared on zebra crossings, in the road.** 5 of 86 (Medium) and 1 of 137 (High) placements were on a crossing link. Crossing links still count towards the head count, but nobody appears on one now. A kid and a dog are now placed along the pavement rather than 0.8 m and 1.2 m east of the parent, which once put a kid in the carriageway. Rerun: 0 of 248.
+    - **Police drove through the parked cars.** On multi-lane streets the kerbside lane is the parking lane, and police aimed for it (it is the lane nearest a player on the pavement), spawned in it and rejoined it. Away from you most parked cars have no physics, so police cars ghosted through them.
+      - Probe, on foot on M St, 2 then 3 stars, 60 s each: police in a parking lane 145 + 1,012 car-frames before, 0 after (two runs). Police overlapping drawn-only parked cars: 56 + 441 frames (36 cars) before; after, 0 + 0 in the final build, and 99 + 42 frames (9 cars) in the first run after the fix, from police in a traffic lane brushing parked cars, mostly beyond the 210 m draw distance (one at 28 m).
+      - The fix is in `police.ts` (`offParking`: the lane beside it instead). The C1 branch has the same `goalLane` and spawn code, so the merge must keep it.
+    - **Parked cars in the turn-round room at dead ends.** With 6.5 m spots, 8 cars stood inside the 12 m where traffic U-turns at a road leaving the map (the gap used the road poly's trim, 0 there). Now 0. Georgetown has 1,921 parked cars (was 1,957).
+    - **Wrong toast:** taking a local's car said "You stole an abandoned Sedan" whenever the owner didn't turn up (65% of the time). It now says "a local's".
+    - **Minimap:** the badge font strings are built once, not per badge per frame.
+  - **Test:** `npm run build`, then `MAP=georgetown node scripts/shot.mjs x <scenario>` and `node scripts/shot.mjs x <scenario>` for the grid.
+    - **Georgetown, final build:** geolife, theft, police, crashspikes, geoplay, world, walk, drive, parkcheck, dealership, taxi and witness exit 0 with a clean console. `hurtfx` exits 1 (it is a grid scenario, above).
+      - **geolife:** M St at lunch 32 within 60 m (target 45, active 44, real 105), 29th St 6 (13 / 14 / 30): 5.3x. M St at 02:30 4, waterfront at 19:30 9, towpath at 07:30 10 (30% dog walkers and joggers). Parked: M St 11.2 and Wisconsin Ave 11.1 per 100 m, the car hit at 50 km/h had its stand-in at 37 m. Taxi 3 of 3 (a cafe, a restaurant, a clothes shop; "Wisconsin Ave NW at Q St NW"). Dealership: bought for $900, restocked from the pool, 42 cars before and after. Items: 416 placed, 0 bad.
+      - **theft:** unseen on N St: 0 calls, 0 stars, owner remembers. Locked car on M St with 4 people out: 2 calls during the smash, 2 stars, the owner chased and remembers.
+      - **police:** 0 stars, because no witness called (as in C0 and the C2 entry). **geoplay** (2 stars set directly) passed. **taxi:** 3 of 3 fares (a bookshop, a fast-food place, an office).
+      - **mapcheck:** passed 2 of 3 runs (0.93 m and 1.32 m off lane, 0 jumps). The first run failed on its drive: the AI car it follows was 3.3 m off its lane once and was recycled once. The handed-over build passed 2 of 2 (2.26 m, 0.34 m). The drive follows a random AI car, so this part of the gate is noisy; `validateCityMap` passed every time (0 errors, 0 warnings, 0 height mismatches, 3,869 parking spots).
+    - **Grid, final build:** life, gate2, witness, theft, taxi, police and bust exit 0 with a clean console. (Before the last fix, also dealership, crashspikes, mapcheck and hurtfx.)
+      - gate2: 30 active on Low, 59 on High. theft: unseen 0 calls / 0 stars; witnessed 5 calls, 2 stars, owner memory. taxi: 3 of 3. police: 3 stars, chase and escape as before. bust: 0 stars at once and no bust, the same on the handed-over build (the scenario's direct `policeCalled` events no longer raise heat since the witness system).
+      - **crowd fails** on its last screenshot (180 s timeout, after it switches to High) on the handed-over build, on this build and on the pre-C2 build 75c14a5 alike, so it is this machine's load, not C2.
+  - **Performance against the M2 build (529a13c):** 4x CPU throttle, 3 interleaved rounds of the M2 build and this branch's final build on Georgetown. CPU is per frame without rendering; ranges are the 3 runs' values. The machine ran at a load of 18–26 on 4 cores the whole time, so the ranges are wide.
+
+    | | M2, Low | Georgetown, Low | M2, Medium | Georgetown, Medium |
+    |---|---|---|---|---|
+    | CPU per frame, on foot at the spawn | 4.5–5.3 ms | 6.4–6.8 ms | 4.5–5.4 ms | 6.6–7.4 ms |
+    | physics | 2.0–2.2 | 3.8–4.1 | 2.2–2.6 | 4.6–6.5 |
+    | people (`peds`; how many active) | 0.21–0.41 (30) | 0.29–0.34 (26) | 0.41–1.05 (45) | 0.36–0.54 (40) |
+    | parked cars (`parked`) | — | 0.10–0.12 | — | 0.08–0.15 |
+    | garbage per frame | 45–46 KB | 50–61 KB | 47–49 KB | 53–54 KB |
+    | draw calls | 93–97 | 104–107 | 136–139 | 169–172 |
+    | triangles | 133k | 484k | 188k | 1.0M |
+    | heap | 45–54 MB | 159–176 MB | 45–77 MB | 165–188 MB |
+
+    - **M St at lunch, on foot** (Georgetown only, 44 people out at Medium): 7.1–8.1 ms, `peds` 0.51–1.37 ms, 183–185 draw calls, 56–60 KB of garbage per frame.
+    - **Driving at up to 119 km/h along M St** (Medium): `peds` 0.71–1.39 ms (M2 driving: 0.38–1.32), `parked` 0.21–1.19 ms.
+    - **The review's crowd change costs nothing measurable:** unthrottled, 3 interleaved pairs on M St at lunch, `peds` was 0.26–0.36 ms before and 0.12–0.34 ms after, with 18–21 people within 35 m (was 10–20). The `parked` section is 0.015–0.05 ms unthrottled with nobody driving.
+    - **The gap to M2 is still physics** (the map's static colliders, from C0), then triangles and draw calls. Georgetown very likely runs below the M2 build on the same quality; software GL here can't give an fps figure.
+  - **Known issues (still open):**
+    - **The crowd is still the budget:** M St reads busier than 29th St, but 45 people over 90 m is far below 1 per 8 m.
+    - **People ahead of a moving car:** nobody appears in view, so the street ahead of you while driving fills only from the sides and from people already walking there.
+    - **Walkers bunch up:** several people heading for the same busy spot can walk in a line.
+    - **The crowd can sit above its target for a while** when the hour drops, because people in view never leave.
+    - **Drawn-only parked cars still have no physics:** a thrown item or a car that isn't yours further than 26 m away passes through them. In 3.5 minutes of probing that was 1 traffic car stuck on Q St, more than 1 km from the player.
+    - **Frames over 33 ms** can't be judged here: the machine ran at a load of 18–26 on 4 cores, and both builds had them (`crashspikes` on the grid: 13 frames over 33 ms, the worst 205 ms in `sync`).
+    - The towpath ahead of you is still often empty when you stand on it: most of the people counted there are on M St and K St, which are inside the 90 m.

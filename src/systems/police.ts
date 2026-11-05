@@ -110,9 +110,26 @@ export function addHeat(w: World, amount: number): void {
   pol.lastSeenY = pp.y;
 }
 
-/** The lane nearest the last known position of the player (-1 if none near). */
+/**
+ * Never a parking lane (cars parked along its kerb, another lane going the same way) for a police car to aim for,
+ * start in or rejoin: the lane beside it on the same segment instead. Away from the player most parked cars are
+ * drawn only, with no physics body, so a police car in the parking lane would drive straight through them.
+ */
+function offParking(w: World, id: number): number {
+  const { nodes, edges } = w.city.roads;
+  const e = edges[id];
+  if (!e || !e.parking || e.lanesSameDir < 2) return id;
+  const out = nodes[e.from].out;
+  for (let i = 0; i < out.length; i++) {
+    const o = edges[out[i]];
+    if (o.to === e.to && o.roadId === e.roadId && o.lane === e.lane + 1) return o.id;
+  }
+  return id;
+}
+
+/** The lane nearest the last known position of the player (-1 if none near), never a parking lane. */
 function goalLane(w: World): number {
-  return w.city.nearestLane(w.police.lastSeenX, w.police.lastSeenZ, P.goalLaneRange, HIT, w.police.lastSeenY) ? HIT.edge : -1;
+  return w.city.nearestLane(w.police.lastSeenX, w.police.lastSeenZ, P.goalLaneRange, HIT, w.police.lastSeenY) ? offParking(w, HIT.edge) : -1;
 }
 
 /**
@@ -409,7 +426,8 @@ function bustCheck(w: World, dt: number): void {
 function rejoinRoad(w: World, car: AiCar, x: number, y: number, z: number): void {
   if (!w.city.nearestLane(x, z, P.rejoinSearch, HIT, y)) return;
   const { nodes, edges } = w.city.roads;
-  let e = edges[HIT.edge], s = HIT.s;
+  const lane = offParking(w, HIT.edge);
+  let e = edges[lane], s = lane === HIT.edge ? HIT.s : projectOnLane(e, x, z, ON).s;
   if (e.twin >= 0) {
     const t = edges[e.twin], pol = w.police;
     const a = nodes[e.to], b = nodes[t.to];

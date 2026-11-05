@@ -84,6 +84,7 @@ export function createGridMap(scene: THREE.Scene, R: typeof RAPIER, physics: RAP
       id: p.id, name: p.name, kind: p.kind, x: p.x, z: p.z, curbX: p.curbX, curbZ: p.curbZ,
       kerbHeading: Math.atan2(-nz, nx), // the kerbside lane runs with the pavement on its right
       door: { x: p.x - nx * (pw / 2), z: p.z - nz * (pw / 2) }, street: p.street, walkNode: p.sideNode,
+      signed: !['park', 'taxiRank', 'apartment'].includes(p.kind), // cityGen paints these names on the shop signs
     };
   });
   const taxiRanks = g.taxiRanks.map((r) => pois[r.id]);

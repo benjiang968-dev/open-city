@@ -56,6 +56,7 @@ const RAW = {
     passThroughMaxBend: 0.6, // radians: where two pieces of the same street meet bending less than this, cars run straight on (real maps)
     deadEndTurnRoom: 12, // metres before a dead end (a road leaving the map) where cars turn round (real maps)
     parkingLaneCost: 3, // RoadRouter: driving along a parking lane costs this many times its travel time (routes keep out)
+    kerbSpotSpacing: 6.5, // metres between kerbside parking spots along a parking lane (real maps): a car length plus room to pull out
     // walk graph building (real maps)
     walkNodeSpacing: 12, // metres between walk nodes along sidewalks and paths
     walkJoinRange: 10, // metres: a path end joins the nearest walk node this close on its own level
@@ -225,22 +226,36 @@ const RAW = {
       'pickup',
     ],
     ownedAtStart: 1, // the first N cars at the starting taxi rank are yours; the others belong to locals
-    // drivable parked cars per 100 m of kerb, by the kerbside parking spot's road class (both kerbs counted; each
-    // spot stands for kerbSlotSpacing metres). On the grid city the bay boulevard is 'secondary' and every other
-    // street 'residential'. Keep 'secondary' before 'residential': the order is the order cars are placed in.
-    parkedCarsPer100m: { primary: 0.6, secondary: 0.6, tertiary: 0.3, residential: 0.07, service: 0, parkway: 0 },
-    lotFill: 0, // share of car park bays with a parked car (lots fill after the kerbs; the grid has none)
-    // per map (by CityMap id), replacing the two above. Georgetown: M St, Wisconsin Ave, K St, Pennsylvania Ave and
-    // Canal Rd are 'primary'; 23rd St, New Hampshire Ave, Reservoir Rd 'secondary'; P/Q/R St, Water St, 37th St
-    // 'tertiary'; the rowhouse streets 'residential'; the parkway and the freeway never have parking. Coarse until
-    // the density pass, and held low on purpose: a parked car costs ~15 draw calls (+ shadows) like a driven one.
-    parkingByMap: {
-      georgetown: { perKerb100m: { primary: 0.35, secondary: 0.15, tertiary: 0.06, residential: 0.05, service: 0, parkway: 0 }, lotFill: 0.01 },
-    } as Record<string, { perKerb100m: Record<'primary' | 'secondary' | 'tertiary' | 'residential' | 'service' | 'parkway', number>; lotFill: number }>,
-    kerbSlotSpacing: 13, // metres of kerb one kerbside parking spot stands for (matches the grid generator's spacing)
+    // Parked cars (parkedCars.ts), by map and by the parking spot's street class: drivable parked cars per 100 m of
+    // kerb (both kerbs counted; a spot stands for its `span` of kerb, so the most there can be is 100 / span).
+    // Georgetown: M St, Wisconsin Ave, K St, Pennsylvania Ave and Canal Rd are 'primary'; 23rd St, New Hampshire Ave
+    // and Reservoir Rd 'secondary'; P, Q and R St, Water St and 37th St 'tertiary'; the rowhouse streets 'residential'
+    // (most park on one kerb; the one-way single-lane ones, like 29th St, not at all); the parkway and the freeway
+    // never have parking. Grid city: the bay boulevard is 'secondary' and every other street 'residential'.
+    parkedCarsPer100m: {
+      grid: { primary: 0.6, secondary: 0.6, tertiary: 0.3, residential: 0.07, service: 0, parkway: 0 },
+      georgetown: { primary: 11, secondary: 7, tertiary: 6, residential: 3.5, service: 2, parkway: 0 },
+    } as Record<string, Record<'primary' | 'secondary' | 'tertiary' | 'residential' | 'service' | 'parkway', number>>,
+    lotFill: { grid: 0, georgetown: 0.5 } as Record<string, number>, // by map: share of car park bays with a car in them
+    waterfrontLotFill: 0.95, // car parks by the river are full: bays within waterfrontLotRange of the waterfront promenade
+    waterfrontLotRange: 150, // metres
+    parkedTypeWeights: { hatchback: 4, sedan: 4, pickup: 2 }, // how common each car type is among parked cars
+    // Near you a parked car is a real drivable car (physics, E to get in), taken from a pool; further away it is only
+    // drawn (one instanced mesh per car type), so a street full of parked cars costs a handful of draw calls.
+    parkedPool: { hatchback: 10, sedan: 10, pickup: 8 }, // drivable cars per type kept ready (the pool grows if it must)
+    parkedLiveRadius: 26, // metres: parked cars this close to you are drivable cars
+    parkedAheadTime: 1.6, // seconds: ...and those near where your car will be this far ahead
+    parkedAheadRadius: 16, // metres around that point ahead
+    parkedReleaseRadius: 45, // metres: untouched ones further than this (and not ahead of you) go back to being drawn only
+    parkedMustRadius: 9, // metres: a parked car this close always gets a drivable car, even if the pool has to grow
+    parkedPromotePerFrame: 3, // stand-ins handed out per frame beyond parkedMustRadius (spreads the work after a jump across town)
+    parkedDrawDistance: { low: 150, medium: 210, high: 300 }, // metres, by quality: parked cars drawn this far from you
+    parkedRefresh: 0.25, // seconds between redraws of the far parked cars (sooner after you move 12 m)
+    parkedReuseGap: 0.25, // metres: a released car that moved less than this keeps its parking spot's pose
+    kerbSlotSpacing: 13, // metres of kerb one kerbside parking spot stands for unless the spot says (grid generator's spacing)
     parkingKerbGap: 1.3, // metres from the road edge to a parked car's centre line (grid boulevard spots)
     parkingJunctionGap: 10, // metres of kerb kept free next to each junction (grid boulevard spots)
-    parkedClearOfRank: 40, // metres: no random parked cars this close to the player's spawn
+    parkedClearOfRank: 16, // metres: no other parked cars this close to the player's spawn (your starting cars stand there)
     parkedClearOfPoi: 12, // metres: kerb spots this close to a POI kerb (taxi stop) stay free (grid boulevard spots)
   },
 
@@ -254,6 +269,9 @@ const RAW = {
     lookTimeRandom: 1.5, // extra random seconds of staring, so a crowd doesn't all turn away at once
     lookCheckInterval: 0.25, // seconds between checks for people hearing an alarm
     ownerNoticeRange: 60, // metres: an owner this close who sees it (or hears their alarm) comes after you
+    ownerHomeRange: 250, // metres: each grown-up owns the parked car nearest their home or work if it is this close
+    localOwnerNearby: 0.35, // a car owned by a local nobody has met: chance its owner is right there (in a shop nearby) when you take it
+    localOwnerRange: 35, // metres: that owner is one of the people this close who can see the car
     ownerChaseTime: 14, // seconds the owner chases and shouts before giving up (then may call 999)
     ownerGiveUpDistance: 70, // metres: owner stops chasing once you are this far away
     ownerRunFactor: 0.85, // owner's chasing speed as a fraction of the flee (running) speed
@@ -355,10 +373,45 @@ const RAW = {
   },
 
   peds: {
-    maxPopulation: 60, // people created at load (the quality preset activates 30 / 45 / 60 of them)
-    recycleDistance: 230, // metres: walkers further than this (and out of view) are moved closer to you
-    respawnMin: 70, // metres from you where they reappear (always out of view)
-    respawnMax: 170,
+    maxPopulation: 60, // people created at load (the quality preset's pedBudget caps how many are active: 30 / 45 / 60)
+    recycleDistance: 100, // metres: walkers further than this (and out of view) are moved back near you, to a busy spot (just past the density radius)
+    // Crowd density from the map (pedDensity.ts): every walk link gets people-per-metre from the road beside it (or
+    // its path kind), the shops / cafes / restaurants / bars near it and the hour; the links around you add up to a
+    // real-world head count, which is scaled to the quality budget. People appear and leave out of view to follow it.
+    density: {
+      radius: 90, // metres around you whose pavements set the crowd target (about what you can see on a street)
+      shopRadius: 40, // metres: shops, cafes, restaurants and bars this close to a walk link make it busier
+      shopKinds: ['shop', 'cafe', 'diner', 'bar', 'market'], // place kinds that count as shops
+      perShop: 0.0125, // people per metre of pavement per shop nearby, at the peak of the 'shops' day curve
+      shopCap: 14, // shops counted at most per link (a busy block is busy, not absurd)
+      crossingShopShare: 0.5, // crossings get this share of their shop term (people cross, they don't linger)
+      roadSearch: 16, // metres: a sidewalk takes its road class from the nearest lane this close
+      // people per metre at the peak of the link's day curve: sidewalks by the class of the road beside them ('homes'
+      // curve), path kinds by kind (towpath and park paths: 'outdoor'; waterfront and plazas: 'waterfront')
+      base: { primary: 0.03, secondary: 0.026, tertiary: 0.03, residential: 0.035, service: 0.01, parkway: 0.004, towpath: 0.04, path: 0.022, waterfront: 0.12, plaza: 0.1, crossing: 0.008 },
+      // hourly multipliers of those peaks, hour 0..23 (linear in between)
+      hours: {
+        shops: [0.12, 0.07, 0.04, 0.03, 0.03, 0.05, 0.12, 0.25, 0.4, 0.5, 0.6, 0.8, 1, 1, 0.8, 0.7, 0.7, 0.75, 0.8, 0.8, 0.7, 0.5, 0.3, 0.2], // lunch rush, then dinner
+        homes: [0.06, 0.03, 0.02, 0.02, 0.03, 0.1, 0.35, 0.7, 0.8, 0.5, 0.45, 0.5, 0.55, 0.55, 0.5, 0.55, 0.7, 0.85, 0.9, 0.75, 0.55, 0.35, 0.2, 0.1], // commutes, quiet nights
+        waterfront: [0.1, 0.05, 0.03, 0.02, 0.02, 0.05, 0.15, 0.25, 0.3, 0.35, 0.45, 0.55, 0.7, 0.7, 0.65, 0.65, 0.7, 0.8, 0.95, 1, 1, 0.85, 0.5, 0.25], // evenings
+        outdoor: [0.02, 0.01, 0.01, 0.01, 0.02, 0.15, 0.6, 0.8, 0.6, 0.45, 0.45, 0.5, 0.6, 0.55, 0.5, 0.55, 0.7, 0.9, 1, 0.8, 0.45, 0.2, 0.08, 0.04], // early joggers, after-work walks
+      },
+      fullBudgetAt: { grid: 24, georgetown: 100 } as Record<string, number>, // by map: the real head count near you that fills the quality's whole pedBudget (Georgetown: M St at lunch); smaller counts scale down in proportion. The grid city has one place per block face (each standing for a row of shops), so its counts run ~4x lower: 24 keeps its downtown afternoon crowd at the full budget, as before
+      minActive: 4, // never fewer people than this near you, even at 4 am
+      updateInterval: 0.5, // seconds between recomputing the target around you
+      changesPerSecond: 4, // people added or removed per second at most while the crowd follows the target
+      slack: 1, // the crowd may be this many people off the target before anyone is added or removed
+      spawnMinDist: 28, // metres: new people appear at least this far from you, and out of view
+      despawnMinDist: 40, // metres: people leave only this far from you, and out of view
+      intoViewChance: 0.8, // chance someone who appears (out of view) walks towards a busy spot in view, so the street you look at fills up
+      outdoorBoost: { towpath: 8, waterfront: 5, path: 3, plaza: 2 }, // dog walkers and joggers: spawn weight on these path kinds
+      outdoorRouteCost: 0.5, // dog walkers and joggers: towpath, waterfront and park paths cost this share of their length (routes prefer them)
+      outdoorTripChance: 0.6, // chance a dog walker or jogger heads for a towpath / waterfront spot rather than a park or pier
+      outdoorTripRange: 450, // metres: how far away that spot may be...
+      outdoorTripMin: 40, // ...and how near (a trip, not a step)
+      errandChance: 0.55, // chance someone heads to a shop or cafe near them instead of their routine stop
+      errandRange: 150, // metres: how far that shop may be
+    },
     kidScale: 0.62, // size of children next to adults
     capsuleRange: 35, // metres: people's collision capsules are only active this close to you
     dogBarkDistance: 7, // metres: dogs bark at you when you're this close
@@ -405,6 +458,8 @@ const RAW = {
       nextFareDelay: 2, // s before a new fare appears
       lateAfterFactor: 2.2, // fare is "late" after this multiple of the time allowance (pay reduced)
       lateFareFactor: 0.6, // pay multiplier when late
+      homeDestShare: 0.15, // share of fares going to someone's home rather than a shop, restaurant, hotel, museum or park
+      crossStreetRange: 160, // metres: the HUD names the destination's nearest cross street within this ("M St NW at 31st St NW")
     },
     dealership: {
       prices: { hatchback: 900, sedan: 1600, pickup: 2200 }, // $ per car type at a dealership
@@ -412,6 +467,7 @@ const RAW = {
       stock: [
         ['hatchback', 'sedan', 'hatchback'],
         ['pickup', 'sedan', 'pickup', 'hatchback'],
+        ['sedan', 'hatchback', 'pickup', 'sedan'],
       ],
       slotOffsets: [-7.5, 7.5, -15, 15], // metres along the kerb from the dealership's door for each display car
       slotClearance: 6.5, // metres: a display slot must be this far from any other car (and other POIs' taxi stops)
@@ -420,8 +476,11 @@ const RAW = {
       signOut: 1.2, // metres from the dealership door towards the kerb where its sign stands
       restockSeconds: 600, // real seconds before a sold display car is replaced
       restockMinDistance: 60, // metres: restocking only happens while you are at least this far away
-      maxSites: 2, // dealerships placed on the grid city
-      minSiteSpacing: 200, // metres between the two grid dealerships
+      maxSites: { grid: 2, georgetown: 3 } as Record<string, number>, // dealerships per map: car dealers first, then big car parks (used-car lots), then garages, then shops
+      minSiteSpacing: 200, // metres between dealerships
+      lotSearch: 140, // metres: a dealership with a car park this close shows its cars in the car park's bays (else at the kerb)
+      lotMinBays: 12, // car parks with fewer bays than this are not used as showrooms or used-car lots
+      lotSignOut: 2.6, // metres from the first display bay, along the row, to a car-park showroom's sign (the next bay, kept empty)
     },
   },
 
@@ -556,6 +615,11 @@ const RAW = {
     batsPerGym: 2, // baseball bats lying by a gym
     gymsWithBats: 2, // how many gyms have bats outside
     wrenchesPerGarage: 3, // wrenches by each garage
+    // where seeded items may lie (scatterItems): never in a building or the water, never at an edge
+    waterClearance: 0.3, // metres: a spot whose surface is less than this above water is in the water
+    edgeProbe: 0.35, // metres out on four sides where the surface is checked (and must be free of buildings)...
+    maxStep: 0.12, // ...and must be within this of the item's (no deck, pier, kerb or stair edge right beside it)
+    wallProbe: 0.2, // metres: an item this close to a wall (or the map edge) on any side would stick into it: left out
     // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
     // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
     defs: {
@@ -748,6 +812,10 @@ const RAW = {
     minimapLabelPx: 10, // street-name font size on the minimap (pixels)
     minimapLabelSpacing: 260, // metres between repeated street-name labels along a long street
     minimapLabelMinLength: 60, // metres: shorter named streets get no label
+    minimapLabelGapPx: 3, // pixels kept between two street-name labels (a label that would overlap one is left out)
+    minimapLabelRepeatPx: 110, // pixels: the same street name is not shown twice closer than this
+    minimapDealerBadgePx: 8, // radius of the car dealership badge ($) on the minimap
+    minimapRankBadgePx: 6, // radius of the taxi rank badge (T) on the minimap
   },
 } as const;
 

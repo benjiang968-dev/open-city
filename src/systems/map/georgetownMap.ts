@@ -279,6 +279,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
     const place = bd ? frontOf(bd.pts, sp.x, sp.z) : openSpot(sp.x, sp.z);
     if (!place) continue;
     const poi = addPoi(name, kind, place.x, place.z, place.door);
+    if (poi) poi.cat = sp.cat;
     if (poi && bd && SIGN_CATS.test(sp.cat)) poi.signed = true; // facades.ts paints this name on the shop front
   }
   // homes: rowhouses and flats, spread over the residential streets (fixed by the map, never the seed)
@@ -911,17 +912,19 @@ function buildParking(doc: GeoDoc, geo: GeoWorld, polys: GeoRoadPoly[], lanes: {
       if (id === undefined) continue;
       const e = edges[id];
       if (!e.parking) continue;
-      // the junction boxes at both ends (the real plateaus, also at pass-through nodes)
-      const tS = e.from === P.nodeA ? P.trimA : P.trimB, tE = e.from === P.nodeA ? P.trimB : P.trimA;
+      // the junction boxes at both ends (the real plateaus, also at pass-through nodes), and the room traffic needs to
+      // turn round at a dead end (a road leaving the map: the lane's own trim there)
+      const tS = Math.max(e.from === P.nodeA ? P.trimA : P.trimB, e.trimStart), tE = Math.max(e.from === P.nodeA ? P.trimB : P.trimA, e.trimEnd);
       const s0 = tS + V.parkingJunctionGap, s1 = e.len - tE - V.parkingJunctionGap;
       const shift = e.halfWidth - M.parkingBand / 2 - e.offset; // lane centre -> parked car centre, to the right
-      for (let s = s0 + V.kerbSlotSpacing / 2; s <= s1 - V.kerbSlotSpacing / 2 + 0.01; s += V.kerbSlotSpacing) {
+      const gap = M.kerbSpotSpacing;
+      for (let s = s0 + gap / 2; s <= s1 - gap / 2 + 0.01; s += gap) {
         laneSample(e, s, LP);
         const x = LP.x - Math.cos(LP.heading) * shift, z = LP.z + Math.sin(LP.heading) * shift;
         if (!geo.isRoad(x, z) || geo.isBlocked(x, z) || !isClear(x, z)) continue;
         const y = geo.roadSurfaceAt(x, z, LP.y);
         if (solid(x, y, z, LP.heading)) continue;
-        spots.push({ x, y, z, heading: LP.heading, cls: e.cls, street: e.name, lot: -1, edge: e.id, s });
+        spots.push({ x, y, z, heading: LP.heading, cls: e.cls, street: e.name, lot: -1, edge: e.id, s, span: gap });
       }
     }
   });
