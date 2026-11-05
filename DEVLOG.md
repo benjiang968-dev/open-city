@@ -348,3 +348,44 @@ Format: date · what changed · what to test · known issues.
       - **Trees on footpaths:** trees and lamps stand on the footpath centre lines on Dumbarton St and Potomac St, blocking 114 walk links for a person.
       - **Low bridges:** the camera goes inside the deck of the low canal bridges when you walk under them.
     - **Merge note:** merging `m3-geo-art-review` conflicts in `georgetownWorld.ts` (keep both `droppedBuildings` and `audit`; that branch already adds its street-clipped drops to the same set) and in DEVLOG.md.
+
+## 2026-11-05: Stage 1 (fix the foundation)
+
+- **S1.5 Research (branch `s1-research`, documents only, no game code):** three write-ups in `docs/research/`, with sources and the date each was read.
+  - **`google-3d-tiles.md`:**
+    - **Gameplay: no.** The Maps Platform ToS (Aug 26, 2026) forbids:
+      - scraping, pre-fetching and caching (3.2.3 a, b)
+      - creating content from the tiles, including collision, heights or footprints (3.2.3 c, plus the Map Tiles policy's hybrid-3D rule)
+      - using them "with or near a non-Google Map" (3.2.3 e), which our minimap and OSM-based city are
+    - **Data:** the tiles are one photogrammetry skin with baked lighting, so no buildings, doors or collision meaning.
+    - **Optional viewer:** only on a separate page, only with the owner's own billing account (non-EEA; EEA projects created after 8 July 2025 get 403), and only with:
+      - a referrer- and API-restricted key with hard quota caps
+      - the Google logo and live tile attribution
+      - a terms and privacy notice
+    - **Cost:** Enterprise SKU, 1,000 root requests a month free, then about $6 per 1,000, so about $54 a month at 10,000 viewer opens.
+  - **`map-data.md`:** Overture `2026-10-21.0` over raw OSM, which is unreachable here.
+    - **Licences per theme:**
+      - transportation, buildings and base are ODbL
+      - places are CDLA-Permissive-2.0, plus Apache-2.0 (Foursquare) and CC0 records
+      - addresses are per source
+    - **Licence obligations:** `georgetown.json` is an ODbL derivative database, so we publish it, or the importer plus the release id, with notices. Places go in a separate CDLA file with categories only.
+    - **Schema:** field-by-field mapping to the generator's needs, read from the real Parquet footers of the release.
+    - **Georgetown fill rates** (measured by range-reading only the matching row groups):
+      - transportation: 2,898 segments; one-way on 327 of 1,000 drivable segments; speed limits on 33%; width on 0.1%; no lanes field
+      - steps, sidewalks, crosswalks: 235 steps, 442 sidewalks, 267 crosswalks
+      - base infrastructure: 848 crossings, 102 signals, 117 stop signs
+      - buildings: 4,720, with heights on 39% (USGS lidar and Microsoft), 140 footprints under Esri CC BY 4.0, 0 entrances
+      - places: 3,822, of which 336 rely on Foursquare/Apache-2.0
+    - **Terrain Tiles:** USGS NED/3DEP 1/9″ DC 2008 at z15 (3.7 m/px; z16 is 404), Terrarium encoding, bare earth with bridges removed, river surface about 0–0.2 m.
+    - **Strings:** ready-to-paste pause menu, README and `DATA-LICENSE.md` text.
+  - **`textures-and-assets.md`:**
+    - **CC0 sources:** ambientCG and Poly Haven need no attribution (Poly Haven's API ToS asks for a credit only when its live API is used inside an app); ShareTextures, TextureCan, 3DTextures.me, Kenney; per-model care for Poly Pizza and Sketchfab.
+    - **Procedural PBR:** techniques for our `WebGLRenderer` (TSL noise and triplanar exist in r187 but need `WebGPURenderer`).
+    - **Compression:** three r187 already ships the Basis transcoder and `KTX2Loader`, which picks BC7 on desktop. `ktx2-encoder` (npm, WASM, MIT) encodes at build time; glTF-Transform's `etc1s`/`uastc` need KTX-Software.
+    - **Network:** the exact hosts the owner would allow, under Network access → Custom with the default list kept.
+  - **How to test:** read the three files; every number is reproducible from the commands and URLs they cite.
+  - **Known issues:**
+    - `developers.google.com`, `mapsplatform.google.com`, `docs.overturemaps.org`, `osmfoundation.org`, `openstreetmap.org`, `opendatacommons.org`, `cdla.dev` and every texture site are blocked from this environment. Google's Map Tiles policies and prices, the OSMF attribution and produced-work guidelines, and the texture sites' licence pages were read only as web-search extracts (marked in the docs); licence texts were read from SPDX copies.
+    - Google prices and quotas must be checked in the Cloud console before any spending.
+    - Nothing was measured against the live Google service (no key).
+    - The README's current "Map data © OpenStreetMap contributors" line describes data that is still synthetic.
