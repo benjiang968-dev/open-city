@@ -678,6 +678,7 @@ const RAW = {
     stallWidth: 2.6, // m: painted parking bay width in car parks
     stallLength: 5.2, // m: parking bay length
     lotAisle: 6.6, // m: aisle between bay rows
+    stallSurfaceTol: 0.2, // m: a car park bay whose plane height is further than this from the ground (a footway or kerb inside the lot outline sets the surface there) is left out, so parked cars never float or sink
   },
 
   quality: {
