@@ -41,6 +41,9 @@ export interface StairPlan {
   h: (s: number) => number;
   flights: [number, number][];
   name: string | null;
+  /** end heights (s = 0 and s = L) the profile was planned from */
+  ha: number;
+  hb: number;
 }
 
 export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: WaterModel, chunks: RenderChunks, phys: PhysChunks) {
@@ -228,6 +231,80 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
 }
 
 // ======================================================================================================
+/**
+ * A stair's ramp from its two end heights over its length L: flights rising at ~32 degrees from the low end (three
+ * with landings on a named landmark stair), flat run-in and run-out over the rest of the line. On a flight the ramp
+ * runs half a riser above the line through the risers' feet (so it cuts through the middle of each drawn tread: feet
+ * sink or float at most half a riser), capped at the flight's top; the half-riser lip at the foot of each flight is
+ * under the character's autostep.
+ */
+function stairProfile(L: number, ha: number, hb: number, big: boolean): { h: (s: number) => number; flights: [number, number][] } {
+  const nFlights = big ? 3 : 1;
+  const landing = big ? 2.4 : 0;
+  const lowFirst = ha <= hb;
+  const h0 = Math.min(ha, hb), h1 = Math.max(ha, hb);
+  const rise = h1 - h0;
+  const slope = 0.62;
+  const run = Math.max(0.2, rise / slope);
+  const total = Math.min(L - 1, run + landing * (nFlights - 1));
+  const startS = big ? 0.6 : Math.max(0.3, (L - total) / 2);
+  const flights: [number, number][] = [];
+  let s = startS;
+  for (let k = 0; k < nFlights; k++) {
+    const fr = Math.min(run / nFlights, L - s);
+    flights.push([s, s + fr]);
+    s += fr + landing;
+  }
+  const slopeK = rise / Math.max(0.01, flights.reduce((t, q) => t + q[1] - q[0], 0));
+  const lip = Math.min(STAIR_RISER / 2, rise / 2);
+  const hLow = (u: number) => {
+    let h = h0;
+    for (const [a, b] of flights) {
+      if (u <= a) break;
+      const top = h + (b - a) * slopeK;
+      h += (Math.min(u, b) - a) * slopeK;
+      if (u < b) return Math.min(h1, top, h + lip);
+    }
+    return Math.min(h1, h);
+  };
+  return {
+    h: (sv: number) => hLow(lowFirst ? sv : L - sv),
+    flights: lowFirst ? flights : flights.map(([a, b]) => [L - b, L - a] as [number, number]).reverse(),
+  };
+}
+
+/**
+ * Fit a stair's two ends to the ground actually built round them (the 5 m terrain mesh, a sidewalk, a lot, the
+ * towpath) and re-plan its flights. The plan comes from the 1 m raster before the terrain is blended and meshed; with
+ * real map data most stairs end in yards, parks and campus paths, where the meshed ground sat up to 2 m off the plan's
+ * ends (the stair's own flat run-in also pulls the blend down round its foot): a ledge nobody could step up. An end at
+ * a building (steps up to a door) or over water keeps its planned height. `groundAt(x, z, ceil)` is the highest ground
+ * triangle at most `ceil` there (NaN where there is none).
+ */
+export function fitStairEnds(st: StairPlan, groundAt: (x: number, z: number, ceil: number) => number, ras: GeoRaster) {
+  const P = st.pts, n = P.length;
+  const endY = (p: Pt, q: Pt, y: number) => {
+    const dx = p[0] - q[0], dz = p[1] - q[1], l = Math.hypot(dx, dz) || 1, ux = dx / l, uz = dz / l;
+    const v: number[] = [];
+    for (const o of [-0.3, 0, 0.3]) {
+      const x = p[0] + ux * G.stairEndProbe - uz * o * st.w, z = p[1] + uz * G.stairEndProbe + ux * o * st.w;
+      if (ras.kindAt(x, z) & (K.BUILDING | K.WATER)) continue;
+      const g = groundAt(x, z, y + G.stairEndFit);
+      if (g === g && Math.abs(g - y) <= G.stairEndFit) v.push(g);
+    }
+    if (!v.length) return y;
+    v.sort((a, b) => a - b);
+    return v[(v.length - 1) >> 1];
+  };
+  const ha = endY(P[0], P[1], st.ha), hb = endY(P[n - 1], P[n - 2], st.hb);
+  if (Math.abs(ha - st.ha) < 0.02 && Math.abs(hb - st.hb) < 0.02) return;
+  const prof = stairProfile(st.L, ha, hb, !!st.name);
+  st.h = prof.h;
+  st.flights = prof.flights;
+  st.ha = ha;
+  st.hb = hb;
+}
+
 /** Stairs: steep flights with landings (the Exorcist Steps) or a single flight (canal steps); ramp into the raster. */
 export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number, z: number) => number): StairPlan[] {
   const plans: StairPlan[] = [];
@@ -269,40 +346,10 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number
         if (low === 0) ha = ras.workAt(foot[0], foot[1]); else hb = ras.workAt(foot[0], foot[1]);
       }
     }
-    // flights: rise at ~32 degrees, starting at the low end (so the steps rise straight from the street)
-    const lowFirst = ha <= hb;
-    const h0 = Math.min(ha, hb), h1 = Math.max(ha, hb);
-    const rise = h1 - h0;
     // what is left of a stair cut back out of the carriageways can be a single step: then it is just a path
-    if (rise < G.stairMinRise) continue;
-    const slope = 0.62;
-    const run = rise / slope;
-    const total = Math.min(L - 1, run + landing * (nFlights - 1));
-    const startS = big ? 0.6 : Math.max(0.3, (L - total) / 2);
-    const flights: [number, number][] = [];
-    let s = startS;
-    for (let k = 0; k < nFlights; k++) {
-      const fr = Math.min(run / nFlights, L - s);
-      flights.push([s, s + fr]);
-      s += fr + landing;
-    }
-    // ramp profile measured from the low end. On a flight the ramp runs half a riser above the line through the
-    // risers' feet (so it cuts through the middle of each drawn tread: feet sink or float at most half a riser),
-    // capped at the flight's top; the half-riser lip at the foot of each flight is under the character's autostep.
-    const slopeK = rise / Math.max(0.01, flights.reduce((t, q) => t + q[1] - q[0], 0));
-    const lip = STAIR_RISER / 2;
-    const hLow = (u: number) => {
-      let h = h0;
-      for (const [a, b] of flights) {
-        if (u <= a) break;
-        const top = h + (b - a) * slopeK;
-        h += (Math.min(u, b) - a) * slopeK;
-        if (u < b) return Math.min(h1, top, h + lip);
-      }
-      return Math.min(h1, h);
-    };
-    const hAt = (sv: number) => hLow(lowFirst ? sv : L - sv);
-    const plan: StairPlan = { pts, w: big ? 3.6 : 2.2, cum, L, h: hAt, flights: lowFirst ? flights : flights.map(([a, b]) => [L - b, L - a] as [number, number]).reverse(), name: f.name };
+    if (Math.abs(hb - ha) < G.stairMinRise) continue;
+    const prof = stairProfile(L, ha, hb, big);
+    const plan: StairPlan = { pts, w: big ? 3.6 : 2.2, cum, L, h: prof.h, flights: prof.flights, name: f.name, ha, hb };
     plans.push(plan);
     // raster
     const h = ras.h!, band = ras.band, k = ras.k;
@@ -311,7 +358,7 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number
       const segL = cum[i] - cum[i - 1];
       ras.forSegment(a[0], a[1], b[0], b[1], plan.w / 2 + (big ? 0.6 : 0.2), (o, _d, t) => {
         if (band[o] === B.ROAD) return;
-        h[o] = hAt(cum[i - 1] + t * segL);
+        h[o] = plan.h(cum[i - 1] + t * segL);
         if (band[o] !== B.HOLE) band[o] = B.FLAT;
         k[o] = (k[o] & ~(K.PARK | K.WATER)) | K.WALK;
       });
@@ -355,7 +402,23 @@ function jointExt(pts: Pt[], j: number, hw: number): number {
 }
 
 export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks, ras: GeoRaster) {
-  for (const st of plans) {
+  // each stair's stairwell rectangles (as stairHoles): a side wall that would stand in another stair's stairwell is
+  // left out (real data splits one stair into several ways and forks stairs at a landing: each piece's walls stood
+  // across the next piece's treads)
+  const wells = plans.map((st) => {
+    const H = new Holes();
+    const hw = (st.w / 2) * STAIR_INNER;
+    for (let i = 1; i < st.pts.length; i++) {
+      const a = st.pts[i - 1], b = st.pts[i];
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      if (L < 0.05) continue;
+      const ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L, rx = -uz * hw, rz = ux * hw;
+      H.add([a[0] - rx, a[1] - rz, b[0] - rx, b[1] - rz, b[0] + rx, b[1] + rz, a[0] + rx, a[1] + rz]);
+    }
+    return H;
+  });
+  const inOtherWell = (self: number, x: number, z: number) => wells.some((H, j) => j !== self && H.inside(x, z));
+  plans.forEach((st, si) => {
     const { pts, cum, w } = st;
     const big = !!st.name;
     const hLow = Math.min(st.h(0), st.h(st.L)); // the stair's foot (the towpath for the canal steps)
@@ -405,6 +468,8 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
           const wx0 = p0x + rx * sd, wz0 = p0z + rz * sd, wx1 = p1x + rx * sd, wz1 = p1z + rz * sd;
           const out = (x: number, z: number) => ras.heightAt(x + rx * sd * 0.3 + (rx / Math.hypot(rx, rz)) * sd * 0.45, z + rz * sd * 0.3 + (rz / Math.hypot(rx, rz)) * sd * 0.45);
           if (Math.max(h0, h1) < hLow + G.stairWallFrom && Math.max(out(wx0, wz0) - h0, out(wx1, wz1) - h1) < 0.25) continue;
+          const on = 0.25 / Math.hypot(rx, rz); // just outside this wall's line
+          if (inOtherWell(si, (wx0 + wx1) / 2 + rx * sd * on, (wz0 + wz1) / 2 + rz * sd * on)) continue;
           // the walls stand a balustrade's height above the ground outside
           const base = big ? 1.1 : 0.9;
           const t0 = Math.max(h0 + base, out(wx0, wz0) + 0.9) - h0, t1 = Math.max(h1 + base, out(wx1, wz1) + 0.9) - h1;
@@ -455,14 +520,16 @@ export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: Phys
         }
       }
     }
-  }
+  });
   void clamp;
 }
 
 /**
- * The part of a stair line outside carriageways: the map data sometimes runs a stair's end into the street it climbs
- * to, and the road surface then covered the top steps (a 1 m ledge over the ramp). The stair ends at the road's edge
- * (sidewalks over it are cut away: stairHoles). Null if nothing is left.
+ * The part of a stair line outside carriageways and buildings: the map data sometimes runs a stair's end into the
+ * street it climbs to, and the road surface then covered the top steps (a 1 m ledge over the ramp). The stair ends at
+ * the road's edge (sidewalks over it are cut away: stairHoles). Real data also runs steps up to a door and on into the
+ * building's footprint: such an end stops in front of the facade (not flagged as cut: its height is its own, not the
+ * street's). Null if nothing is left.
  */
 function trimOutOfRoads(pts: Pt[], ras: GeoRaster): { pts: Pt[]; cutA: boolean; cutB: boolean } | null {
   const cum = [0];
@@ -478,12 +545,16 @@ function trimOutOfRoads(pts: Pt[], ras: GeoRaster): { pts: Pt[]; cutA: boolean; 
   let s0 = 0, s1 = L;
   while (s0 < L && road(s0)) s0 += 0.25;
   while (s1 > s0 && road(s1)) s1 -= 0.25;
+  const cutA = s0 > 0, cutB = s1 < L;
+  const inBuilding = (s: number) => { const p = at(s); return (ras.kindAt(p[0], p[1]) & K.BUILDING) !== 0; };
+  if (inBuilding(s0)) { while (s0 < s1 && inBuilding(s0)) s0 += 0.25; s0 += G.stairDoorGap; }
+  if (inBuilding(s1)) { while (s1 > s0 && inBuilding(s1)) s1 -= 0.25; s1 -= G.stairDoorGap; }
   if (s1 - s0 < 2) return null;
   if (s0 === 0 && s1 === L) return { pts, cutA: false, cutB: false };
   const out: Pt[] = [at(s0)];
   for (let i = 1; i < pts.length - 1; i++) if (cum[i] > s0 && cum[i] < s1) out.push(pts[i]);
   out.push(at(s1));
-  return { pts: out, cutA: s0 > 0, cutB: s1 < L };
+  return { pts: out, cutA, cutB };
 }
 
 export type { REdge };

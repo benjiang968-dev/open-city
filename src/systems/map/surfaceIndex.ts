@@ -18,6 +18,32 @@ const MIN_AREA2 = 1e-4;
 /** Tolerance (m) of the inside test, so a point on the edge shared by two triangles is in at least one. */
 const EDGE_EPS = 1e-4;
 
+/**
+ * The triangles of `soups` whose footprint box comes within `r` of any of the points (x, z pairs): a small soup for a
+ * build-time SurfaceIndex over a few places (stair ends) instead of the whole map.
+ */
+export function trianglesNear(soups: Float32Array[], points: ArrayLike<number>, r: number): Float32Array {
+  const cell = Math.max(4, r * 2);
+  const cells = new Set<number>();
+  const key = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
+  for (let k = 0; k + 1 < points.length; k += 2) {
+    const i0 = Math.floor((points[k] - r) / cell), i1 = Math.floor((points[k] + r) / cell);
+    const j0 = Math.floor((points[k + 1] - r) / cell), j1 = Math.floor((points[k + 1] + r) / cell);
+    for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) cells.add(key(i, j));
+  }
+  const out: number[] = [];
+  for (const s of soups) {
+    for (let t = 0; t + 8 < s.length; t += 9) {
+      const i0 = Math.floor(Math.min(s[t], s[t + 3], s[t + 6]) / cell), i1 = Math.floor(Math.max(s[t], s[t + 3], s[t + 6]) / cell);
+      const j0 = Math.floor(Math.min(s[t + 2], s[t + 5], s[t + 8]) / cell), j1 = Math.floor(Math.max(s[t + 2], s[t + 5], s[t + 8]) / cell);
+      let hit = false;
+      for (let j = j0; j <= j1 && !hit; j++) for (let i = i0; i <= i1 && !hit; i++) hit = cells.has(key(i, j));
+      if (hit) for (let q = 0; q < 9; q++) out.push(s[t + q]);
+    }
+  }
+  return Float32Array.from(out);
+}
+
 export class SurfaceIndex {
   private readonly tri: Float32Array;
   private readonly start: Uint32Array;

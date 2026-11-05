@@ -830,6 +830,9 @@ const RAW = {
     stairMaxSlope: 0.84, // rise per run: no stair flight is steeper than this (40 degrees; the character climbs up to TUNING.player.maxSlopeDeg)
     stairMaxExtend: 3.5, // m: how far a stair's foot may move out along its line to stay under stairMaxSlope
     stairMinRise: 0.3, // m: a data stair rising less than this (once cut back out of the carriageways) is a plain path
+    stairEndProbe: 0.15, // m: a stair's end height is fitted to the built ground this far beyond the end (bridges.ts fitStairEnds)
+    stairEndFit: 3, // m: the most an end may move to meet that ground (more: the ground there is something else, e.g. a wall top)
+    stairDoorGap: 0.4, // m: a data stair running on into a building stops this far in front of the facade (steps up to a door)
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)
     riverLevel: 0, // m: the Potomac surface (map heights are metres above the river)

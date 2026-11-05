@@ -365,6 +365,12 @@ export class PhysChunks {
       else this.cylinder(px, y + p.c[1] * sy, pz, p.r * sxz, p.h * sy, kind);
     }
   }
+  /** The triangles of one kind collected so far (views, valid until more are added): heights at build time. */
+  soupsOf(kind: SolidKind): Float32Array[] {
+    const out: Float32Array[] = [];
+    for (const [k, b] of this.tris) if (this.trisKind.get(k) === kind && b.n >= 3) out.push(b.pos.subarray(0, b.n * 3));
+    return out;
+  }
   /** Build every accumulated trimesh. Returns the number of triangles. */
   finishTrimeshes(): number {
     let total = 0;

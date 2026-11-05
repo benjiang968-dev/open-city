@@ -241,7 +241,11 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   // centre line and blends driveway mouths, kerbs and car-park aisles, so a lane on its own road's profile floated or
   // sank up to 2.5 m there (traffic counted cars on the wrong level). The surface nearest the lane's own height keeps
   // decks and the roads under them apart.
-  if (!doc.meta.synthetic) for (const e of edges) { const p = e.pts; for (let k = 0; k < p.length; k += 3) p[k + 1] = geo.roadSurfaceAt(p[k], p[k + 2], p[k + 1]); }
+  // Where another road's or a sidewalk's surface overlaps the lane's own a little higher (two carriageways' meshes
+  // meeting at different heights, a sidewalk over a service road: about 35 lane points, up to 1.1 m), that one is
+  // drawn and is what wheels touch: the lane goes up onto it, as map.heightAt(x, z, y) reports (surfaceIndex.ts).
+  const onTop = (x: number, z: number, y: number) => { const t = geo.walkSurfaceAt(x, z, y); return t > y && t <= y + M.levelStep ? t : y; };
+  if (!doc.meta.synthetic) for (const e of edges) { const p = e.pts; for (let k = 0; k < p.length; k += 3) p[k + 1] = onTop(p[k], p[k + 2], geo.roadSurfaceAt(p[k], p[k + 2], p[k + 1])); }
   const oneWayCheck = checkOneWays(doc, polys, edges, polyLanes);
   const ringCheck = checkRing(polys, roadById, edges, polyLanes);
   const tRoads = performance.now();
@@ -249,6 +253,7 @@ export function createGeorgetownMap(scene: THREE.Scene, R: typeof RAPIER, physic
   // ------------------------------------------------------------------ walk graph
   const walkBuild = buildWalkGraph(doc, geo, polys, polyLanes);
   const walk = walkBuild.nodes;
+  if (!doc.meta.synthetic) for (const n of walk) n.y = onTop(n.x, n.z, n.y); // (a sidewalk under a road's edge, as above)
   const tWalk = performance.now();
 
   // ------------------------------------------------------------------ buildings, streets, index

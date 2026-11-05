@@ -1981,6 +1981,23 @@ export async function stairs(page) {
       }
     };
     const face = (ux, uz) => Math.atan2(ux, uz);
+    // arc length of the point of a stair line nearest (x, z)
+    const project = (pts, x, z) => {
+      let acc = 0, best = 0, bd = Infinity;
+      for (let i = 1; i < pts.length; i++) {
+        const ax = pts[i - 1][0], az = pts[i - 1][1], dx = pts[i][0] - ax, dz = pts[i][1] - az, L = Math.hypot(dx, dz) || 1e-6;
+        const t = Math.max(0, Math.min(1, ((x - ax) * dx + (z - az) * dz) / (L * L)));
+        const d = Math.hypot(ax + dx * t - x, az + dz * t - z);
+        if (d < bd) { bd = d; best = acc + t * L; }
+        acc += L;
+      }
+      return best;
+    };
+    // steering along a bent stair (real data): face the point 1.5 m on along the line, as a player turning with A / D
+    const steer = (st, dir, p) => {
+      const s = project(st.pts, p.x, p.z), q = along(st.pts, s + dir * 1.5);
+      P.facing = face(q.x - p.x, q.z - p.z);
+    };
     // ------------------------------------------------------------------ stairs (up, then down)
     if (geo) {
       const pick = geo.stairs.map((_s, i) => i); // every stair: the landmark stair, the canal steps, path stairs
@@ -1996,6 +2013,7 @@ export async function stairs(page) {
         const feet0 = H.put(a.x + ox, a.z + oz, face(a.ux * dir, a.uz * dir), hLow + 2);
         let reached = -1, rx = 0, rz = 0;
         const upRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => {
+          if (reached < 0) steer(st, dir, p);
           if (reached < 0 && fy > hTop - 0.12) { reached = t; rx = p.x; rz = p.z; }
           // stop a little past the top (1.2 m on from where the top was reached: a bent stair's end isn't straight ahead)
           if (reached >= 0 && Math.hypot(p.x - rx, p.z - rz) > 1.2) return false;
@@ -2003,7 +2021,7 @@ export async function stairs(page) {
         const feetTop = H.feet();
         H.turnTo(P.facing + Math.PI);
         let back = -1;
-        const downRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => { if (back < 0 && fy < hLow + 0.12) back = t; if (back >= 0 && t > back + 0.4) return false; });
+        const downRun = H.hold(['KeyW'], (st.L + 3) / 4.2 * 2 + 2, (t, p, fy) => { if (back < 0) steer(st, -dir, p); if (back < 0 && fy < hLow + 0.12) back = t; if (back >= 0 && t > back + 0.4) return false; });
         const feetEnd = H.feet();
         const r = { stair: st.name ?? `steps #${si}`, L: +st.L.toFixed(1), rise: +(hTop - hLow).toFixed(2), feet0: +feet0.toFixed(2), feetTop: +feetTop.toFixed(2), climbSec: +reached.toFixed(2), descendSec: +back.toFixed(2), feetEnd: +feetEnd.toFixed(2), penUp: upRun.pen, penDown: downRun.pen };
         res.stairs.push(r);
@@ -2029,7 +2047,9 @@ export async function stairs(page) {
       }
       // ------------------------------------------------------------------ footbridge over the canal (arched deck)
       {
-        const fb = geo.footbridges[0];
+        // the longest one (real data also has footbridge stubs a few decimetres long)
+        const fbLen = (f) => Math.hypot(f.pts[f.pts.length - 1][0] - f.pts[0][0], f.pts[f.pts.length - 1][1] - f.pts[0][1]);
+        const fb = geo.footbridges.reduce((b, f) => (!b || fbLen(f) > fbLen(b) ? f : b), null);
         if (fb) {
           const a = fb.pts[0], b = fb.pts[fb.pts.length - 1];
           const L = Math.hypot(b[0] - a[0], b[1] - a[1]), ux = (b[0] - a[0]) / L, uz = (b[1] - a[1]) / L;

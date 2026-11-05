@@ -15,12 +15,12 @@ import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
 import { buildRoadNet, omittedRoads, solveProfiles, type REdge, type RNode, type RoadNet } from './roadNet';
 import { buildNetMeshes, drapeRibbon, isDeckNode, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
-import { buildBridges, buildStairs, rasterizeStairs, stairHoles } from './bridges';
+import { buildBridges, buildStairs, fitStairEnds, rasterizeStairs, stairHoles } from './bridges';
 import { buildBuildings, rasterizeBuildings } from './facades';
 import { buildMonuments } from './monuments';
 import { buildLots, conformToLots, planLots, rasterizeLots, type GeoLot } from './lots';
 import { buildProps } from './props';
-import { SurfaceIndex } from './surfaceIndex';
+import { SurfaceIndex, trianglesNear } from './surfaceIndex';
 import { SolidRecorder, type SolidTags } from '../objects/solidKinds';
 import { createLook, type Look } from '../render/look';
 import { makeWorldMaterial } from '../render/worldMaterial';
@@ -256,9 +256,16 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   phase('water');
   chunks.tag('ground');
   const bridges = buildBridges(net, doc, ras, W, chunks, phys);
-  buildStairs(stairs, chunks, phys, ras);
   chunks.tag('ground');
   const lotStalls = buildLots(lotInfo, ras, chunks, phys);
+  {
+    // every stair's ends meet the ground as built (terrain mesh, sidewalks, lots, towpath): fitStairEnds
+    const ends: number[] = [];
+    for (const st of stairs) ends.push(st.pts[0][0], st.pts[0][1], st.pts[st.pts.length - 1][0], st.pts[st.pts.length - 1][1]);
+    const near = new SurfaceIndex([trianglesNear(phys.soupsOf('ground'), ends, 4)]);
+    for (const st of stairs) fitStairEnds(st, (x, z, ceil) => near.at(x, z, ceil), ras);
+  }
+  buildStairs(stairs, chunks, phys, ras);
   phase('bridges');
   const litWindowMat = new THREE.MeshBasicMaterial({ color: 0x8899aa });
   const facadeMat = makeFacadeMaterial(look, litWindowMat, GEO_QUALITY[opts.quality].anisotropy);
