@@ -46,6 +46,7 @@ import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtFx';
 import { createLook, bakeLook } from './systems/render/look';
 import { warmDraw } from './systems/render/warmup';
+import { separateInstancedDepth } from './systems/render/shadowCasters';
 
 async function boot() {
   await RAPIER.init();
@@ -143,6 +144,7 @@ async function boot() {
     const car0 = w.vehicles[0].mesh, car0Shown = car0.visible;
     car0.visible = true; // a car's own meshes (shown once driven or dented)
     showHurtFxForWarmup(w.hurtFx, true);
+    separateInstancedDepth(scene); // instanced shadow casters keep their own depth program (no per-draw program churn)
     renderer.compile(scene, camera);
     warmDraw(renderer, scene); // and draw each kind once: some drivers finish a program only at its first draw
     showHurtFxForWarmup(w.hurtFx, false);
