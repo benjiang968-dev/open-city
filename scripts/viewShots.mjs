@@ -52,8 +52,9 @@
 //  door     a rowhouse front door with a five-step stoop and iron rails, 3324 N St NW area (door at x=-512.1, z=-21.2,
 //           landing 28.5 m), from the pavement 4 m in front at eye height.
 //  people   six people standing on the M St north pavement 4-8 m from the camera (placed at fixed spots, idle).
+//  (door, car and tree leave the crowd out of the picture: a passer-by in front of the lens is chance, not content.)
 //  car      a parked sedan on M St (kerbside, north kerb at x=-241, z=141.4) from 5 m, three-quarter front view.
-//  tree     a street tree on M St (x=-283.3, z=140.5) from 6 m.
+//  tree     a street tree on M St (x=-271.3, z=140.2) from 6 m, seen from the pavement to its east.
 //  road-far M St carriageway at eye height (1.7 m) from x=-300 looking east: the road recedes past 200 m (the
 //           "television static" test). Traffic hidden.
 //  aerial   190 m up over the waterfront, looking north-east at M St and Wisconsin Ave (the rep block in the middle).
@@ -69,13 +70,13 @@ export const VIEWS = {
   rep: { pos: [-277.3, 1.7, 141.0], look: [-200, 2.8, 151.5], fov: 62 },
   street2: { pos: [-446, 1.7, -27.2], look: [-560, 5, -35], fov: 62 },
   street3: { pos: [-147, 1.7, 104.5], look: [-158, 6, 20], fov: 62 },
-  door: { pos: [-512.12, 1.6, -25.2], look: [-512.12, 2.0, -21.2], fov: 62, lookRel: [-512.12, -25.2] },
+  door: { pos: [-512.12, 1.6, -25.2], look: [-512.12, 2.0, -21.2], fov: 62, lookRel: [-512.12, -25.2], hidePeople: true },
   people: {
     pos: [-267.5, 1.65, 140.6], look: [-259.5, 1.0, 139.0], fov: 55,
     peds: [[-263.4, 139.5, -1.2], [-262.0, 138.3, 1.6], [-261.2, 140.9, -2.0], [-260.4, 138.7, -0.9], [-264.6, 138.0, 0.4], [-262.8, 141.4, 1.9]],
   },
-  car: { pos: [-245, 1.6, 138.4], look: [-241, 0.7, 141.4], fov: 55, lookRel: [-245, 138.4] },
-  tree: { pos: [-289.2, 1.6, 141.6], look: [-283.3, 3.1, 140.5], fov: 62, lookRel: [-289.2, 141.6] },
+  car: { pos: [-245, 1.6, 138.4], look: [-241, 0.7, 141.4], fov: 55, lookRel: [-245, 138.4], hidePeople: true },
+  tree: { pos: [-265.4, 1.6, 139.3], look: [-271.3, 3.1, 140.2], fov: 62, lookRel: [-265.4, 139.3], hidePeople: true },
   'road-far': { pos: [-300, 1.7, 147.3], look: [-80, 1.7, 145.4], fov: 62, hideTraffic: true, lookRel: [-300, 147.3] },
   aerial: { pos: [-420, 190, 380], look: [-200, 21, 140], fov: 55, abs: true },
   spawn: { player: true },
@@ -211,6 +212,8 @@ for (const full of views) {
     w.camera.updateProjectionMatrix();
     w.player.mesh.visible = false;
     for (const t of w.traffic) if (t.mesh) t.mesh.visible = !v.hideTraffic;
+    // close-up views of one object leave the crowd out (a passer-by in front of the lens is chance, not content)
+    if (w.crowd) for (const k of Object.keys(w.crowd)) if (w.crowd[k]?.mesh) w.crowd[k].mesh.visible = !v.hidePeople;
     if (v.peds) {
       // stand adults (no kid, no dog) at the given spots, idle, nearest first
       const pool = w.peds.filter((p) => p.active && !p.hidden && !p.dog && p.archetype !== 'kid' && !w.peds.some((k) => k.followId === p.id))

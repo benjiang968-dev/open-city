@@ -18,6 +18,8 @@
 //   nocards   near trees without their leaf cards (trunk, branches and the inner crown alone)
 //   wire      every material drawn as wireframe (geometry density and depth)
 //   env0 hemi0 sun0 onlysun   sky light (environment) off / hemisphere fill off / sun off / sun only
+//   envspec0 envdiff0         only the sky reflections (indirect specular) off / only the sky's diffuse light off
+//                             (world and facade materials; cars and people keep theirs)
 //   exp1 exp07                tone mapping exposure 1.0 / 0.7 (game: 0.86 by day)
 //   agx neutral notm          AgX / Khronos neutral / no tone mapping instead of ACES filmic
 //   nofog                     fog pushed out of sight
@@ -48,6 +50,7 @@ if (!w.__vsPatched) {
           .replace('vec4 tn = uDetail > 0.5 ? textureGrad(uNrmTex, vec3(tuv, A.x), gx, gy)',
             'vec4 tn = uDetail > 0.5 ? (uVsMode == 1.0 ? textureLod(uNrmTex, vec3(tuv, A.x), 0.0) : textureGrad(uNrmTex, vec3(tuv, A.x), gx, gy))')
           .replace('float mac = (m1.r - 0.5) * 0.7 + (m2.g - 0.5) * 0.5;', 'float mac = uVsMode == 5.0 ? 0.0 : (m1.r - 0.5) * 0.7 + (m2.g - 0.5) * 0.5;')
+          .replace('vec3 totalDiffuse = ', 'if (uVsMode == 7.0) reflectedLight.indirectSpecular = vec3(0.0);\nif (uVsMode == 8.0) reflectedLight.indirectDiffuse = vec3(0.0);\nvec3 totalDiffuse = ')
           .replace(/\n  return o;\n}/, `
   if (uVsMode == 6.0 && textured > 0.5) {
     float vsL = log2(max(max(length(gx), length(gy)) * float(textureSize(uAlbTex, 0).x), 1e-6));
@@ -66,7 +69,7 @@ if (!w.__vsPatched) {
   const orig = w.renderer.render.bind(w.renderer);
   w.renderer.render = (s, c) => { if (window.__vsApply) window.__vsApply(); return orig(s, c); };
 }
-const modes = { nomip: 1, avgalb: 2, nomacro: 5, miplod: 6 };
+const modes = { nomip: 1, avgalb: 2, nomacro: 5, miplod: 6, envspec0: 7, envdiff0: 8 };
 look.uniforms.uVsMode.value = modes[variant] ?? 0;
 look.uniforms.uDetail.value = variant === 'nonrm' ? 0 : w.__vsDetail0;
 const leafMats = new Set();
@@ -87,7 +90,7 @@ window.__vsApply = () => {
   if (variant === 'nofog') { w.scene.fog.near = 1e5; w.scene.fog.far = 1e6; }
   if (variant === 'skydiff1') look.uniforms.uSkyDiffuse.value = 1;
   if (dn.sun.shadow && 'intensity' in dn.sun.shadow) dn.sun.shadow.intensity = variant === 'noshadow' ? 0 : 1;
-  w.__vsLight = { exposure: r.toneMappingExposure, toneMapping: r.toneMapping, env: w.scene.environmentIntensity, sun: dn.sun.intensity, sunColor: dn.sun.color.getHexString(), hemi: dn.hemi.intensity, hemiSky: dn.hemi.color.getHexString(), hemiGround: dn.hemi.groundColor.getHexString(), skyDiffuse: look.uniforms.uSkyDiffuse.value, fog: [w.scene.fog.near, w.scene.fog.far, w.scene.fog.color.getHexString()] };
+  window.__vsLight = { exposure: r.toneMappingExposure, toneMapping: r.toneMapping, env: w.scene.environmentIntensity, sun: dn.sun.intensity, sunColor: dn.sun.color.getHexString(), hemi: dn.hemi.intensity, hemiSky: dn.hemi.color.getHexString(), hemiGround: dn.hemi.groundColor.getHexString(), skyDiffuse: look.uniforms.uSkyDiffuse.value, fog: [w.scene.fog.near, w.scene.fog.far, w.scene.fog.color.getHexString()] };
 };
 if (variant === 'texinfo') {
   const r = w.renderer, gl = r.getContext();
@@ -130,7 +133,7 @@ if (variant === 'texinfo') {
   gl.deleteFramebuffer(fb);
   r.resetState();
   const caps = { maxAnisotropy: r.capabilities.getMaxAnisotropy(), samples: gl.getParameter(gl.SAMPLES), maxTextures: r.capabilities.maxTextures, outputColorSpace: r.outputColorSpace, toneMapping: r.toneMapping, shadowType: r.shadowMap.type };
-  window.__vsNote = JSON.stringify({ res, texelMm: +(4000 / res).toFixed(2), alb: desc(A), nrm: desc(N), macro: desc(M), facade: fac[0], caps, asphalt, paint, asphaltNormal: { level0: nrm0, level3: nrm3 }, light: w.__vsLight ?? null });
+  window.__vsNote = JSON.stringify({ res, texelMm: +(4000 / res).toFixed(2), alb: desc(A), nrm: desc(N), macro: desc(M), facade: fac[0], caps, asphalt, paint, asphaltNormal: { level0: nrm0, level3: nrm3 }, light: window.__vsLight ?? null });
 } else {
   window.__vsNote = variant ? `variant ${variant}` : '';
 }
