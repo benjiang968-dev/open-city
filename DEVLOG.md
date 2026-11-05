@@ -1160,4 +1160,14 @@ Format: date · what changed · what to test · known issues.
   | Shader programs | 26 | 44 | 29 | 47 | 29 | 47 |
   | Static colliders | 10,778 | 29,146 | 10,778 | 29,146 | 10,778 | 29,146 |
 
-  Grid Medium (1 round): ready 6.8 -> 56.5 s (the texture bake), draw calls 126 -> 234, triangles 0.18 -> 0.24 M, CPU on foot 18.7 -> 25.5 ms, colliders 1,806 -> 2,050. Stage 1 costs more almost everywhere: twice the draw calls and triangles on Medium, a three-to-four times longer boot (texture bake plus a bigger real map and three times the colliders), about 130 MB more JS heap, and frame times that are higher on Low and in a car (software GL also pays the PBR shading in the CPU-side numbers here). Real-GPU frame times are still unmeasured.
+  Grid Medium (2 rounds): ready 7.1 -> 47.8 s (the texture bake), draw calls 126 -> 230, triangles 0.18 -> 0.24 M, CPU on foot 19.0 -> 19.2 ms (p90 56 -> 98), in a car 20.9 -> 24.4 ms, colliders 1,806 -> 2,050. Stage 1 costs more almost everywhere: twice the draw calls and triangles on Medium, a three-to-four times longer boot (texture bake plus a bigger real map and three times the colliders), about 130 MB more JS heap, and frame times that are higher on Low and in a car (software GL also pays the PBR shading in the CPU-side numbers here). Real-GPU frame times are still unmeasured.
+- **Screenshots** (in-game, 1280x720, Medium unless named, final build): `34-stage1-keybridge` (on the deck), `34-stage1-mst-lunch`, `34-stage1-rowhouses` (29th St), `34-stage1-circle-traffic` (Washington Circle), `34-stage1-waterfront`, `34-stage1-stair-f4` (a stair with the F4 collision view), `34-stage1-night` (M St at 21:36), `34-stage1-f3` (the overlay: its spike counter shows the software-GL frames of the screenshot run, 40 s each under load), `34-stage1-minimap`, `34-stage1-quality-{low,medium,high}` (M St).
+- **Known issues after the integration** (places in `docs/m3-suspicious-areas.md`, part 0):
+  - 6 of 85 real stairs are not walkable end to end; `physaudit` is not clean on the real map (504 + 140); `fallthrough` 1 hover in 1,303.
+  - AI traffic: 5 wrong-way moves per gate drive (the gate wants 0), 23 AI contacts; mapcheck's drive part fails about 2 runs in 3.
+  - Road smoothness still over the limits in places (roadaudit above); `roaddrive` not re-run.
+  - The starting car hits a pole within 20 m of the spawn; the kerb by the spawn sits 0.39 m below the road.
+  - The `crowd` scenario's switch to High gets the browser's renderer killed for memory in this container (also on s1-look alone); the High preset bakes 289 MiB of surface maps.
+  - Synthesized street trees on M St and Wisconsin Ave are not moved to the kerb strip on real data: 136 trees and 60 posts stand within a person's reach of a walk link (none blocks a walkway).
+  - The taxi can name a destination's street as "Georgetown" when the place has none.
+  - Boot is 3-4 times slower than main (texture bake, bigger real map, three times the colliders); Stage 1 costs more draw calls, triangles, heap and frame time than main; real-GPU numbers are still unmeasured.
