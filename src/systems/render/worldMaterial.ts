@@ -80,7 +80,8 @@ OcOut ocSurface(int s, vec3 Ng, vec3 vcol, float baseRough, float baseMetal) {
   vec2 tuv = wuv * A.yz;
   vec2 gx = dFdx(tuv), gy = dFdy(tuv);
   vec4 ta = textureGrad(uAlbTex, vec3(tuv, A.x), gx, gy);
-  vec4 tn = textureGrad(uNrmTex, vec3(tuv, A.x), gx, gy);
+  // Low preset (uDetail 0): no normal / roughness / occlusion fetch at all (a uniform branch, cheap everywhere)
+  vec4 tn = uDetail > 0.5 ? textureGrad(uNrmTex, vec3(tuv, A.x), gx, gy) : vec4(0.5, 0.5, 0.85, 1.0);
   vec4 m1 = texture(uMacro, wuv * (1.0 / 173.0));
   vec4 m2 = texture(uMacro, wuv * (1.0 / 31.0) + 0.37);
   OcOut o;
@@ -93,7 +94,7 @@ OcOut ocSurface(int s, vec3 Ng, vec3 vcol, float baseRough, float baseMetal) {
     // terrain: grass and soil mixed by the vertex colour's greenness (natural edges from the macro noise)
     vec2 tuv2 = wuv * D.w;
     vec4 sa = textureGrad(uAlbTex, vec3(tuv2, D.z), gx * D.w / A.y, gy * D.w / A.y);
-    vec4 sn = textureGrad(uNrmTex, vec3(tuv2, D.z), gx * D.w / A.y, gy * D.w / A.y);
+    vec4 sn = uDetail > 0.5 ? textureGrad(uNrmTex, vec3(tuv2, D.z), gx * D.w / A.y, gy * D.w / A.y) : vec4(0.5, 0.5, 0.9, 1.0);
     vec4 E = texelFetch(uSurfTab, ivec2(4, s), 0);  // soil reference colour
     float g = vcol.g / max(1e-4, vcol.r + vcol.g + vcol.b);
     float w = smoothstep(0.4, 0.5, g + (m2.r - 0.5) * 0.12 + (m1.g - 0.5) * 0.06);

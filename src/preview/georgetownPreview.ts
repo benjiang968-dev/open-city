@@ -10,6 +10,7 @@ import type { GeoDoc } from '../systems/map/geoDoc';
 import type { World } from '../world';
 import { bakeLook, createLook } from '../systems/render/look';
 import { createTexSheet } from '../systems/render/texSheet';
+import { warmDraw } from '../systems/render/warmup';
 
 type View = { pos: [number, number, number]; look: [number, number, number]; hour: number; fov: number; abs?: boolean; deck?: boolean };
 /** Named camera views (x, z are map metres; y is metres above the ground there unless abs). */
@@ -108,6 +109,9 @@ async function boot() {
   const target = new THREE.Object3D();
   const fake = { dayNight: dn, player: { mesh: target, vehicle: null }, camera, scene, renderer, city: geo, look } as unknown as World;
   attachLampLights(fake, TUNING.quality[quality].lampLights);
+  updateDayNight(fake, 0);
+  updateSky(fake, true);
+  warmDraw(renderer, scene);
   // texture sheet (debug): every baked layer, albedo above normals; ?texsheet=1 or __geo.texSheet(true)
   const sheet = createTexSheet(look);
   let showSheet = params.get('texsheet') === '1';
