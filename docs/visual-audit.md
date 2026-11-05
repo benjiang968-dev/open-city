@@ -21,12 +21,16 @@ where people and traffic happen to be (section 9).
 Tools (both new in this branch):
 - `scripts/viewShots.mjs`: reproducible views of the running game from any dist folder. Fixes seed (1), game time
   (11:00, held within one game minute), clear weather, preset (Medium), resolution (1280x720, device pixel ratio 1;
-  `--hd` for 1920x1080), the camera position and look-at; hides the player and the HUD (the canvas is read back, no DOM
-  overlay); gates the game loop and seeds `Math.random`, so nothing moves between steps. It uses only hooks that the
-  BEFORE build already has (`__oc`, `__ocRun`, `__ocFrames`, `cam.override`).
+  `--hd` for 1920x1080), the camera position and look-at (absolute heights pinned to the base build's ground, so a
+  build that moves the ground by a few cm is still shot from the same point; `--follow-ground` to use the shot build's
+  ground instead), the sky's cloud clock; hides the player and the HUD (the canvas is read back, no DOM overlay); seeds
+  `Math.random` and holds the game's own loop from the moment it publishes `__oc`, so the whole simulation is stepped
+  with fixed steps by the script and nothing moves between steps. It uses only hooks that the BEFORE build already has
+  (`__oc`, `__ocRun`, `__ocFrames`, `cam.override`). Reproducibility is measured in section 10.
 - `scripts/viewExperiments.js`: in-page experiments run through `viewShots.mjs --exp`, with variants
   (`view@variant`): mip level 0 only, tile-average albedo, normal maps off, macro variation off, mip-level false
-  colour, shadows off, alpha to coverage off, leaf cards off, wireframe, and every lighting term on/off. It reads the
+  colour, shadows off, alpha to coverage off, leaf cards off, wireframe, every lighting term on/off, sky reflections
+  and sky diffuse light off separately, and an overlap / z-fighting probe of the road meshes (`zfight`). It reads the
   baked texture arrays back from the GPU level by level.
 
 Test conditions, stated honestly: headless Chromium (Playwright) with SwiftShader (software Vulkan through ANGLE), no

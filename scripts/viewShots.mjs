@@ -21,14 +21,17 @@
 //                              (file <prefix>-<view>-<variant>.png) to capture the same view several ways in one run.
 //                              Whatever the function puts in window.__vsNote is printed. Used by docs/visual-audit.md
 //                              to toggle mipmaps, normal maps, exposure, sun, sky light, etc. without rebuilding.
+//   --follow-ground            ignore the views' pinned camera heights and put the camera at its height above the
+//                              ground of the build being shot (use when a build deliberately moves the ground)
 //   --json <file>              also write the per-view stats as JSON
 //   --list                     print the views and exit
 //
 // How a view is made (identical for every build, using only hooks that the BEFORE preview build c109c1c already has:
 // window.__oc (the World), __ocRun, __ocFrames and World.cam.override):
 //  1. Math.random is replaced by a fixed-seed generator before the game loads, and requestAnimationFrame is gated, so
-//     after boot the game's own loop stops and this script steps every frame itself (__ocRun: simulate without
-//     drawing; __ocFrames(1, true): one whole drawn frame). Nothing advances between steps.
+//     the game's own loop never runs a frame (held from the moment the game publishes __oc) and this script steps every
+//     frame itself with fixed steps (__ocRun: simulate without drawing; __ocFrames(1, true): one whole drawn frame).
+//     Nothing advances between steps, and two runs of the same build give the same pixels.
 //  2. The game is marked started (people and jobs run; no HUD is shown), the weather is forced and held, the clock is
 //     reset to the view's hour after every simulated second (so it stays within one game minute of it).
 //  3. The (hidden) player is moved to the ground under the camera, because traffic, parked-car stand-ins and the
@@ -67,18 +70,20 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { extname, join, resolve, sep } from 'node:path';
 const { chromium } = createRequire(import.meta.url)('playwright');
 
+// at: [camera y, look-at y], absolute, pinned to what the base build (s1-integrate 7183f1f) gives for the heights above
+// the ground, so every build is shot from exactly the same point (the BEFORE build's ground differs by up to 6 cm).
 export const VIEWS = {
-  rep: { pos: [-277.3, 1.7, 141.0], look: [-200, 2.8, 151.5], fov: 62 },
-  street2: { pos: [-446, 1.7, -27.2], look: [-560, 5, -35], fov: 62 },
-  street3: { pos: [-147, 1.7, 104.5], look: [-158, 6, 20], fov: 62 },
-  door: { pos: [-512.12, 1.6, -25.2], look: [-512.12, 2.0, -21.2], fov: 62, lookRel: [-512.12, -25.2], hidePeople: true },
+  rep: { pos: [-277.3, 1.7, 141.0], look: [-200, 2.8, 151.5], fov: 62, at: [22.743, 24.016] },
+  street2: { pos: [-446, 1.7, -27.2], look: [-560, 5, -35], fov: 62, at: [27.023, 33.889] },
+  street3: { pos: [-147, 1.7, 104.5], look: [-158, 6, 20], fov: 62, at: [24.315, 31.756] },
+  door: { pos: [-512.12, 1.6, -25.2], look: [-512.12, 2.0, -21.2], fov: 62, lookRel: [-512.12, -25.2], hidePeople: true, at: [29.185, 29.585] },
   people: {
-    pos: [-267.5, 1.65, 140.6], look: [-259.5, 1.0, 139.0], fov: 55,
+    pos: [-267.5, 1.65, 140.6], look: [-259.5, 1.0, 139.0], fov: 55, at: [22.775, 22.130],
     peds: [[-263.4, 139.5, -1.2], [-262.0, 138.3, 1.6], [-261.2, 140.9, -2.0], [-260.4, 138.7, -0.9], [-264.6, 138.0, 0.4], [-262.8, 141.4, 1.9]],
   },
-  car: { pos: [-245, 1.6, 138.4], look: [-241, 0.7, 141.4], fov: 55, lookRel: [-245, 138.4], hidePeople: true },
-  tree: { pos: [-265.4, 1.6, 139.3], look: [-271.3, 3.6, 140.2], fov: 70, lookRel: [-265.4, 139.3], hidePeople: true },
-  'road-far': { pos: [-300, 1.7, 147.3], look: [-80, 1.7, 145.4], fov: 62, hideTraffic: true, lookRel: [-300, 147.3] },
+  car: { pos: [-245, 1.6, 138.4], look: [-241, 0.7, 141.4], fov: 55, lookRel: [-245, 138.4], hidePeople: true, at: [23.018, 22.118] },
+  tree: { pos: [-265.4, 1.6, 139.3], look: [-271.3, 3.6, 140.2], fov: 70, lookRel: [-265.4, 139.3], hidePeople: true, at: [22.720, 24.720] },
+  'road-far': { pos: [-300, 1.7, 147.3], look: [-80, 1.7, 145.4], fov: 62, hideTraffic: true, lookRel: [-300, 147.3], at: [22.243, 22.243] },
   aerial: { pos: [-420, 190, 380], look: [-200, 21, 140], fov: 55, abs: true },
   spawn: { player: true },
 };
@@ -95,6 +100,7 @@ const seed = opt('seed', '1');
 const hourOpt = Number(opt('hour', '11'));
 const weather = opt('weather', 'clear');
 const settle = Number(opt('settle', '20'));
+const followGround = flag('follow-ground');
 const outDir = resolve(opt('out', 'screenshots'));
 const expFile = opt('exp', null);
 const jsonOut = opt('json', null);
@@ -133,12 +139,15 @@ await page.addInitScript(() => {
   Math.random = () => { s = (s + 0x6d2b79f5) >>> 0; let t = s; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
   const raf = window.requestAnimationFrame.bind(window);
   window.__vsHold = false;
-  window.requestAnimationFrame = (cb) => raf((t) => { if (window.__vsHold) window.requestAnimationFrame(cb); else cb(t); });
+  // the game's own loop never runs: from the moment the game publishes window.__oc (right before its first frame) every
+  // frame callback is held, so the whole simulation is stepped by this script with fixed steps (no wall-clock frames
+  // with real dt between boot and the first view, which made traffic and the crowd differ from run to run)
+  window.requestAnimationFrame = (cb) => raf((t) => { if (window.__vsHold || window.__oc) window.requestAnimationFrame(cb); else cb(t); });
 });
 const params = [`seed=${seed}`, `quality=${quality}`, map ? `map=${encodeURIComponent(map)}` : ''].filter(Boolean).join('&');
 const t0 = Date.now();
 await page.goto(`http://localhost:${port}/?${params}`);
-await page.waitForFunction(() => window.__oc && window.__oc.time > 0.5 && typeof window.__ocFrames === 'function', null, { timeout: 900000 });
+await page.waitForFunction(() => window.__oc && typeof window.__ocFrames === 'function' && typeof window.__ocRun === 'function', null, { timeout: 900000 });
 const info = await page.evaluate(() => {
   window.__vsHold = true;
   const w = window.__oc;
@@ -194,21 +203,31 @@ for (const full of views) {
     }, { hour, weather });
   }
   // fix the camera, people, traffic; force the weather look and the sky light for the final sun
-  await page.evaluate(({ v, hour, weather }) => {
+  await page.evaluate(({ v, hour, weather, followGround }) => {
     const w = window.__oc, c = w.city;
     const L = { clear: { cloud: 0, fogFar: 750, rain: 0, snow: 0, wet: 0, grip: 1 } }[weather];
     if (L) { Object.assign(w.weather.look, L); w.weather.snowCover = 0; }
     w.dayNight.hour = hour;
     const env = w.dayNight.env;
     if (env) { env.last.at = -1e9; env.last.dir.set(0, -1, 0); }
+    // the clouds drift with the game clock: pin the sky's clock so every view has the same sky whatever its place in
+    // the run (the sky light is captured from the same sky)
+    const su = env?.uniforms?.time;
+    if (su && !su.__vsPinned) { Object.defineProperty(su, 'value', { get: () => 60, set: () => {}, configurable: true }); su.__vsPinned = true; }
     if (v.player) { w.cam.override = null; w.player.mesh.visible = true; return; }
     const [px, py, pz] = v.pos, [lx, ly, lz] = v.look;
-    const gy = v.abs ? 0 : c.heightAt(px, pz, c.heightAt(px, pz) + py);
-    const ry = v.lookRel ? c.heightAt(v.lookRel[0], v.lookRel[1]) : c.heightAt(lx, lz);
-    const ly2 = v.abs ? ly : ry + ly;
-    w.cam.override = { px, py: gy + py, pz, lx, ly: ly2, lz };
-    w.camera.position.set(px, gy + py, pz);
-    w.camera.lookAt(lx, ly2, lz);
+    // camera and look-at heights: absolute for abs views; the pinned absolute heights (v.at) when the view has them
+    // (the same pixels in every build, even where a build moves the ground by a few cm); otherwise above the ground
+    let camY, lookY;
+    if (v.abs) { camY = py; lookY = ly; }
+    else if (v.at && !followGround) { [camY, lookY] = v.at; }
+    else {
+      camY = c.heightAt(px, pz, c.heightAt(px, pz) + py) + py;
+      lookY = (v.lookRel ? c.heightAt(v.lookRel[0], v.lookRel[1]) : c.heightAt(lx, lz)) + ly;
+    }
+    w.cam.override = { px, py: camY, pz, lx, ly: lookY, lz };
+    w.camera.position.set(px, camY, pz);
+    w.camera.lookAt(lx, lookY, lz);
     w.camera.fov = v.fov ?? 62;
     w.camera.updateProjectionMatrix();
     w.player.mesh.visible = false;
@@ -227,7 +246,7 @@ for (const full of views) {
         p.heading = h; p.state = 'idle'; p.timer = 1e6; p.tilt = 0; p.armPose = 'none'; p.moveAmount = 0; p.route.length = 0;
       });
     }
-  }, { v, hour, weather });
+  }, { v, hour, weather, followGround });
   const note = exp ? await page.evaluate(({ src, name, variant }) => { window.__vsNote = ''; new Function('w', 'view', 'variant', src)(window.__oc, name, variant); return window.__vsNote; }, { src: exp, name, variant }) : '';
   // two drawn frames; read the second back in the same task
   const shot = await page.evaluate(({ v }) => {
@@ -244,7 +263,7 @@ for (const full of views) {
       url, cpu: f[0]?.cpu ?? ms, wallMs: Math.round(ms), calls: inf.render.calls, tris: inf.render.triangles,
       textures: inf.memory.textures, geometries: inf.memory.geometries, hour: +w.dayNight.hour.toFixed(3), cam: w.camera.position.toArray().map((x) => +x.toFixed(2)),
       exposure: r.toneMappingExposure, env: w.scene.environmentIntensity, sun: +w.dayNight.sun.intensity.toFixed(3),
-      peds: w.crowd ? w.crowd.torso.mesh.count : -1, light: window.__vsLight ?? null,
+      peds: w.crowd ? (w.crowd.torso.mesh.visible ? w.crowd.torso.mesh.count : 0) : -1, light: window.__vsLight ?? null,
     };
   }, { v });
   const file = join(outDir, `${prefix}-${name}${variant ? `-${variant}` : ''}.png`);

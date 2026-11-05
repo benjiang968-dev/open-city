@@ -19,11 +19,16 @@
 //   wire      every material drawn as wireframe (geometry density and depth)
 //   env0 hemi0 sun0 onlysun   sky light (environment) off / hemisphere fill off / sun off / sun only
 //   envspec0 envdiff0         only the sky reflections (indirect specular) off / only the sky's diffuse light off
-//                             (world and facade materials; cars and people keep theirs)
+//                             (every material with the game's shader patch: world, facades, cars, people)
 //   exp1 exp07                tone mapping exposure 1.0 / 0.7 (game: 0.86 by day)
 //   agx neutral notm          AgX / Khronos neutral / no tone mapping instead of ACES filmic
 //   nofog                     fog pushed out of sight
 //   skydiff1                  all of the sky light on diffuse surfaces (game: 0.42 by day)
+//   zfight    no change; overlap / z-fighting probe of the ground and decal chunk meshes (geo-ground-*, geo-decal-*:
+//             world space, merged per chunk) over four study boxes (the rep block, M St / Wisconsin, Wisconsin Ave,
+//             N St): a 0.2 m grid of samples, every covering triangle found exactly, and counted: ground triangles
+//             within 3 cm of the top one (coplanar overlaps; whether the two top surfaces differ), markings less than
+//             5 mm above the top ground or under it, paint on paint within 3 mm
 const look = w.look;
 const T = { ACES: 4, AGX: 6, NEUTRAL: 7, NONE: 0 };
 // ---- one-time shader patch: a uniform switch in the shared world/facade surface sampler
@@ -43,8 +48,9 @@ if (!w.__vsPatched) {
       m.onBeforeCompile = (sh, r) => {
         prev(sh, r);
         sh.uniforms.uVsMode = look.uniforms.uVsMode;
-        sh.fragmentShader = sh.fragmentShader
-          .replace('uniform float uSkyDiffuse;', 'uniform float uSkyDiffuse;\nuniform float uVsMode;')
+        // declared at the top of every patched shader (world, facade, car and people materials all get the lighting
+        // switches; the sampler switches only touch shaders that have the world sampler)
+        sh.fragmentShader = 'uniform float uVsMode;\n' + sh.fragmentShader
           .replace('vec4 ta = textureGrad(uAlbTex, vec3(tuv, A.x), gx, gy);',
             'vec4 ta = uVsMode == 1.0 ? textureLod(uAlbTex, vec3(tuv, A.x), 0.0) : uVsMode == 2.0 ? textureLod(uAlbTex, vec3(tuv, A.x), 20.0) : textureGrad(uAlbTex, vec3(tuv, A.x), gx, gy);')
           .replace('vec4 tn = uDetail > 0.5 ? textureGrad(uNrmTex, vec3(tuv, A.x), gx, gy)',
@@ -134,6 +140,89 @@ if (variant === 'texinfo') {
   r.resetState();
   const caps = { maxAnisotropy: r.capabilities.getMaxAnisotropy(), samples: gl.getParameter(gl.SAMPLES), maxTextures: r.capabilities.maxTextures, outputColorSpace: r.outputColorSpace, toneMapping: r.toneMapping, shadowType: r.shadowMap.type };
   window.__vsNote = JSON.stringify({ res, texelMm: +(4000 / res).toFixed(2), alb: desc(A), nrm: desc(N), macro: desc(M), facade: fac[0], caps, asphalt, paint, asphaltNormal: { level0: nrm0, level3: nrm3 }, light: window.__vsLight ?? null });
+} else if (variant === 'zfight') {
+  const boxes = {
+    'M St 3200 (rep, road-far)': [-330, -170, 118, 178],
+    'M St / Wisconsin junction': [-175, -120, 110, 175],
+    'Wisconsin Ave (street3)': [-175, -130, 20, 110],
+    'N St 3300 (street2)': [-570, -420, -45, -10],
+  };
+  const tris = { ground: [], decal: [] };
+  w.scene.traverse((o) => {
+    const m = /^geo-(ground|decal)-/.exec(o.name);
+    if (!m || !o.geometry) return;
+    const g = o.geometry, P = g.attributes.position.array, S = g.attributes.aSurf ? g.attributes.aSurf.array : null;
+    const I = g.index ? g.index.array : null;
+    const n = I ? I.length / 3 : P.length / 9;
+    for (let t = 0; t < n; t++) {
+      const a = I ? I[t * 3] : t * 3, b = I ? I[t * 3 + 1] : t * 3 + 1, c = I ? I[t * 3 + 2] : t * 3 + 2;
+      tris[m[1]].push([P[a * 3], P[a * 3 + 1], P[a * 3 + 2], P[b * 3], P[b * 3 + 1], P[b * 3 + 2], P[c * 3], P[c * 3 + 1], P[c * 3 + 2], S ? S[a] : -1, o.name]);
+    }
+  });
+  const out = {};
+  for (const [bn, [x0, x1, z0, z1]] of Object.entries(boxes)) {
+    const cell = 0.5, nx = Math.ceil((x1 - x0) / cell), nz = Math.ceil((z1 - z0) / cell);
+    const grid = { ground: new Map(), decal: new Map() };
+    for (const kind of ['ground', 'decal']) {
+      for (const T of tris[kind]) {
+        const mnx = Math.min(T[0], T[3], T[6]), mxx = Math.max(T[0], T[3], T[6]), mnz = Math.min(T[2], T[5], T[8]), mxz = Math.max(T[2], T[5], T[8]);
+        if (mxx < x0 || mnx > x1 || mxz < z0 || mnz > z1) continue;
+        const ix0 = Math.max(0, Math.floor((mnx - x0) / cell)), ix1 = Math.min(nx - 1, Math.floor((mxx - x0) / cell));
+        const iz0 = Math.max(0, Math.floor((mnz - z0) / cell)), iz1 = Math.min(nz - 1, Math.floor((mxz - z0) / cell));
+        for (let i = ix0; i <= ix1; i++) for (let j = iz0; j <= iz1; j++) { const k = i * 100000 + j; let l = grid[kind].get(k); if (!l) grid[kind].set(k, (l = [])); l.push(T); }
+      }
+    }
+    const hits = (kind, x, z) => {
+      const l = grid[kind].get(Math.floor((x - x0) / cell) * 100000 + Math.floor((z - z0) / cell));
+      const r = [];
+      if (!l) return r;
+      for (const T of l) {
+        const ax = T[0], az = T[2], bx = T[3], bz = T[5], cx = T[6], cz = T[8];
+        const d = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz);
+        if (Math.abs(d) < 1e-9) continue;
+        const u = ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / d, v = ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / d, s = 1 - u - v;
+        if (u < -1e-6 || v < -1e-6 || s < -1e-6) continue;
+        r.push({ y: u * T[1] + v * T[4] + s * T[7], surf: T[9], mesh: T[10] });
+      }
+      return r.sort((p, q) => q.y - p.y);
+    };
+    let samples = 0, covered = 0, gg0 = 0, gg5 = 0, gg30 = 0, ggDiff = 0, dg = 0, dgBelow = 0, dd = 0, decalSamples = 0;
+    const pairs = {}, where = [];
+    const step = 0.2;
+    for (let x = x0 + step / 2; x < x1; x += step) for (let z = z0 + step / 2; z < z1; z += step) {
+      samples++;
+      const G = hits('ground', x, z);
+      if (!G.length) continue;
+      covered++;
+      // distinct triangles at (nearly) the same height as the top one
+      const top = G[0];
+      const near = G.slice(1).filter((h) => top.y - h.y < 0.03);
+      if (near.length) {
+        const gap = top.y - near[0].y;
+        if (gap < 1e-4) gg0++; else if (gap < 0.005) gg5++; else gg30++;
+        if (near[0].surf !== top.surf) {
+          ggDiff++;
+          const k = `${top.surf}/${near[0].surf}`; pairs[k] = (pairs[k] ?? 0) + 1;
+          if (where.length < 12 && gap > 1e-4) where.push([+x.toFixed(1), +z.toFixed(1), +gap.toFixed(4), k]);
+        }
+      }
+      const D = hits('decal', x, z);
+      if (D.length) {
+        decalSamples++;
+        const lift = D[0].y - top.y;
+        if (lift < 0) dgBelow++; else if (lift < 0.005) dg++;
+        if (D.length > 1 && D[0].y - D[1].y < 0.003) dd++;
+      }
+    }
+    const pc = (a, b) => +(100 * a / Math.max(1, b)).toFixed(2);
+    out[bn] = {
+      samples, coveredPct: pc(covered, samples),
+      groundOverlapWithin3cmPct: pc(gg0 + gg5 + gg30, covered), exactCoplanarPct: pc(gg0, covered), gapUnder5mmPct: pc(gg5, covered), gap5to30mmPct: pc(gg30, covered),
+      differentSurfaceOnTopPct: pc(ggDiff, covered), surfacePairs: pairs, examples: where,
+      decalSamples, decalLiftUnder5mmPct: pc(dg, decalSamples), decalBelowGroundPct: pc(dgBelow, decalSamples), decalOnDecalWithin3mmPct: pc(dd, decalSamples),
+    };
+  }
+  window.__vsNote = JSON.stringify({ tris: { ground: tris.ground.length, decal: tris.decal.length }, boxes: out });
 } else {
   window.__vsNote = variant ? `variant ${variant}` : '';
 }
