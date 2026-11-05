@@ -12,8 +12,8 @@ import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, polyArea, SegGrid } from './geoDoc';
 import { lin as linHex, PhysChunks, RenderChunks, type Layer } from './meshKit';
 import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
-import { buildRoadNet, omittedRoad, solveProfiles, type REdge, type RoadNet } from './roadNet';
-import { buildNetMeshes, drapeRibbon, rasterizeNet, sections } from './roadMesh';
+import { buildRoadNet, omittedRoads, solveProfiles, type REdge, type RoadNet } from './roadNet';
+import { buildNetMeshes, drapeRibbon, isDeckNode, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
 import { buildBridges, buildStairs, rasterizeStairs } from './bridges';
 import { buildBuildings, createFacadeMaterial, rasterizeBuildings } from './facades';
@@ -272,10 +272,11 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   }));
   const decks: GeoDeck[] = net.edges.filter((e) => e.deck).map((e) => ({ roadId: e.road.id, edge: e.id, name: e.name, layer: e.layer, centre: centreOf(net, e), halfWidth: e.hw }));
   const deckIdx = buildDeckIndex(net, [...water.walkDecks, ...pierDecks]);
-  const omitted = doc.roads.filter((r) => omittedRoad(doc, r)).map((r) => ({
+  const omittedSet = omittedRoads(doc);
+  const omitted = doc.roads.filter((r) => omittedSet.has(r)).map((r) => ({
     roadId: r.id, name: r.name ?? '', reason: doc.meta.synthetic
       ? 'K St underpass beneath Washington Circle: not rendered (ramps would need >15% grades between the split nodes and the ring); remove from the graph'
-      : 'tunnel or below-ground road (the K St underpass and its ramps): the world has no tunnel geometry yet; not rendered, not in the graph',
+      : r.tunnel || r.layer < 0 ? 'tunnel or below-ground road (the K St underpass): the world has no tunnel geometry yet; not rendered, not in the graph' : 'approach to an omitted tunnel (would dead-end at the portal): not rendered, not in the graph',
   }));
 
   // ---------------------------------------------------------------- queries (no allocation)
@@ -595,6 +596,26 @@ function buildDeckIndex(net: RoadNet, walkDecks: { pts: Pt[]; hw: number; h: num
       S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), e.hw, wl, wr, 0);
       grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, Math.max(wl, wr) + 0.5);
     }
+  }
+  // at-grade stretches that pass over or under another road (flagged by rasterizeNet): their own surface, carriageway only
+  for (const e of net.edges) {
+    if (e.deck || !e.overlay) continue;
+    const X = sections(e, e.trimA, e.L - e.trimB);
+    for (let i = 1; i < X.length; i++) {
+      if (!e.overlay[i]) continue;
+      const id = S.length / N;
+      S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), e.hw, e.hw, e.hw, 0);
+      grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, e.hw + 0.5);
+    }
+  }
+  // junctions inside a bridge: a flat disc at the node height covering its outline
+  for (const n of net.nodes) {
+    if (n.outline.length < 6 || !isDeckNode(n)) continue;
+    let r = 0;
+    for (let i = 0; i < n.outline.length; i += 2) r = Math.max(r, Math.hypot(n.outline[i] - n.x, n.outline[i + 1] - n.z));
+    const id = S.length / N;
+    S.push(n.x, n.z, n.x + 0.01, n.z, n.h, n.h, r, r, r, 0);
+    grid.add(n.x, n.z, n.x + 0.01, n.z, id, r + 0.5);
   }
   for (const w of walkDecks) {
     for (let i = 1; i < w.pts.length; i++) {

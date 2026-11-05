@@ -638,6 +638,9 @@ const RAW = {
     freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
     deckThickness: 1.1, // m from deck surface to its underside
     deckGroundGap: 0.6, // m: natural ground under a bridge deck is cut down to at least this far below its underside
+    gradeSeparation: 2.5, // m: overlapping carriageways closer in height than this are one surface (the smaller road conforms to the bigger); more is a real grade separation
+    conformBlend: 12, // m over which a road blends into the surface of a bigger road it overlaps
+    overlayTolerance: 0.25, // m: an at-grade road this far off the raster's surface is a grade separation (kept as its own surface)
     stairWallFrom: 0.2, // m: a stair's side walls start once it has risen this far above its foot (the flat run-in stays open)
     columnRoadClear: 1.6, // m: a bridge / freeway column (and its sample points) keeps this far from a carriageway below, so it never stands in a lane
     parapetHeight: 1.05, // m: bridge and freeway parapets (solid, cars bounce off)

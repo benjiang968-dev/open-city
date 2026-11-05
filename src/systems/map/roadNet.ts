@@ -13,6 +13,7 @@ const DENSE = 4; // m between profile samples along an edge
 const SMOOTH = 14; // m half window for smoothing terrain along an edge
 const GORE_RADIUS = 1; // m kerb radius where two arms meet at a sharp angle (merges)
 const MIN_TRIM = 1.2; // m every arm keeps clear of a junction centre
+const PRUNE_PASSES = 6; // tunnel approaches pruned at most this many road pieces deep
 /** Ways left out of the render (and to be removed from the graph). See the report: the K St underpass. */
 export const OMITTED_ROADS = new Set(['K St NW#tunnel']);
 /**
@@ -20,9 +21,34 @@ export const OMITTED_ROADS = new Set(['K St NW#tunnel']);
  * ramps) are left out of the render and the graph; the world has no tunnel geometry yet. Knowledge-based data keeps
  * its own list (OMITTED_ROADS).
  */
-export function omittedRoad(doc: GeoDoc, r: GeoRoad): boolean {
+function omittedRoad(doc: GeoDoc, r: GeoRoad): boolean {
   if (doc.meta.synthetic) return OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`);
   return r.tunnel === 1 || r.layer < 0;
+}
+const omitCache = new WeakMap<GeoDoc, Set<GeoRoad>>();
+/**
+ * The roads left out of the world (see omittedRoad) plus, in real data, the approaches that would dead-end at an
+ * omitted tunnel: a road whose end only an omitted road continued is pruned, and so on back to the junction where
+ * the approach leaves the street (at most PRUNE_PASSES roads deep).
+ */
+export function omittedRoads(doc: GeoDoc): Set<GeoRoad> {
+  const hit = omitCache.get(doc);
+  if (hit) return hit;
+  const out = new Set(doc.roads.filter((r) => omittedRoad(doc, r)));
+  omitCache.set(doc, out);
+  if (doc.meta.synthetic) return out;
+  const key = (p: Pt) => `${p[0]},${p[1]}`;
+  for (let pass = 0; pass < PRUNE_PASSES; pass++) {
+    const kept = new Map<string, number>(), gone = new Set<string>();
+    for (const r of doc.roads) {
+      if (out.has(r)) { for (const p of r.pts) gone.add(key(p)); continue; }
+      r.pts.forEach((p, i) => kept.set(key(p), (kept.get(key(p)) ?? 0) + (i === 0 || i === r.pts.length - 1 ? 1 : 2)));
+    }
+    const prune = doc.roads.filter((r) => !out.has(r) && [r.pts[0], r.pts[r.pts.length - 1]].some((p) => gone.has(key(p)) && kept.get(key(p)) === 1));
+    if (!prune.length) break;
+    for (const r of prune) out.add(r);
+  }
+  return out;
 }
 /** The Whitehurst Freeway's last stretch is moved north so it runs beside (not on top of) the K St bridge. */
 const FREEWAY_SHIFT = { x0: 110, x1: 250, x2: 392, dz: -15.6 };
@@ -91,6 +117,12 @@ export interface REdge {
   /** Per section segment and side (-1 left, +1 right): 1 if the paved frontage strip continues to the building line. */
   fillL: Uint8Array | null;
   fillR: Uint8Array | null;
+  /**
+   * Per section segment (sections(e, trimA, L - trimB)): 1 where this at-grade road is not the raster's surface (it
+   * passes over or under another road there: a grade separation the data does not mark as a bridge). Those stretches
+   * are queried through the deck index instead.
+   */
+  overlay: Uint8Array | null;
 }
 
 export interface RoadNet {
@@ -114,7 +146,8 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
   const key = (x: number, z: number) => `${x},${z}`;
   // ---- which vertices are nodes
   const synthetic = !!doc.meta.synthetic;
-  const roads = doc.roads.filter((r) => !omittedRoad(doc, r));
+  const omitted = omittedRoads(doc);
+  const roads = doc.roads.filter((r) => !omitted.has(r));
   const count = new Map<string, number>();
   const isEnd = new Set<string>();
   for (const r of roads) {
@@ -217,7 +250,7 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     const e: REdge = {
       id: edges.length, road: r, name: r.name ?? '', a, b, pts, cum, L: cum[cum.length - 1], hw, lanes, fwd, bwd,
       layer: r.layer, deck: r.bridge === 1 || r.layer > 0, freeway, roundabout, prof: new Float32Array(pts.length),
-      trimA: 0, trimB: 0, swL: sw, swR: sw, cuts: [], noSw: [], surface: r.surface ?? 'asphalt', cls: r.highway, fillL: null, fillR: null,
+      trimA: 0, trimB: 0, swL: sw, swR: sw, cuts: [], noSw: [], surface: r.surface ?? 'asphalt', cls: r.highway, fillL: null, fillR: null, overlay: null,
     };
     edges.push(e);
   }
@@ -689,8 +722,84 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       e.prof[k] = Math.max(sm[k], req[k] === -Infinity ? -Infinity : req[k] - 0.15);
     }
   }
+  conformOverlaps(net);
   // roundabout and other loops: nothing special (nodes carry heights)
   void nodes;
+}
+
+/** Rank for overlaps: the bigger road keeps its profile, the smaller one conforms to it. */
+const CONFORM_RANK: Record<string, number> = { motorway: 7, trunk: 6, primary: 5, secondary: 4, tertiary: 3, unclassified: 2, residential: 2, living_street: 1, road: 1, service: 0 };
+const rankOf = (e: REdge) => (e.roundabout ? 8 : CONFORM_RANK[e.cls.replace('_link', '')] ?? 1) - (e.cls.endsWith('_link') ? 0.5 : 0);
+
+/**
+ * Real data puts at-grade carriageways on top of each other without a shared node: a slip road or a parking aisle
+ * alongside a street, a driveway reaching into it, two roads that cross without a mapped junction, the two halves of
+ * a dual carriageway that touch. Each followed its own smoothed terrain, so their surfaces disagree by up to a metre
+ * where they overlap (a step a car hits). Where the smaller road's centre line runs on the bigger road's carriageway
+ * and the two are within G.gradeSeparation of each other, the smaller road takes the bigger road's height, blended in
+ * over G.conformBlend metres. Bigger differences are real grade separations (left as they are: the world keeps both
+ * surfaces, see roadMesh / the deck index).
+ */
+function conformOverlaps(net: RoadNet) {
+  const { edges } = net;
+  const atGrade = edges.filter((e) => !e.deck);
+  const cell = 24;
+  const grid = new Map<number, REdge[]>();
+  const gk = (i: number, j: number) => (i + 2000) * 4000 + (j + 2000);
+  for (const e of atGrade) {
+    const seen = new Set<number>();
+    for (const p of e.pts) {
+      const r = e.hw + 2;
+      for (let i = Math.floor((p[0] - r) / cell); i <= Math.floor((p[0] + r) / cell); i++)
+        for (let j = Math.floor((p[1] - r) / cell); j <= Math.floor((p[1] + r) / cell); j++) {
+          const k = gk(i, j);
+          if (seen.has(k)) continue;
+          seen.add(k);
+          (grid.get(k) ?? grid.set(k, []).get(k)!).push(e);
+        }
+    }
+  }
+  const order = atGrade.slice().sort((a, b) => rankOf(a) - rankOf(b) || a.id - b.id);
+  for (const A of order) {
+    const n = A.pts.length, c = A.cum;
+    const target = new Float32Array(n).fill(NaN);
+    let any = false;
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      const p = A.pts[k];
+      const list = grid.get(gk(Math.floor(p[0] / cell), Math.floor(p[1] / cell)));
+      if (!list) continue;
+      let best = NaN, bestRank = -Infinity;
+      for (const B of list) {
+        if (B === A || rankOf(B) < rankOf(A) || (rankOf(B) === rankOf(A) && B.id < A.id)) continue;
+        const pr = projectEdge(B, p[0], p[1]);
+        if (pr.d > B.hw - 0.2) continue;
+        if (pr.s <= B.trimA || pr.s >= B.L - B.trimB) continue; // on B's junction plateau: the junction joins them
+        const hB = net.profAt(B, pr.s);
+        if (Math.abs(hB - A.prof[k]) > G.gradeSeparation) continue;
+        if (rankOf(B) > bestRank) { bestRank = rankOf(B); best = hB; }
+      }
+      if (!Number.isNaN(best)) { target[k] = best; any = true; }
+    }
+    if (!any) continue;
+    // nearest target sample within the blend distance, weighted by a cosine fall-off
+    const out = Float32Array.from(A.prof);
+    for (let k = 0; k < n; k++) {
+      const s = c[k];
+      if (s <= A.trimA + 0.01 || s >= A.L - A.trimB - 0.01) continue;
+      let bestD = Infinity, hv = 0;
+      for (let q = 0; q < n; q++) {
+        if (Number.isNaN(target[q])) continue;
+        const d = Math.abs(c[q] - s);
+        if (d < bestD) { bestD = d; hv = target[q]; }
+      }
+      if (bestD > G.conformBlend) continue;
+      const w = 0.5 + 0.5 * Math.cos((Math.PI * bestD) / G.conformBlend);
+      out[k] = A.prof[k] + (hv - A.prof[k]) * w;
+    }
+    A.prof = out;
+  }
 }
 
 function cosFall(t: number) {

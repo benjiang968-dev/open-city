@@ -1819,3 +1819,10 @@ export async function geoplay(page, S) {
   });
   return out;
 }
+
+// Debug probe (any map): starts the game and prints the JSON value of the expression in $PROBE, evaluated in the page
+// with w = window.__oc, c = the CityMap, M = window.__ocMap.  PROBE='c.roads.edges.length' node scripts/shot.mjs x probe
+export async function probe(page, S) {
+  await S.start(page);
+  return page.evaluate((src) => { const w = window.__oc, c = w.city, M = window.__ocMap; return eval(src); }, process.env.PROBE ?? 'null');
+}
