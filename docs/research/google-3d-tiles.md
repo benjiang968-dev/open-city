@@ -5,11 +5,14 @@ used in Open City, a free static browser game on GitHub Pages, either for gamepl
 
 **Short answer.** Not for gameplay. That is ruled out by the terms (no extraction, no derived content, no caching,
 no use next to a non-Google map) and also by the data itself (one photogrammetry skin with no buildings, doors or
-collision meaning). An optional live fly-over viewer is legally possible, but only on a separate page with no
-Open City map on screen. It also needs the owner's own Google Cloud billing account with a non-EEA billing
-address, a restricted browser key, hard quota caps, Google's logo and attribution, and a terms and privacy
-notice. It brings little to the game and adds a running cost and a compliance burden. My recommendation is not
-to build it unless the owner asks for it explicitly after reading section 10.
+collision meaning). An optional live fly-over viewer is **legally doubtful, not clearly allowed** (fact-check,
+2026-11-05): a page that shows nothing but Google's tiles risks 3.2.3 (d) ("must contain substantial, independent
+value and features beyond the Google products") and the ToS definition of a Customer Application ("material value
+independent of the Services"), while adding our own map or city to it runs into 3.2.3 (e). It would also need the
+owner's own Google Cloud billing account with a non-EEA billing address, a restricted browser key, hard quota
+caps, Google's logo and attribution, and a terms and privacy notice. It brings little to the game and adds a
+running cost and a compliance burden. My recommendation is not to build it; if the owner wants it anyway, get
+written confirmation from Google (Maps sales or support) first (section 10).
 
 ## How this was researched (read this first)
 
@@ -27,6 +30,12 @@ to build it unless the owner asks for it explicitly after reading section 10.
   cited so the owner can open them. Where search extracts from different page versions disagreed, I say so.
   **Confirm every price and quota in the Google Cloud console before relying on it.**
 - No API key was used, so nothing below was measured against the live service.
+- **Fact-check pass (2026-11-05, second reader).** T1–T5 were downloaded again from cloud.google.com and every
+  quote below was matched against the text (dates confirmed: ToS and EEA ToS Aug 26, 2026; both Service Specific
+  Terms and the services list Oct 28, 2026). The npm entry [R2] was re-read. The developers.google.com items
+  [D1–D8] and the forum and blog posts [B1–B4] were re-checked by fresh web searches only; the hosts stay blocked
+  (cloud.google.com/blog redirects to the blocked mapsplatform.google.com, and community.cesium.com is refused
+  too). Changes from that pass are marked "fact-check".
 
 ## 1. What the product is
 
@@ -49,9 +58,16 @@ Google Cloud account. "Customer Application" is Open City.
   "Services" and "Google Maps Core Services" are defined together as the services on that list. So every
   Core Service restriction below applies to 3D Tiles.
 - **No service-specific terms for 3D Tiles.** The non-EEA Service Specific Terms [T2] (Oct 28, 2026) have no
-  Map Tiles API section at all. Its general rule still applies: "Customer will attribute all the Services in
-  accordance with the Documentation". The EEA Service Specific Terms [T3] have a Map Tiles API section (9.1),
-  but it covers Street View tiles only.
+  Map Tiles API section at all. Its general rules still apply: "Customer will comply with the Documentation"
+  (A.1) and "Customer will attribute all the Services in accordance with the Documentation" (A.2). The EEA
+  Service Specific Terms [T3] have a Map Tiles API section (9.1), but it covers Street View tiles only.
+- **The policy pages are binding, not advice (fact-check).** ToS 4.2: "The Documentation may specify
+  restrictions (e.g. attribution or HTML restrictions) on how the Services may be used and Customer will comply
+  with any such restrictions specified", and T2 A.1 says the same. So the Map Tiles policies [D1] and the renderer
+  page [D5] count as part of the deal.
+- **Attribution clause (3.2.2 b, fact-check).** "Customer will display all attribution that (i) Google provides
+  through the Services (including branding, logos, and copyright and trademark notices); or (ii) is specified in
+  the Maps Service Specific Terms. Customer will not modify, obscure, or delete such attribution."
 - **No scraping (3.2.3 a).** "Customer will not export, extract, or otherwise scrape Google Maps Content for
   use outside the Services. For example, Customer will not: (i) pre-fetch, index, store, reshare, or rehost
   Google Maps Content outside the services; (ii) bulk download Google Maps tiles…". *Consequence: no tiles in
@@ -60,8 +76,11 @@ Google Cloud account. "Customer Application" is Open City.
   the Maps Service Specific Terms". The Service Specific Terms permit nothing for Map Tiles; only Google IDs may
   be cached [T2 §A.3].
 - **No content created from Google Maps Content (3.2.3 c).** "Customer will not create content based on
-  Google Maps Content". Its examples include "trace or digitize roadways, building outlines… (ii) create 3D
-  building models from 45° Imagery… (iii) build terrain models based on elevation values". The Map Tiles
+  Google Maps Content". Its examples include "(i) trace or digitize roadways, building outlines… from the Maps
+  JavaScript API Satellite base map type; (ii) create 3D building models from 45° Imagery from Maps JavaScript
+  API; (iii) build terrain models based on elevation values from the Elevation API". The examples name other
+  APIs, but the rule itself covers all "Google Maps Content", which the ToS defines as "any content provided
+  through the Services… including map and terrain data, imagery". The Map Tiles
   policy page says the same for 3D Tiles. You may overlay your own 3D objects only "as long as the 3D objects
   aren't extracted, traced, or otherwise derived by hand or machine from Photorealistic 3D Tiles" [D1].
   Google's 3D Tiles FAQ blog adds: "programmatically reading and recording measurements (heights,
@@ -74,12 +93,23 @@ Google Cloud account. "Customer Application" is Open City.
   object detection [D1]. Gameplay that raycasts against the tiles (driving on them, line of sight, placing
   NPCs) is machine interpretation of the mesh.
 - **No use with or near a non-Google map (3.2.3 e).** "Customer will not use the Google Maps Core Services
-  with or near a non-Google Map in a Customer Application." Open City's minimap and big map are drawn from
-  OpenStreetMap/Overture data, so they are non-Google maps. Our own Georgetown 3D city is arguably one too.
-  *Consequence: a viewer must be its own screen, with no minimap, big map or OSM-based 3D city on it. This is
-  the clause that most clearly rules out mixing Google tiles into the game.* The EEA ToS [T4] does not contain
-  this clause (it was dropped there along with "No Re-Creating Google Products"). That does not help, because
-  of the next point.
+  with or near a non-Google Map in a Customer Application. For example, Customer will not (i) display or use
+  Places content on a non-Google Map, (ii) display Street View imagery and non-Google Maps on the same screen, or
+  (iii) link a Google Map to non-Google Maps Content or a non-Google Map." Open City's minimap and big map are
+  drawn from OpenStreetMap/Overture data, so they are non-Google maps. Our own Georgetown 3D city is arguably one
+  too. *Consequence: a viewer must be its own screen, with no minimap, big map or OSM-based 3D city on it. This
+  is the clause that most clearly rules out mixing Google tiles into the game.* Fact-check: example (iii) also
+  makes a **link** between the viewer and our maps a risk, and "near" is undefined; the ToS does not say that a
+  separate page of the same site is far enough. The EEA ToS [T4] does not contain this clause (it was dropped
+  there along with "No Re-Creating Google Products"). That does not help, because of the EEA point below.
+- **No re-creating Google products (3.2.3 d, fact-check).** "Customer's product or service must contain
+  substantial, independent value and features beyond the Google products or services", and Customer will not
+  "re-distribute the Google Maps Core Services or pass them off as if they were Customer's services". The ToS
+  licence is "to use the Services in Customer Application(s)", and a Customer Application is "any web page or
+  application… that has material value independent of the Services". *Consequence: a stand-alone page that only
+  shows Google's tiles of Georgetown (essentially what Google Earth already shows) is hard to square with
+  3.2.3 (d), while putting our own map or city on it breaks 3.2.3 (e). That squeeze is why the short answer
+  calls the viewer legally doubtful.*
 - **EEA availability.** Google's EEA notice for the Map Tiles API says Photorealistic 3D Tiles are not
   available to projects created after 8 July 2025 that are linked to an EEA billing address, or to projects
   that left the "Unmodified State" after that date. Such projects get HTTP 403 [D6]. A developer report says a
@@ -89,12 +119,13 @@ Google Cloud account. "Customer Application" is Open City.
   that the Customer Application includes Google Maps features and content; and (B) state that use of Google
   Maps features and content is subject to the then-current versions of the: (1) Google Maps End User
   Additional Terms of Service… and (2) Google Privacy Policy". Open City has no terms page today.
-- **Data goes to Google (4.x).** Google "collects and receives data from Customer and End Users… including
+- **Data goes to Google (4.4 a).** Google "collects and receives data from Customer and End Users… including
   search terms, IP addresses, and latitude/longitude coordinates". The game would need a privacy notice for
   the viewer page.
 - **Other limits that apply to us.**
-  - Customer Applications "directed to children" under COPPA are excluded (3.2.1 c vi). Open City is not
-    directed to children.
+  - Customer Applications that would be deemed a "Website or online service directed to children" under COPPA
+    are excluded (3.2.1 c vi). Open City is not meant for children, but a colourful game is judged by its
+    content and audience, so the owner would have to confirm this (fact-check: softened from "is not").
   - Benchmark results may only be published with full reproduction details (3.2.4).
   - Google may ask to review the app (3.2.2 c).
   - The key holder "is responsible for… any use of its API key(s)" and for "ensuring that only authorized
@@ -112,7 +143,8 @@ Nothing may be stored beyond what the browser's own HTTP cache does with Google'
 - no saving tiles from a dev machine to speed up the build
 
 Cesium staff give the same answer on their forum: "it is not possible to clip or use Google's 3d tiles offline".
-Cesium ion's Clips feature is explicitly unavailable for Google tiles "due to their terms of use" [B1].
+Cesium ion's Clips feature is explicitly unavailable for Google tiles "due to their terms of use" [B1]. (Both
+quotes reach us as search extracts; community.cesium.com is refused from this environment.)
 
 ## 4. Extracting geometry (collision, heights, footprints)
 
@@ -131,19 +163,27 @@ artificial bumps" requirement.
 
 Required whenever tiles are on screen:
 
+The binding rule is ToS 3.2.2 (b) (section 2): show all attribution Google provides, including logos, and do not
+modify, obscure or delete it. The details below come from the policy pages, as search extracts only.
+
 - **Google logo.**
   - Unaltered.
-  - Bottom-left recommended.
-  - No other logo (for example a renderer's) may overlap or obscure it [D1, D5].
-  - The logo file is supplied on the policy page.
+  - Bottom-left of the map; the policy extract says "You should place the Google logo in the bottom left-hand
+    corner of the map, and you should place the attribution information in the right-hand corner" [D1]. The
+    renderer page puts the data attribution "usually [in] the bottom right corner" [D5].
+  - No other logo (for example a renderer's) may overlap or obscure it, with "a reasonable buffer distance"
+    between Google's logo and a third-party logo [D1, D5].
+  - The logo file is said to be supplied on the policy page (not seen; unconfirmed).
   - Where a cinematic 3D experience cannot place it, the logo must appear "at the beginning or end or both
     ends" [D1].
 - **Data attribution.**
   - The aggregated `asset.copyright` strings of the visible tiles, sorted by frequency and joined with
     semicolons.
   - Visible, not cropped or hidden, and not covered by any logo.
-  - Third-party credits (ours: OpenStreetMap and Overture) must stay visually separate from Google's.
-  - "Google" alone or the logo alone is not proper attribution [D1, D5].
+  - Third-party credits (ours: OpenStreetMap and Overture) must not overlap or obscure Google's data attribution
+    and must be "clearly… disassociated" from it (wording differs between page versions in the extracts) [D1].
+  - Where the tiles carry third-party data, "Google" alone or the logo alone is not proper attribution; the text
+    names Google and the data providers [D1, D5].
 - **The strings change with the view.** They must be read from the tiles at runtime, never hard-coded [D1].
 - **Promotional videos** of the viewer must be marked "for promotional purposes only". One version of the
   policy also caps them at 30 seconds with no Street View imagery; the page versions in the search extracts
@@ -163,7 +203,9 @@ Required whenever tiles are on screen:
   count toward the daily quota [D3]. A Cesium forum post from the preview era describes the same model at
   "$6 per 1000 3D root tiles" [B4].
 - **Free monthly usage (since March 2025).** The $200 monthly credit ended on 28 February 2025. Since then
-  each SKU has its own free monthly cap: Essentials 10,000, Pro 5,000, Enterprise **1,000** [D4, B5].
+  each SKU has its own free monthly cap: Essentials 10,000, Pro 5,000, Enterprise **1,000** [D4, B5]. These are
+  the figures for "most Core Services SKUs"; a footnote gives 2D Map Tiles and Street View Tiles 100,000. The
+  1,000 for Photorealistic 3D Tiles was confirmed again in the fact-check search of the price list [D4].
 - **Prices per 1,000 billable events (USD), from search extracts of the official price list [D4]:**
 
   | Monthly volume | Price per 1,000 |
@@ -175,8 +217,9 @@ Required whenever tiles are on screen:
   | 1,000,001–5,000,000 | $3.30 |
   | above 5,000,000 | $2.40 |
 
-- **Daily quota.** Older page versions list "10,000 root tileset queries per day" per project. Newer versions
-  in the extracts do not show it [D3]. Check the Quotas page in the console.
+- **Daily quota.** Page versions disagree. Some list "10,000 root tileset queries per day" under the 3D
+  section, others only under the 2D and Street View section; one also gives a rate limit of 12,000 queries per
+  minute [D3]. Unconfirmed for 3D Tiles; check the Quotas page in the console.
 - **What a viewer would cost.** One viewer visit is roughly one root request, plus one more per three hours on
   screen.
 
@@ -261,9 +304,13 @@ browser, so a proxy would be rehosting Google content, which 3.2.3 (a) forbids.
 - **Gameplay: no.** Not for collision, terrain, heights, footprints or roads. Not as a backdrop in the game
   view, and not even as a reference to trace. The terms forbid it (3.2.3 a, c, e; Map Tiles policy) and the data
   cannot do it.
-- **Optional live viewer: only if the owner explicitly asks, and only under all of these conditions.**
+- **Optional live viewer: legally doubtful (section 2, 3.2.3 d and e). Only if the owner explicitly asks, only
+  after Google confirms in writing that the planned page is acceptable, and only under all of these conditions.**
   1. A separate page (for example `viewer.html`, "Real Georgetown fly-over") with no Open City minimap, big
-     map or game city on that screen. A link from the pause menu to it is fine.
+     map or game city on that screen. Fact-check: the earlier "a link from the pause menu to it is fine" was not
+     supported. 3.2.3 (e) example (iii) forbids linking a Google Map to a non-Google map, so any link between
+     the viewer and the game is part of what to ask Google about. The page must also offer something of its own
+     beyond Google's imagery (3.2.3 d).
   2. The owner's own Google Cloud project and billing account with a **non-EEA** billing address, and the
      Map Tiles API enabled.
   3. A key restricted to the GitHub Pages referrer and to Map Tiles API only, hard daily quota caps, a budget
@@ -300,8 +347,8 @@ browser, so a proxy would be rehosting Google content, which 3.2.3 (a) forbids.
 - [D8] Maps Demo Key (search extracts only). https://mapsplatform.google.com/maps-demo-key/
 - [R1] NASA-AMMOS 3DTilesRendererJS README, plugin guide and API (read in full). https://github.com/NASA-AMMOS/3DTilesRendererJS (raw: README.md, src/three/plugins/API.md, src/core/plugins/API.md)
 - [R2] npm registry, `3d-tiles-renderer` 0.5.4. https://registry.npmjs.org/3d-tiles-renderer
-- [B1] Cesium community threads on offline use and Clips with Google tiles (secondary). https://community.cesium.com/t/how-can-i-download-photorealistic-3d-tiles-for-cesium-js-react-offline-self-hosted/26293 and https://community.cesium.com/t/tiles-for-offline-terrain-server/40557
+- [B1] Cesium community threads on offline use and Clips with Google tiles (secondary; search extracts only, host refused here). https://community.cesium.com/t/how-can-i-download-photorealistic-3d-tiles-for-cesium-js-react-offline-self-hosted/26293 and https://community.cesium.com/t/tiles-for-offline-terrain-server/40557
 - [B2] Google Maps Platform blog, "Commonly asked questions about our recently launched Photorealistic 3D Tiles" (search extract only). https://cloud.google.com/blog/products/maps-platform/commonly-asked-questions-about-our-recently-launched-photorealistic-3d-tiles
 - [B3] OSGeo discourse, "Google satellite 2D Tiles stopped working for EEA developers" (secondary). https://discourse.osgeo.org/t/google-satellite-2d-tiles-stopped-working-for-european-economic-area-eea-developers/149688 and blosm issue #644: https://github.com/vvoovv/blosm/issues/644
-- [B4] Cesium community, "Google 3D Tiles Cost" (secondary, preview era). https://community.cesium.com/t/google-3d-tiles-cost/27625
+- [B4] Cesium community, "Google 3D Tiles Cost" (secondary, preview era, search extract only). https://community.cesium.com/t/google-3d-tiles-cost/27625
 - [B5] Woosmap, "Google Maps API Pricing 2026" (secondary, confirms per-SKU caps since March 2025). https://www.woosmap.com/blog/google-maps-api-pricing-breakdown
