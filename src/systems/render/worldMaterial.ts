@@ -125,6 +125,19 @@ OcOut ocSurface(int s, vec3 Ng, vec3 vcol, float baseRough, float baseMetal) {
   return o;
 }`;
 
+/**
+ * Leaf card coverage: the leaf texture's alpha, rounded into a cluster by the card coordinate (ragged edge), and kept
+ * dense in the smaller mip levels (averaged alpha would otherwise dissolve distant canopies into speckle).
+ */
+const FOLIAGE_ALPHA = /* glsl */ `
+{
+  float ocR = length(vCard);
+  float ocEdge = 1.0 - smoothstep(0.55, 1.0, ocR + (ocS.alpha - 0.5) * 0.35);
+  vec2 ocG = fwidth(ocS.wuv) * float(textureSize(uAlbTex, 0).x) * texelFetch(uSurfTab, ivec2(0, int(vSurf + 0.5)), 0).y;
+  float ocLod = max(0.0, log2(max(ocG.x, ocG.y)));
+  diffuseColor.a = clamp(ocS.alpha * (1.0 + 0.3 * ocLod), 0.0, 1.0) * ocEdge;
+}`;
+
 export interface WorldMatOptions {
   name: string;
   roughness?: number;
@@ -133,6 +146,8 @@ export interface WorldMatOptions {
   decal?: boolean;
   /** Foliage cards: alpha cut-out from the leaf texture, both sides. */
   foliage?: boolean;
+  /** Instanced far trees: instances within `radius` of `centre` (xz) are not drawn (detailed trees stand there). */
+  hideNear?: { centre: THREE.IUniform<THREE.Vector3>; radius: THREE.IUniform<number> };
 }
 
 /** A world material for MeshBuf geometry (vertex colours tagged with surface ids). */
@@ -142,21 +157,30 @@ export function makeWorldMaterial(look: Look, o: WorldMatOptions): THREE.MeshSta
     side: o.foliage ? THREE.DoubleSide : THREE.FrontSide,
   });
   if (o.decal) { mat.polygonOffset = true; mat.polygonOffsetFactor = -2; mat.polygonOffsetUnits = -6; }
+  // leaf cards: soft cut-out edges with MSAA (alpha to coverage), a hard 0.5 cut without it
+  if (o.foliage) { mat.alphaTest = 0.5; mat.alphaToCoverage = true; }
   mat.name = o.name;
-  const key = `oc-world-1-${o.foliage ? 'f' : 's'}`;
+  const key = `oc-world-1-${o.foliage ? 'f' : 's'}${o.hideNear ? 'h' : ''}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, look.uniforms);
+    if (o.hideNear) { sh.uniforms.uNearCentre = o.hideNear.centre; sh.uniforms.uNearRadius = o.hideNear.radius; }
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', `#include <common>\n${OC_VERT_PARS}`)
-      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>\n${OC_VERT_MAIN}`);
+      .replace('#include <common>', `#include <common>\n${OC_VERT_PARS}${o.hideNear ? '\nuniform vec3 uNearCentre;\nuniform float uNearRadius;' : ''}${o.foliage ? '\nattribute vec2 aCard;\nvarying vec2 vCard;' : ''}`)
+      .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>\n${OC_VERT_MAIN}${o.foliage ? '\nvCard = aCard;' : ''}`);
+    if (o.hideNear) sh.vertexShader = sh.vertexShader.replace('#include <project_vertex>', /* glsl */ `#include <project_vertex>
+#ifdef USE_INSTANCING
+{
+  vec3 ocIp = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  vec2 ocD = ocIp.xz - uNearCentre.xz;
+  if (dot(ocD, ocD) < uNearRadius * uNearRadius) gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+}
+#endif`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\n${OC_FRAG_PARS}`)
+      .replace('#include <common>', `#include <common>\n${OC_FRAG_PARS}${o.foliage ? '\nvarying vec2 vCard;' : ''}`)
       .replace('#include <map_fragment>', /* glsl */ `
 vec3 ocNg = normalize(vOcN);
-#ifdef DOUBLE_SIDED
-  ocNg *= gl_FrontFacing ? 1.0 : -1.0;
-#endif
+${o.foliage ? '' : '#ifdef DOUBLE_SIDED\n  ocNg *= gl_FrontFacing ? 1.0 : -1.0;\n#endif'}
 #ifdef USE_COLOR
   vec3 ocVc = vColor.rgb;
 #else
@@ -164,7 +188,7 @@ vec3 ocNg = normalize(vOcN);
 #endif
 OcOut ocS = ocSurface(int(vSurf + 0.5), ocNg, ocVc, roughness, metalness);
 diffuseColor.rgb *= ocS.alb;
-${o.foliage ? 'if (ocS.alpha < 0.5) discard;' : ''}`)
+${o.foliage ? FOLIAGE_ALPHA : ''}`)
       .replace('#include <color_fragment>', '')
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(ocS.rough, 0.03, 1.0);')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = ocS.metal;')

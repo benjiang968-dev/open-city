@@ -46,6 +46,7 @@ export function applyQuality(w: World, q: Quality, boot = false): void {
   const shadowsChanged = r.shadowMap.enabled !== p.shadows;
   r.shadowMap.enabled = p.shadows;
   sun.castShadow = p.shadows;
+  sun.shadow.camera.far = Math.max(1, p.shadowDistance); // how far the two cascades reach
   if (sun.shadow.mapSize.x !== p.shadowMapSize) {
     sun.shadow.mapSize.set(p.shadowMapSize, p.shadowMapSize);
     sun.shadow.map?.dispose();

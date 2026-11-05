@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, resolve } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 
 const args = process.argv.slice(2);
@@ -50,6 +50,9 @@ const lookStats = await page.evaluate(() => window.__geo.look?.stats ?? null);
 console.log(`${dist}: boot ${stats.bootMs} ms (page ready after ${Date.now() - t0} ms)${lookStats ? `  texture bake ${lookStats.bakeMs} ms at ${lookStats.res} px, ${(lookStats.bytes / 1048576).toFixed(1)} MiB` : ''}`);
 await page.evaluate(() => { for (const id of ['hud', 'help']) { const e = document.getElementById(id); if (e) e.style.display = 'none'; } });
 mkdirSync('screenshots', { recursive: true });
+// builds with __geo.capture render each shot as one explicit frame (no animation loop competing for software GL)
+const canCapture = await page.evaluate(() => typeof window.__geo.capture === 'function');
+if (canCapture) await page.evaluate(() => window.__geo.pause(true));
 const settle = async (frames) => {
   const f0 = await page.evaluate(() => window.__geo.perf().frames);
   await page.waitForFunction((f) => window.__geo.perf().frames >= f, f0 + frames, { timeout: 240000 });
@@ -62,10 +65,16 @@ for (const v of views) {
     if (vv !== 'texsheet') window.__geo.setView(vv);
     if (h !== null) window.__geo.setHour(Number(h));
   }, [v, quality, hour]);
-  await settle(5);
-  const p = await page.evaluate(() => window.__geo.perf());
   const file = `screenshots/${prefix}-${v}.${jpg ? 'jpg' : 'png'}`;
-  await page.screenshot({ path: file, timeout: 240000, ...(jpg ? { type: 'jpeg', quality: 85 } : {}) });
+  if (canCapture) {
+    // three frames: the sky light refreshes on the first, shadows and streaming settle on the next
+    const url = await page.evaluate(() => window.__geo.capture(3));
+    writeFileSync(file.replace(/\.jpg$/, '.png'), Buffer.from(url.split(',')[1], 'base64'));
+  } else {
+    await settle(5);
+    await page.screenshot({ path: file, timeout: 240000, ...(jpg ? { type: 'jpeg', quality: 85 } : {}) });
+  }
+  const p = await page.evaluate(() => window.__geo.perf());
   console.log(`${file.padEnd(44)} calls ${String(p.calls).padStart(4)}  tris ${(p.tris / 1e6).toFixed(2)} M  cpu ${p.cpuMs.toFixed(1)} ms`);
 }
 const real = errors.filter((e) => !/GPU stall|ReadPixels|WebGL-|swiftshader|Automatic fallback/i.test(e));

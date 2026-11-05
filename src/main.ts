@@ -7,7 +7,7 @@ import type { World } from './world';
 import { createInput, endInputFrame, act } from './systems/input';
 import { loadMap } from './systems/map/loadMap';
 import { validateCityMap, laneSample, projectOnLane, roadRouter, walkRouter } from './systems/map/cityMap';
-import { createDayNight, updateDayNight } from './systems/dayNight';
+import { createDayNight, updateDayNight, updateSky } from './systems/dayNight';
 import { createCamera, updateCamera } from './systems/camera';
 import { createPlayer, updatePlayer } from './systems/player';
 import { spawnInitialVehicles, updateVehicles, detectCrashes, wreckMaterial } from './systems/vehicles';
@@ -124,6 +124,10 @@ async function boot() {
   w.combat = createCombat(w);
   createBubbles();
 
+  // the sky light (PMREM environment) exists before anything compiles, so no material recompiles when it arrives
+  updateDayNight(w, 0);
+  updateWeather(w, 0);
+  updateSky(w, true);
   // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
   // triggers a first-time shader compile mid-game
   {
@@ -253,7 +257,7 @@ async function boot() {
     P.begin('sync'); syncTraffic(w); syncPolice(w); updateCarDamage(w, dt); updateWorldItems(w, dt); if (w.started) updateCombat(w, dt); updateInventory(w); updateBubbles(w); P.end('sync');
     P.begin('fx'); updateHurtFx(w, dt); P.end('fx');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
-    P.begin('weather'); updateWeather(w, dt); P.end('weather');
+    P.begin('weather'); updateWeather(w, dt); updateSky(w); P.end('weather');
     if (render) { P.begin('city'); w.city.update(w.time, camera); P.end('city'); }
     P.begin('camera'); updateCamera(w, dt); P.end('camera');
     P.begin('hud'); updateHud(w, dt); P.end('hud');

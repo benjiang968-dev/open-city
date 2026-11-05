@@ -93,9 +93,9 @@ Mat asphalt(vec2 uv) {
   alb *= (0.82 + 0.36 * base) * (0.9 + 0.2 * fine);
   // crack networks (warped cell borders) only in places, and tar-sealed cracks elsewhere
   vec2 warp = vec2(gnoise(uv, cyc(0.5), 5), gnoise(uv, cyc(0.5), 6)) - 0.5;
-  vec4 c = worley(uv + warp * 0.035, cyc(0.85), 7, 0.9);
+  vec4 c = worley(uv + warp * 0.06, cyc(1.3), 7, 0.9);
   float edge = c.y - c.x;
-  float crackZone = smoothstep(0.56, 0.7, fbm(uv, cyc(1.6), 3, 9));
+  float crackZone = smoothstep(0.63, 0.74, fbm(uv, cyc(2.0), 3, 9));
   float crack = (1.0 - smoothstep(0.0, 0.03, edge)) * crackZone;
   float sealZone = smoothstep(0.6, 0.68, fbm(uv, cyc(2.0), 2, 11)) * (1.0 - crackZone);
   float seal = (1.0 - smoothstep(0.02, 0.07, edge)) * sealZone;
@@ -273,20 +273,27 @@ Mat bark(vec2 uv) {
   return Mat(alb, 1.0, h, 0.95, mix(0.55, 1.0, fiss));
 }
 
-/** Leaf clusters: alpha (tint channel) is coverage for cut-out canopy cards. */
+/**
+ * Leaves in clumps: alpha (the tint channel) is coverage for cut-out canopy cards. Clumps of about 0.3 m are filled
+ * with overlapping leaves of 6-9 cm; between the clumps the canopy is open. Gaps keep a deep-shade green so mipmaps
+ * and the opaque far crowns read as dense foliage, not speckle.
+ */
 Mat foliage(vec2 uv) {
-  float cover = 0.0, h = 0.0, tone = 0.5, shade = 1.0;
-  for (int k = 0; k < 3; k++) {
-    vec4 w = worley(uv + vec2(float(k) * 0.37, float(k) * 0.61), cyc(0.055 - float(k) * 0.008), 111 + k * 9, 1.0);
-    float ang = w.z * 6.2831853;
-    // elongated leaf: distance in a rotated, stretched frame around the cell point
-    float leaf = smoothstep(0.62, 0.42, w.x * (1.0 + 0.6 * abs(sin(ang + uv.x * 6.2831853 * 8.0))));
-    if (leaf > cover) { cover = max(cover, leaf); tone = w.z; h = (0.62 - w.x) * 0.02; shade = 1.0 - 0.25 * float(k); }
+  vec4 cl = worley(uv, cyc(0.3), 110, 1.0);
+  float clump = smoothstep(0.8, 0.45, cl.x);
+  float cover = 0.0, h = 0.0, tone = 0.5, lit = 1.0;
+  for (int k = 0; k < 2; k++) {
+    vec4 w = worley(uv + vec2(float(k) * 0.37, float(k) * 0.61), cyc(0.085 - float(k) * 0.025), 111 + k * 9, 1.0);
+    float leaf = smoothstep(0.66, 0.4, w.x);
+    if (leaf > cover) { cover = leaf; tone = w.z; h = (0.66 - w.x) * 0.03; lit = 1.0 - 0.2 * float(k); }
   }
-  vec3 alb = mix(srgb(vec3(0.16, 0.27, 0.08)), srgb(vec3(0.32, 0.45, 0.15)), tone);
-  alb = mix(alb, srgb(vec3(0.45, 0.47, 0.18)), step(0.88, tone) * 0.6);
-  alb *= shade;
-  return Mat(alb, cover, h, 0.7, mix(0.5, 1.0, shade));
+  cover *= mix(0.25, 1.0, clump);
+  vec3 alb = mix(srgb(vec3(0.17, 0.27, 0.09)), srgb(vec3(0.33, 0.45, 0.16)), tone);
+  alb = mix(alb, srgb(vec3(0.44, 0.47, 0.2)), step(0.9, tone) * 0.6);
+  alb *= lit * mix(0.7, 1.05, clump);
+  vec3 deep = srgb(vec3(0.07, 0.11, 0.05));
+  alb = mix(deep, alb, smoothstep(0.1, 0.5, cover));
+  return Mat(alb, cover, h + clump * 0.02, 0.86, mix(0.45, 1.0, cover * clump));
 }
 
 Mat wood(vec2 uv) {

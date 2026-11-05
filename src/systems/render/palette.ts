@@ -38,7 +38,9 @@ const TABLE: [number, number][] = [
   [0x4a5560, SURF.SLATE], [0x5f8f7c, SURF.METAL_SEAM], [0x8c7f70, SURF.CONCRETE], [0x9b5a45, SURF.BRICK_RUNNING],
   [0x7d4636, SURF.BRICK_RUNNING], [0xe9e1d0, SURF.ASHLAR], [0xf3f0e8, SURF.CONCRETE], [0xe2ded4, SURF.CONCRETE],
   [0xf4f1ea, SURF.ASHLAR], [0xd8d2c6, SURF.STONE], [0xe8e2d4, SURF.TRIM], [0xf4f1e6, SURF.TRIM],
-  // grid city (cityGen.ts)
+  // tree crowns (props.ts GREENS / CONIFER: the far crowns get the leaf texture)
+  [0x5c9e47, SURF.FOLIAGE], [0x4f8a3e, SURF.FOLIAGE], [0x76b051, SURF.FOLIAGE], [0x3f7a3a, SURF.FOLIAGE], [0x88b84b, SURF.FOLIAGE],
+  [0x6aa04a, SURF.FOLIAGE], [0x3b6b45, SURF.FOLIAGE], [0x2f5e3c, SURF.FOLIAGE], [0x46784c, SURF.FOLIAGE],
 ];
 
 /** Facade wall and roof palette colours (facades.ts ROW_COLOURS, BRICK, STONE, MODERN, ROOF_*, AWNINGS, landmarks). */

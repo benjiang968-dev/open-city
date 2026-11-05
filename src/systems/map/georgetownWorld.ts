@@ -23,6 +23,8 @@ import { buildProps } from './props';
 import { createLook, type Look } from '../render/look';
 import { makeWorldMaterial } from '../render/worldMaterial';
 import { makeFacadeMaterial } from '../render/facadeMaterial';
+import { upgradePropMaterials } from '../render/propMaterials';
+import { createTreeLod } from '../render/trees';
 import { SURF, surf } from '../render/surfaces';
 
 const G = TUNING.geo;
@@ -226,6 +228,8 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff1c4 });
   const lampPoolMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending });
   const props = buildProps(doc, ras, net, info, bridges.lamps, chunks, phys, root, lampMat, lampPoolMat);
+  upgradePropMaterials(root, look);
+  const treeLod = createTreeLod(look, root, TUNING.quality[opts.quality].treeNear);
   phase('props');
 
   // ---------------------------------------------------------------- materials and chunk meshes
@@ -315,6 +319,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     quality = q;
     const Q = GEO_QUALITY[q];
     props.setTreeShare(Q.trees);
+    treeLod.setRadius(TUNING.quality[q].treeNear);
     world.quality = q;
   };
   const camPos = new THREE.Vector3();
@@ -339,6 +344,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
       if (m.detail) m.detail.visible = vis && d3 < Q.detail;
     }
     props.update(camPos, Q.detail, draw);
+    treeLod.update(camPos);
     bld.update(camPos, Q.detail);
   };
 

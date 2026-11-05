@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING } from '../tuning';
-import { createDayNight, updateDayNight } from '../systems/dayNight';
+import { createDayNight, updateDayNight, updateSky } from '../systems/dayNight';
 import { buildGeorgetownWorld, type GeoQuality, type GeoWorld } from '../systems/map/georgetownWorld';
 import type { GeoDoc } from '../systems/map/geoDoc';
 import type { World } from '../world';
@@ -87,11 +87,12 @@ async function boot() {
   bakeLook(look, renderer, quality);
   const geo: GeoWorld = buildGeorgetownWorld(scene, RAPIER, physics, doc, { seed, quality, look });
   document.getElementById('loading')!.remove();
-  const SHADOW = { low: [false, 512], medium: [true, 1024], high: [true, 2048] } as const;
   const applyQ = (q: GeoQuality) => {
     geo.setQuality(q);
     bakeLook(look, renderer, q);
-    const [on, size] = SHADOW[q];
+    const Q = TUNING.quality[q];
+    const on = Q.shadows, size = Q.shadowMapSize;
+    dn.sun.shadow.camera.far = Math.max(1, Q.shadowDistance);
     const changed = renderer.shadowMap.enabled !== on;
     renderer.shadowMap.enabled = on;
     dn.sun.castShadow = on;
@@ -162,8 +163,11 @@ async function boot() {
   const perf = { calls: 0, tris: 0, frameMs: 0, cpuMs: 0, frames: 0 };
   let last = performance.now();
   const fwd = new THREE.Vector3();
+  /** Scripted captures (lookShots.mjs) stop the loop and render single frames themselves (software GL is slow). */
+  let paused = false;
   const frame = () => {
     const now = performance.now();
+    if (paused) { last = now; requestAnimationFrame(frame); return; }
     const dt = Math.min(0.1, (now - last) / 1000);
     perf.frameMs = perf.frameMs * 0.9 + (now - last) * 0.1;
     last = now;
@@ -177,20 +181,7 @@ async function boot() {
     if (keys.has('KeyE')) camera.position.y += sp;
     if (keys.has('KeyQ')) camera.position.y -= sp;
     camera.lookAt(camera.position.x + fwd.x, camera.position.y + fwd.y, camera.position.z + fwd.z);
-    const t0 = performance.now();
-    // the sun follows a point in front of the camera (the game follows the player)
-    const ahead = Math.min(60, Math.max(10, camera.position.y));
-    target.position.set(camera.position.x + fwd.x * ahead, 0, camera.position.z + fwd.z * ahead);
-    dn.hour = hour;
-    updateDayNight(fake, 0);
-    geo.update(now / 1000, camera);
-    renderer.info.reset();
-    if (showSheet) renderer.render(sheet.scene, sheet.camera);
-    else renderer.render(scene, camera);
-    perf.calls = renderer.info.render.calls;
-    perf.tris = renderer.info.render.triangles;
-    perf.cpuMs = perf.cpuMs * 0.9 + (performance.now() - t0) * 0.1;
-    perf.frames++;
+    renderNow(now);
     if (perf.frames % 2 === 0) {
       const p = camera.position;
       hud.textContent = `view ${state.view}  quality ${geo.quality}  hour ${hour.toFixed(1)}\n` +
@@ -199,6 +190,25 @@ async function boot() {
     }
     requestAnimationFrame(frame);
   };
+  /** Update the world for the current camera and draw one frame. */
+  function renderNow(now: number) {
+    const t0 = performance.now();
+    // the sun follows a point in front of the camera (the game follows the player)
+    const ahead = Math.min(60, Math.max(10, camera.position.y));
+    target.position.set(camera.position.x + fwd.x * ahead, 0, camera.position.z + fwd.z * ahead);
+    dn.hour = hour;
+    updateDayNight(fake, 0);
+    fake.time = now / 1000;
+    updateSky(fake);
+    geo.update(now / 1000, camera);
+    renderer.info.reset();
+    if (showSheet) renderer.render(sheet.scene, sheet.camera);
+    else renderer.render(scene, camera);
+    perf.calls = renderer.info.render.calls;
+    perf.tris = renderer.info.render.triangles;
+    perf.cpuMs = perf.cpuMs * 0.9 + (performance.now() - t0) * 0.1;
+    perf.frames++;
+  }
   requestAnimationFrame(frame);
 
   // ---- hooks for scripts/previewShots.mjs
@@ -229,6 +239,22 @@ async function boot() {
     stats: geo.stats,
     look,
     texSheet: (on: boolean) => { showSheet = on; },
+    /** Debug: the renderer, scene, camera and day/night state; timeFrame renders once and waits for the GPU. */
+    renderer, scene, camera, dn,
+    /** Stop (true) or restart the animation loop. */
+    pause: (on: boolean) => { paused = on; },
+    /** Render one frame now (n times, for the sky light to settle) and return it as a PNG data URL. */
+    capture: (n = 1) => {
+      for (let i = 0; i < n; i++) renderNow(performance.now());
+      return canvas.toDataURL('image/png');
+    },
+    timeFrame: () => {
+      const gl = renderer.getContext(), px = new Uint8Array(4);
+      const t0 = performance.now();
+      renderer.render(scene, camera);
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return { ms: Math.round(performance.now() - t0), calls: renderer.info.render.calls, tris: renderer.info.render.triangles };
+    },
     geo,
     doc,
     castDown,
