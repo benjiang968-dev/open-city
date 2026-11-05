@@ -33,6 +33,10 @@ preferred). Every non-procedural asset is listed with its source and licence in 
   For these sites' licence statements I used **web-search extracts** of their own licence or FAQ pages,
   marked [S].
 - Nothing was downloaded from any asset site.
+- **Fact-check pass (2026-11-05, second reader).** Re-read [P1], [P2], the CC0 and Apache-2.0 SPDX texts, the
+  npm registry entries [N1] (every version, date and licence in section 4 matches), three's `KTX2Loader`
+  `FORMAT_OPTIONS` and `libs/basis/` sizes, and the cloud-environments page [C1]. The texture sites' licence
+  statements were re-checked by new web searches only. Changes are marked "fact-check".
 
 ## 1. Legally safe sources
 
@@ -44,10 +48,10 @@ a CC0 photo of a branded shopfront is still unusable for us (CLAUDE.md: no logos
 |---|---|---|---|---|
 | **ambientCG** (ambientcg.com) | Large library of PBR materials (albedo, normal, roughness, AO, displacement) at 1K–8K, HDRIs, some models (library size not verified) | "All ambientCG assets are provided under the Creative Commons CC0 1.0 Universal License"; this covers "the downloadable files and the preview renders" [S: docs.ambientcg.com/license] | Not required ("appreciated"; suggested wording on that page) | API v2 is frozen; "new projects should use v3". Each asset has a `downloadLink` that logs the download, then redirects to the raw file [S: docs.ambientcg.com/api/v2] |
 | **Poly Haven** (polyhaven.com) | Photo-scanned PBR textures, HDRIs, 3D models (props, furniture, street items) | CC0. The FAQ says the only thing you cannot do is claim authorship or re-license [S: polyhaven.com/faq, /license] | **Assets: none**. "CC0 assets carry no attribution requirement whatsoever, now or ever" [P1 §2.5]. **Live API use only:** a visible "Powered by Poly Haven"-style credit [P1 §2.5] | API free for any use including commercial [P1 §2.1–2.3]. Calls must send a unique `Referer` or User-Agent naming our software [P1 §2.4]. Download once and self-host, so the credit clause does not apply |
-| ShareTextures | ~1,500+ PBR textures | "All our textures are released under the CC0 license" [S] | No | |
+| ShareTextures | ~1,500+ PBR textures | **Not plain CC0 (fact-check).** Its current licence page says "Custom CC0 (Creative Commons Zero) license with specific restrictions", and its blog says the CC0 licence "is only valid when the asset is downloaded directly from our website" [S: sharetextures.com/p/license, /blog/what-cc0-really-means]. The restrictions themselves were not visible in the extracts | Unclear | **Avoid** until the full terms are read; older "plain CC0" coverage is out of date |
 | TextureCan | ~650 PBR textures | "Creative Commons CC0 1.0 Universe License" [S: texturecan.com/terms] | No | |
 | 3DTextures.me | ~1,300 texture sets | "All textures on this site are licensed as CC0" [S: 3dtextures.me/about] | No | |
-| cgbookcase | ~550 PBR textures | CC0 per launch coverage; **no primary licence page seen** [S] | No | Verify on the site before use |
+| cgbookcase | ~550 PBR textures | CC0 per launch coverage and the creator's own Patreon page ("released into the public domain"); **no licence page on cgbookcase.com seen** [S] | No | Verify on the site before use |
 | Kenney | 3D/2D game kits (city, furniture, vehicles; stylised low-poly) | "public domain licensed (CC0)"; logo reserved [S: kenney.nl/support] | No ("Kenney" appreciated) | Style is low-poly; useful for placeholders and interiors, not the realistic look |
 | Quaternius | Stylised low-poly models | CC0 per pack (seen on OpenGameArt listings) [S] | No | Check each pack |
 | Poly Pizza | Aggregator of low-poly models | **Per model**: many CC0, some CC-BY [S] | Only for CC-BY models | Check each model page; record the licence |
@@ -174,8 +178,11 @@ expands to RGBA8 in VRAM.
 
 **Already in the repo's three 0.187.0** (no new dependency):
 
-- `examples/jsm/libs/basis/basis_transcoder.js` (57,529 B) and `basis_transcoder.wasm` (527,333 B), Apache-2.0.
-  Copy them to `public/basis/` and call `ktx2Loader.setTranscoderPath('basis/')`.
+- `examples/jsm/libs/basis/basis_transcoder.js` (57,529 B) and `basis_transcoder.wasm` (527,333 B), Apache-2.0
+  (per `libs/basis/README.md`). Copy them to `public/basis/` and call `ktx2Loader.setTranscoderPath('basis/')`.
+  Fact-check: that ships Apache-2.0 code to every player, so Apache-2.0 §4 a applies ("give any other recipients
+  of the Work… a copy of this License"). Put the Apache-2.0 text next to them (for example
+  `public/basis/LICENSE.txt`) and list both files in `assets/LICENSES.md`.
 - `examples/jsm/loaders/KTX2Loader.js`. `detectSupport(renderer)` chooses the GPU format per device. From its
   `FORMAT_OPTIONS`:
   - ASTC (UASTC only)
@@ -222,11 +229,17 @@ CC0 sites above are refused too.
 
 **How the owner changes it** (Claude Code docs, "Cloud environments → Network access" [C1]):
 
-1. Open the cloud environment's settings (environment menu → Edit) and choose **Network access → Custom**. Newer
-   app versions call it Limited, with an "Allowed domains" field.
-2. Tick **"Also include default list of common package managers"** so npm, PyPI and GitHub keep working.
-3. Add one domain per line. A leading `*.` matches subdomains.
-4. Existing sessions pick up the change within about a minute.
+Fact-check: re-read on 2026-11-05. The earlier text named a checkbox ("Also include default list of common
+package managers") and a "Limited" level; neither appears in the current page, so the steps below follow its
+wording.
+
+1. Open the environment for editing (for a running session: the caret after the session title, then **Edit
+   cloud environment**) and set the **Network access** selector to **Custom**. The page describes Custom as
+   "Your own allowlist, optionally including the defaults".
+2. Keep the defaults included, so npm, PyPI and the other Trusted-list hosts keep working (the exact control
+   for this is not named on the page).
+3. List one domain per line in the **Allowed domains** field. "A leading `*.` matches every subdomain".
+4. "Its existing sessions follow the new setting within about a minute"; no new session is needed.
 
 **Domains to add:**
 
@@ -246,7 +259,7 @@ cdn.polyhaven.com
 
 Optional:
 
-- `sharetextures.com`, `www.sharetextures.com`, `texturecan.com`, `kenney.nl`
+- `texturecan.com`, `kenney.nl` (ShareTextures dropped in the fact-check: its custom licence needs reading first)
 - for licence pages: `creativecommons.org`
 - for the research sources this session could not open: `developers.google.com`, `mapsplatform.google.com`,
   `docs.overturemaps.org`, `osmfoundation.org`, `www.openstreetmap.org`, `opendatacommons.org`, `cdla.dev`
@@ -275,7 +288,7 @@ Optional:
 
 - [P1] Poly Haven API Terms of Service (read in full). https://github.com/Poly-Haven/Public-API/blob/master/ToS.md
 - [P2] Poly Haven Public API README (read in full). https://github.com/Poly-Haven/Public-API
-- [S] Search extracts of: https://docs.ambientcg.com/license · https://docs.ambientcg.com/api/v2/ · https://polyhaven.com/license · https://polyhaven.com/faq · https://www.sharetextures.com/ · https://texturecan.com/terms/ · https://3dtextures.me/about · https://kenney.nl/support · https://opengameart.org/content/5-low-poly-animals (Quaternius) · https://poly.pizza/bundle/Restaurant-Bits-ejkcnWf78Q
+- [S] Search extracts of: https://docs.ambientcg.com/license · https://docs.ambientcg.com/api/v2/ · https://polyhaven.com/license · https://polyhaven.com/faq · https://www.sharetextures.com/ · https://www.sharetextures.com/p/license · https://www.sharetextures.com/blog/what-cc0-really-means · https://www.patreon.com/cgbookcase/about · https://texturecan.com/terms/ · https://3dtextures.me/about · https://kenney.nl/support · https://opengameart.org/content/5-low-poly-animals (Quaternius) · https://poly.pizza/bundle/Restaurant-Bits-ejkcnWf78Q
 - [L1] CC0 1.0 Universal (SPDX copy, read in full). https://raw.githubusercontent.com/spdx/license-list-data/main/text/CC0-1.0.txt (canonical: https://creativecommons.org/publicdomain/zero/1.0/legalcode)
 - [N1] npm registry: https://registry.npmjs.org/ktx2-encoder, /@gltf-transform/cli, /basis_universal, /basisu, /sharp, /ktx-parse, /3d-tiles-renderer; glTF-Transform CLI source (KTX-Software dependency text): https://github.com/donmccurdy/glTF-Transform/blob/main/packages/cli/src/cli.ts
 - [C1] Claude Code docs, Cloud environments: network access. https://code.claude.com/docs/en/cloud-environments#network-access
