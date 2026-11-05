@@ -1110,7 +1110,7 @@ Format: date · what changed · what to test · known issues.
 
 ### Stage 1 integration (branch `s1-integrate`, from main 8192ea1)
 
-- **Merges, in order:** `s1-research` (5ada6be), `s1-physics` (17c3625), `s1-realdata` (76ea1bd), `s1-look` (cf8e768). All four branches existed. Conflicts and how they were kept on both sides:
+- **Merges, in order:** `s1-research` (731c18c), `s1-physics` (17c3625), `s1-realdata` (76ea1bd), `s1-look` (cf8e768). All four branches existed. Conflicts and how they were kept on both sides:
   - `facades.ts`: concave footprints cut into convex pieces (real data) and every building collider tagged `building` (physics).
   - `roadMesh.ts`: deck junctions collide as `deck` triangles and corners know they are on a deck (physics), plus the deck junction underside (real data); the look's surface-tagged colours (`surf(SURF.*)`) on every palette.
   - `georgetownWorld.ts`: stairwell holes, the surface index, the audit recorder and the props' `standAt` (physics) with the real-data road topology (`omittedRoads`, `planLots` / `conformToLots`) and the look (`createLook`, world and facade materials, upgraded water and props, tree LOD).
