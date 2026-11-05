@@ -81,11 +81,14 @@ function pickReaction(ped: Ped, kind: CrimeKind): Reaction {
   return 'flee';
 }
 
-/** Line of sight from a person's eyes to a point on the ground (static geometry only). */
-export function canSee(w: World, ped: Ped, x: number, z: number): boolean {
+/**
+ * Line of sight from a person's eyes to a point on the ground (static geometry only). `y`: the surface height at
+ * the point if known (a bridge deck above the terrain); default: the terrain there.
+ */
+export function canSee(w: World, ped: Ped, x: number, z: number, y = NaN): boolean {
   const R = w.R;
   const ox = ped.pos.x, oy = ped.pos.y + 1.6 * ped.scale, oz = ped.pos.z;
-  const dx = x - ox, dy = w.city.heightAt(x, z) + 1.0 - oy, dz = z - oz;
+  const dx = x - ox, dy = (y === y ? y : w.city.heightAt(x, z)) + 1.0 - oy, dz = z - oz;
   const d = Math.hypot(dx, dy, dz);
   if (d < 1.5) return true;
   const hit = w.physics.castRay(new R.Ray({ x: ox, y: oy, z: oz }, { x: dx / d, y: dy / d, z: dz / d }), d - 0.5, true, R.QueryFilterFlags.ONLY_FIXED);
@@ -128,10 +131,12 @@ export function updateWitnesses(w: World, dt: number): void {
     }
     const c = crimeFromEvent(e);
     if (!c) continue;
+    // crimes happen where the player is: their height picks the level (Key Bridge deck, not the towpath below)
+    const cy = w.city.heightAt(c.x, c.z, w.player.mesh.position.y);
     const crime: Crime = { id: nextCrime++, kind: c.kind, x: c.x, z: c.z, heat: WT.heat[c.kind], reported: false, victim: c.victim };
     crimes.set(crime.id, crime);
     // police who saw it react at once
-    if (policeCanSee(w, c.x, c.z)) {
+    if (policeCanSee(w, c.x, c.z, cy)) {
       addHeat(w, crime.heat);
       crime.reported = true;
     }
@@ -151,7 +156,7 @@ export function updateWitnesses(w: World, dt: number): void {
       .slice(0, WT.maxWitnesses);
     for (const { p, d } of nearby) {
       const heard = c.kind === 'dogAttack' && d < TUNING.dogs.yelpHearRadius; // a yelp carries round corners
-      if (!heard && !canSee(w, p, c.x, c.z)) continue;
+      if (!heard && !canSee(w, p, c.x, c.z, cy)) continue;
       const r = pickReaction(p, c.kind);
       if (r === 'call') startCall(w, p, { x: c.x, z: c.z, heat: crime.heat, kind: c.kind, id: crime.id });
       else if (r === 'film') startFilming(w, p);

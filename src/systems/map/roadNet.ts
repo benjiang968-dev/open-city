@@ -421,6 +421,27 @@ export function buildRoadNet(doc: GeoDoc, baseAt: (x: number, z: number) => numb
     if (s1 > s0) e.noSw.push([side, s0 - 2, e.L + 1]);
   }
 
+  // ---- an exact profile sample at each trim: the carriageway then starts at exactly the node height where it meets
+  // the flat junction surface (interpolating across a 4 m sample spacing left steps and see-through cracks there,
+  // up to ~0.2 m on steep streets)
+  for (const e of edges) {
+    for (const s of [e.trimA, e.L - e.trimB]) {
+      if (s <= 0.05 || s >= e.L - 0.05) continue;
+      const c = e.cum;
+      let k = 1;
+      while (k < c.length - 1 && c[k] < s) k++;
+      if (Math.abs(c[k] - s) < 0.02 || Math.abs(c[k - 1] - s) < 0.02) continue;
+      const q = pointAtS(e, s);
+      e.pts.splice(k, 0, [q.x, q.z]);
+      const nc = new Float32Array(c.length + 1);
+      nc.set(c.subarray(0, k));
+      nc[k] = s;
+      nc.set(c.subarray(k), k + 1);
+      e.cum = nc;
+      e.prof = new Float32Array(e.pts.length);
+    }
+  }
+
   // ---- heights
   for (const n of nodes) {
     let s = 0, c = 0;
@@ -526,6 +547,10 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
         e.prof[k] = lerp(e.a.h, e.b.h, u * u * (3 - 2 * u));
         continue;
       }
+      // the plateaus under the junction surfaces are flat at the node height (lanes cross them at that height)
+      // (0.01 m tolerance: the trim sample's arc length is stored as a float32)
+      if (s <= tA + 0.01) { e.prof[k] = e.a.h; continue; }
+      if (s >= e.L - tB - 0.01) { e.prof[k] = e.b.h; continue; }
       const wA = s <= tA ? 1 : cosFall((s - tA) / lamA);
       const wB = s >= e.L - tB ? 1 : cosFall((e.L - tB - s) / lamB);
       e.prof[k] = S[k] + corrA * wA + corrB * wB;
@@ -537,6 +562,20 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
   // decks in layer order
   for (const e of decks) {
     deckProfile(e);
+  }
+  // bridge approaches: an at-grade edge leaving a raised deck end may not be steeper than maxGrade, so its other end
+  // is raised too (a few hops at most). Without this the street ramped off the M St bridge over Rock Creek at 20 %
+  // with a crest that launches cars. Nodes that carry a deck keep their own height.
+  for (let hop = 0; hop < 4; hop++) {
+    let changed = false;
+    for (const e of atGrade) {
+      for (const [R, O] of [[e.a, e.b], [e.b, e.a]] as [RNode, RNode][]) {
+        if (!R.raised || O.arms.some((a) => a.edge.deck)) continue;
+        const need = R.h - G.maxGrade * Math.max(1, e.L - e.trimA - e.trimB);
+        if (need > O.h + 0.3) { O.h = need; O.raised = true; changed = true; }
+      }
+    }
+    if (!changed) break;
   }
   // pass 2: at-grade edges touching raised nodes
   for (const e of atGrade) if (e.a.raised || e.b.raised) shape(e, ground.get(e)!);
@@ -571,13 +610,13 @@ export function solveProfiles(net: RoadNet, baseAt: (x: number, z: number) => nu
       const s = c[k];
       const u = clamp((s - e.trimA) / Math.max(0.1, e.L - e.trimA - e.trimB), 0, 1);
       const base = lerp(e.a.h, e.b.h, u * u * (3 - 2 * u));
-      e.prof[k] = s <= e.trimA ? e.a.h : s >= e.L - e.trimB ? e.b.h : Math.max(base, env[k]);
+      e.prof[k] = s <= e.trimA + 0.01 ? e.a.h : s >= e.L - e.trimB - 0.01 ? e.b.h : Math.max(base, env[k]);
     }
     // ease the kinks (vertical curves), keep plateaus exact
     const sm = smoothArr(e.prof, c, 12);
     for (let k = 0; k < n; k++) {
       const s = c[k];
-      if (s <= e.trimA || s >= e.L - e.trimB) continue;
+      if (s <= e.trimA + 0.01 || s >= e.L - e.trimB - 0.01) continue;
       e.prof[k] = Math.max(sm[k], req[k] === -Infinity ? -Infinity : req[k] - 0.15);
     }
   }

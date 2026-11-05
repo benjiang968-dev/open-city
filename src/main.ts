@@ -74,7 +74,10 @@ async function boot() {
   } as unknown as World;
   w.dayNight = createDayNight(scene);
   applyQuality(w, w.settings.quality, true);
-  w.city = loadMap(scene, RAPIER, physics, seed); // ?map= picks the map; the seed never does
+  const tMap = performance.now();
+  w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality); // ?map= picks the map; the seed never does
+  w.city.setQuality?.(w.settings.quality);
+  const mapMs = performance.now() - tMap;
   w.weather = createWeather(w);
   const spawn = w.city.spawn;
   w.player = createPlayer(w, spawn.x, spawn.z);
@@ -220,7 +223,7 @@ async function boot() {
     P.begin('fx'); updateHurtFx(w, dt); P.end('fx');
     P.begin('daynight'); updateDayNight(w, dt); P.end('daynight');
     P.begin('weather'); updateWeather(w, dt); P.end('weather');
-    if (render) { P.begin('city'); w.city.update(w.time); P.end('city'); }
+    if (render) { P.begin('city'); w.city.update(w.time, camera); P.end('city'); }
     P.begin('camera'); updateCamera(w, dt); P.end('camera');
     P.begin('hud'); updateHud(w, dt); P.end('hud');
     if (render) {
@@ -249,9 +252,15 @@ async function boot() {
     return out;
   };
 
+  // boot timing for tests: map build, and page start -> first rendered (playable) frame
+  const boot = { mapMs: Math.round(mapMs), firstFrameMs: 0 };
+  (window as unknown as { __ocBoot: typeof boot }).__ocBoot = boot;
   function frame(now: number) {
     requestAnimationFrame(frame);
-    const dt = Math.min(0.1, (now - last) / 1000);
+    if (!boot.firstFrameMs) boot.firstFrameMs = Math.round(performance.now());
+    // never negative: after a long boot the first rAF timestamp can be older than `last`, which would wind the
+    // fixed-step accumulator back and freeze the simulation for as long as the boot took
+    const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
     last = now;
     fpsAcc += dt;
     fpsFrames++;
