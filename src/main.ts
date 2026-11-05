@@ -148,7 +148,7 @@ async function boot() {
   (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
-  (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city) };
+  (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city), roadLimits: TUNING.geo.roadLimits };
   // physics audit (tests only, ?physaudit=1): drawn geometry vs colliders, see systems/physicsAudit.ts
   if (physAuditFromUrl()) {
     const { runPhysicsAudit } = await import('./systems/physicsAudit');

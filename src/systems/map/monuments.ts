@@ -8,9 +8,15 @@ import { K, type GeoRaster } from './terrain';
 
 export function buildMonuments(doc: GeoDoc, ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks) {
   const at = (lat: number, lon: number) => project(doc, lat, lon);
-  // ---- Washington Circle statue (spec landmark position)
+  // ---- Washington Circle statue: spec landmark position; real data: the centre of the Washington Circle ring
   {
-    const [x, z] = at(38.9025, -77.0505);
+    let [x, z] = at(38.9025, -77.0505);
+    const ring = doc.meta.synthetic ? null : doc.roads.find((r) => r.junction === 'roundabout' && /^Washington Circle/.test(r.name ?? ''));
+    if (ring) {
+      const P = ring.pts.slice(0, -1);
+      x = P.reduce((s, p) => s + p[0], 0) / P.length;
+      z = P.reduce((s, p) => s + p[1], 0) / P.length;
+    }
     const y = ras.heightAt(x, z);
     const g = chunks.buf('ground', x, z);
     const granite = lin(0xb8b3a8), marble = lin(0xd9d4c8), bronze = lin(0x4f5f52), bronzeD = lin(0x3c4a40);

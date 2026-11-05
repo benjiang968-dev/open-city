@@ -52,16 +52,31 @@ Physics: `QUERY=physaudit=1 MAP=<id> node scripts/shot.mjs x physaudit` compares
 
 ## Map data
 
-Map data © OpenStreetMap contributors, ODbL
+Real map data: © OpenStreetMap contributors via Overture Maps Foundation (release 2026-10-21.0), ODbL 1.0; places ©
+Overture Maps Foundation, CDLA-Permissive-2.0; some building footprints © Esri Community Maps contributors, CC BY 4.0;
+building heights include USGS 3DEP lidar and Microsoft ML Buildings; elevation: USGS 3DEP via AWS Terrain Tiles. The
+same line is in the pause menu (`meta.attribution`).
 
-Milestone 3 builds the city from OpenStreetMap (Georgetown, Washington DC; see https://www.openstreetmap.org/copyright).
-Street, river, canal and park names come from OSM. Shop and business names are invented (`src/data/poiNames.ts`).
-To import the map, follow `data/osm/README.md` (`npm run import-osm`).
+The Georgetown map (Georgetown and the Potomac waterfront, Washington DC, about 2.1 km x 1.9 km at 1:1) ships as
+three files with their own licences (`src/data/georgetown.LICENSE.md`):
 
-Until a real OpenStreetMap download is available, `src/data/georgetown.json` is generated instead from a
-hand-authored spec, `data/georgetown-spec.json` (streets, water, parks, landmarks and spot heights written from
-general knowledge; not OSM data and not survey-accurate). `npm run gen-georgetown` rebuilds it in the importer's
-format and synthesizes the buildings, POIs, sidewalks, props and heightfield (`meta.synthetic` is true);
-`npm run preview-map` draws it to `screenshots/24-map-preview.png`. Edit the spec's coordinates, lanes or one-ways
-and run both again. A real import replaces the file; run the importer with
-`--crop -77.074,38.899,-77.048,38.914` to keep the same frame.
+- `src/data/georgetown.json`: a derivative database of OpenStreetMap data under the Open Database License (ODbL 1.0,
+  https://www.openstreetmap.org/copyright);
+- `src/data/georgetown-places.json`: place categories and positions (CDLA-Permissive-2.0; places with an Apache-2.0
+  source are left out);
+- `src/data/georgetown-buildings-ccby.json`: the building footprints that come from Esri Community Maps (CC BY 4.0).
+
+Real street, river, canal and park names are kept; business names never: places carry a category only and the game
+invents a name from `src/data/poiNames.ts`. Street furniture the data lacks (street trees on shopping streets, lamps,
+benches, bins, hydrants, woodland trees) is synthesized and flagged in the file.
+
+Rebuild it with `npm run import-overture` (`scripts/importOverture.mjs`): it reads Overture Maps release 2026-10-21.0
+and the terrain tiles from the cache in `data/overture/` (gitignored), downloading them first with
+`scripts/fetchOverture.py` when the cache is missing (needs Python with `pyarrow` and `shapely`; set
+`OVERTURE_PYTHON` to that interpreter, see the top of the script; a cache from before 2026-11-05 lacks place sources:
+re-fetch with `--only place --force`). `npm run preview-map` draws the result to
+`screenshots/24-map-preview.png`.
+
+Fallbacks: `npm run gen-georgetown` regenerates the older hand-authored approximation from `data/georgetown-spec.json`
+(general knowledge, 20-80 m error, `meta.synthetic` true) into the same file, and `npm run import-osm` converts an
+OpenStreetMap XML download (`data/osm/README.md`). `?map=grid` is the procedural grid city.

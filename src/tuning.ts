@@ -345,6 +345,7 @@ const RAW = {
     stopBackMax: 8, // ... but never more than this many metres behind the line
     boxNudgeTime: 6, // seconds stopped inside a junction after which other AI cars no longer hold a car back (breaks a mutual block)
     uTurnReach: 2.5, // metres a U-turn's curve reaches forward beyond the width it turns across (dead ends)
+    overlapStartMax: 3, // metres: an exit lane that starts up to this far behind the stop line it continues from (inside of a bend) is joined with no turn curve
     mapEdgeRange: 40, // metres: a dead end this close to the map's edge is a road leaving the map (cars drive off it)
     // roundabout (Washington Circle): entering cars yield to circulating ones
     ringSpeed: 8.5, // m/s (31 km/h): top speed on the roundabout ring and through its nodes
@@ -781,15 +782,50 @@ const RAW = {
   geo: {
     laneWidth: 3.3, // m per lane; the map data's carriageway width is lanes x laneWidth
     minTwoWayWidth: 5.6, // m: a two-way street tagged with 1 lane is widened to this (two narrow lanes)
+    minRoadWidth: 3, // m: narrowest carriageway drawn (imported driveways and alleys keep their own width above this)
     sidewalkWidth: 3, // m from the kerb to the back of the sidewalk (the data's sidewalk lines run 1.5 m from the kerb)
     kerbHeight: 0.15, // m step from road to sidewalk; car wheels feel it, people step up it
     cornerRadius: 6, // m kerb radius at street corners
+    cornerRadiusLocal: 4.5, // m at corners with a residential street (real data; Georgetown's corners are tight)
+    cornerRadiusService: 2, // m where a driveway, alley or service road meets a street (real data)
+    maxJunctionTrim: 12, // m: longest flat plateau an arm keeps at a junction (real data: sharp merges would ask for 30 m)
+    plateauEase: 10, // m over which a road leaves a flat junction plateau into its grade (real data: no kink at the junction)
+    relaxGradeMain: 0.1, // real data: junction heights are relaxed until a main road's free length takes their difference at this grade
+    relaxGrade: 0.15, // the same for residential and other streets (Georgetown's steep side streets reach 15 %)
+    relaxGradeService: 0.2, // the same for driveways, alleys and parking aisles
     maxGrade: 0.075, // steepest grade (rise/run) the generator gives ramps and bridge approaches
     roadClearance: 5, // m of headroom under a deck that crosses a road
     pathClearance: 2.6, // m of headroom under a deck that crosses a towpath or trail
     waterClearance: 2.4, // m from canal / creek water to the underside of a deck
     freewayClearance: 7, // m: the elevated freeway deck stays this far above the street below it
     deckThickness: 1.1, // m from deck surface to its underside
+    deckGroundGap: 0.6, // m: natural ground under a bridge deck is cut down to at least this far below its underside
+    deckJoinHop: 30, // m: real data: an at-grade piece shorter than this between a deck end and the next junction joins the deck to its street (the deck need not clear roads beyond it)
+    approachMaxLift: 3, // m: real data: a junction next to a raised deck end may rise this much at most so the short piece between them stays within its grade limit (bigger lifts cascaded through the Rock Creek valley)
+    sagFillSpan: 160, // m: real data: a bridge abutment lower than both the street's next junction and the deck's far end, within this span, rises to the line between them (no V-shaped dip onto a bridge)
+    footprintNotchTol: 0.3, // m: a building collider follows its footprint's notches deeper than this (a convex hull over an L- or U-shaped footprint was an invisible wall); shallower jogs are filled
+    gradeSeparation: 2.5, // m: overlapping carriageways closer in height than this are one surface (the smaller road conforms to the bigger); more is a real grade separation
+    conformBlend: 12, // m over which a road blends into the surface of a bigger road it overlaps
+    overlayTolerance: 0.25, // m: an at-grade road this far off the raster's surface is a grade separation (kept as its own surface)
+    /**
+     * Smoothness limits the road audit and drive test hold the generated roads to (MAP=georgetown node scripts/shot.mjs
+     * x roadaudit / roaddrive). Terrain keeps its hills; these bound what a road does on top of them.
+     */
+    roadLimits: {
+      maxGrade: 0.2, // rise/run on any lane, 4 m baseline (Georgetown's steepest real streets are 15-18 %)
+      maxGradeMain: 0.12, // primary, secondary, trunk and parkway lanes
+      maxGradeChange: 0.05, // grade change per metre along any lane (vertical curve; 0.05/m at 30 km/h is ~0.35 g)
+      maxGradeChangeMain: 0.03, // per metre on main roads (0.03/m at 50 km/h is ~0.6 g peak over a 1 m kink, softened by suspension)
+      maxGradeService: 0.25, // driveways, alleys, parking aisles (real ones are steep and short)
+      maxGradeChangeService: 0.08, // per metre on service roads (walking pace)
+      maxStep: 0.04, // m: a kink in the surface (second difference over 0.5 m samples) along a lane: a bump or a seam
+      maxCrossSlope: 0.08, // rise/run across the wheel tracks (1.6 m)
+      maxSurfaceGap: 0.3, // m between a lane's height and the collider under it (a hole, or a lane floating / buried)
+      maxJunctionStep: 0.06, // m: kink on a straight path through a junction (arm to arm: plateau seams)
+      maxWalkStep: 0.3, // m: a step along a walk link (kerbs are 0.15 m, two kerbs or a stair riser pair at most; the player climbs 0.45)
+      maxVertAccel: 4.5, // m/s²: peak chassis vertical acceleration (beyond gravity) in the drive test at street speed
+      maxAirtime: 0.08, // s with all four wheels off the ground in the drive test
+    },
     stairWallFrom: 0.2, // m: a stair's side walls start once it has risen this far above its foot (the flat run-in stays open)
     stairMaxSlope: 0.84, // rise per run: no stair flight is steeper than this (40 degrees; the character climbs up to TUNING.player.maxSlopeDeg)
     stairMaxExtend: 3.5, // m: how far a stair's foot may move out along its line to stay under stairMaxSlope
@@ -808,6 +844,8 @@ const RAW = {
     streetTreeLampGap: 2, // m: a synthesized street tree moved to the strip is dropped if a lamp stands this close
     stallLength: 5.2, // m: parking bay length
     lotAisle: 6.6, // m: aisle between bay rows
+    stopArmSnap: 30, // m: a stop sign mapped on one approach (data 'stop_arm') belongs to the nearest junction this close, on the arm pointing at it
+    stallSurfaceTol: 0.2, // m: a car park bay whose plane height is further than this from the ground (a footway or kerb inside the lot outline sets the surface there) is left out, so parked cars never float or sink
   },
 
   quality: {

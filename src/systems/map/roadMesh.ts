@@ -13,6 +13,8 @@ const G = TUNING.geo;
 
 // ----------------------------------------------------------------------------------------- art constants
 const DH = 0.012; // m decals float above the surface (plus polygon offset)
+const MIN_SECTION = 0.6; // m: shortest gap between cross-sections along a road
+const DEAD_END_CAP = 1.5; // m of carriageway drawn beyond a dead end's last section
 /** m of extra paving from the back of the sidewalk to the building line (the data sets buildings 1 m back). */
 export const FRONTAGE = 1.0;
 const SKIRT = 0.9; // m skirts reach below sidewalk / road edges
@@ -48,8 +50,12 @@ export function sections(e: REdge, s0: number, s1: number): Cross[] {
   const a = pointAtS(e, s0);
   out.push({ s: s0, x: a.x, z: a.z, rx: -a.uz, rz: a.ux });
   const P = e.pts, c = e.cum;
+  let last = s0;
   for (let k = 1; k < P.length - 1; k++) {
-    if (c[k] <= s0 + 0.05 || c[k] >= s1 - 0.05) continue;
+    // vertices closer than MIN_SECTION to the previous section (or the end) are skipped: on a curve two mitred sections
+    // a few cm apart put the inner offset lines (kerb, inner lanes) a few cm backwards (real data has such vertex pairs)
+    if (c[k] <= last + MIN_SECTION || c[k] >= s1 - MIN_SECTION) continue;
+    last = c[k];
     let ux = P[k][0] - P[k - 1][0], uz = P[k][1] - P[k - 1][1];
     let vx = P[k + 1][0] - P[k][0], vz = P[k + 1][1] - P[k][1];
     const lu = Math.hypot(ux, uz) || 1, lv = Math.hypot(vx, vz) || 1;
@@ -72,8 +78,9 @@ const inRanges = (r: [number, number, number][], side: number, s: number) => r.s
 // ======================================================================================================
 /** Write road, junction and sidewalk bands (exact heights) into the raster. Decks only set kind flags. */
 export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number, number][] }[]) {
-  const h = ras.h!, band = ras.band, k = ras.k;
+  const h = ras.h!, base = ras.t!, band = ras.band, k = ras.k;
   const kerb = G.kerbHeight;
+  const own = new Float32Array(band.length).fill(1e9); // distance of each road cell to its road's centre line
   for (const e of net.edges) {
     const s0 = e.trimA, s1 = e.L - e.trimB;
     if (s1 - s0 < 0.05) continue;
@@ -99,7 +106,18 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       const hw = e.hw;
       if (e.deck) {
         const W = hw + G.sidewalkWidth;
-        ras.fillQuad(p.x - p.rx * W, p.z - p.rz * W, p.x + p.rx * W, p.z + p.rz * W, q.x + q.rx * W, q.z + q.rz * W, q.x - q.rx * W, q.z - q.rz * W, (o) => { k[o] |= K.DECK | K.ROAD; });
+        // natural ground may not reach the deck's underside (a bridge abutment in a hillside, a bump in the real
+        // terrain under a span): it is cut down to below the deck, base and working heights both (blending rebuilds
+        // natural cells from the base)
+        const th = G.deckThickness + (e.freeway ? 0.3 : 0) + G.deckGroundGap;
+        ras.fillQuad(p.x - p.rx * W, p.z - p.rz * W, p.x + p.rx * W, p.z + p.rz * W, q.x + q.rx * W, q.z + q.rz * W, q.x - q.rx * W, q.z - q.rz * W, (o, x, z) => {
+          k[o] |= K.DECK | K.ROAD;
+          if (band[o] !== B.NONE) return;
+          const t = clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0, 1);
+          const under = hp + (hq - hp) * t - th;
+          if (base[o] > under) base[o] = under;
+          if (h[o] > under) h[o] = under;
+        });
         continue;
       }
       // kerb lines (a real step: sidewalk on that side, kerb not dropped) for the step-distance raster
@@ -108,6 +126,11 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       const kL = kerbed(-1), kR = kerbed(1);
       const kerbDist = (x: number, z: number, side: number) => segDistN(x, z, p.x + p.rx * hw * side, p.z + p.rz * hw * side, q.x + q.rx * hw * side, q.z + q.rz * hw * side);
       ras.fillQuad(p.x - p.rx * hw, p.z - p.rz * hw, p.x + p.rx * hw, p.z + p.rz * hw, q.x + q.rx * hw, q.z + q.rz * hw, q.x - q.rx * hw, q.z - q.rz * hw, (o, x, z) => {
+        // where two carriageways overlap (dual carriageways, slip roads, driveways at a kerb), the cell belongs to the
+        // road whose centre line is nearer, so each road's lanes read their own surface
+        const d = segDistN(x, z, p.x, p.z, q.x, q.z);
+        if (band[o] === B.ROAD && own[o] < d) return;
+        own[o] = d;
         const t = clamp(((x - p.x) * dx + (z - p.z) * dz) / L2, 0, 1);
         h[o] = hp + (hq - hp) * t;
         band[o] = B.ROAD;
@@ -132,8 +155,24 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       }
     }
   }
+  // dead ends (a driveway or alley that just stops): a short flat cap of carriageway beyond the last section, so the
+  // road surface (and heightAt) does not stop exactly at the last lane point
+  for (const c of deadEndCaps(net)) {
+    ras.fillQuad(c[0], c[1], c[2], c[3], c[4], c[5], c[6], c[7], (o) => {
+      if (band[o] === B.ROAD) return;
+      h[o] = c[8];
+      band[o] = B.ROAD;
+      k[o] = (k[o] & ~(K.WATER | K.PARK | K.WALK)) | K.ROAD;
+    });
+  }
   for (const n of net.nodes) {
     if (n.outline.length < 6) continue;
+    // a junction inside a bridge (every arm a deck) is part of the deck, not the ground: only its kind flags go into
+    // the raster (its surface is in the deck index; writing its height would lift the street underneath)
+    if (isDeckNode(n)) {
+      ras.fillPoly(n.outline, (o) => { k[o] |= K.DECK | K.ROAD; });
+      continue;
+    }
     // distance to the nearest sidewalk corner kerb (the steps around this junction)
     const pathDist = (x: number, z: number, P: number[]) => {
       let d = Infinity;
@@ -157,6 +196,55 @@ export function rasterizeNet(net: RoadNet, ras: GeoRaster, lots: { pts: [number,
       });
     }
   }
+  // grade separations the data does not mark as bridges: stretches of an at-grade road whose surface is not the one the
+  // raster ended up with (another road owns those cells at a different height) are flagged for the deck index
+  let flagged = 0;
+  for (const e of net.edges) {
+    if (e.deck || e.L < 0.05) continue;
+    // the whole edge, plateaus included (a neighbouring junction's plateau may have taken those cells)
+    const X = sections(e, 0, e.L);
+    const ov = new Uint8Array(X.length);
+    let anyOv = false;
+    for (let i = 1; i < X.length; i++) {
+      const p = X[i - 1], q = X[i];
+      for (const u of [0.25, 0.75]) for (const f of [-0.7, 0, 0.7]) {
+        const x = p.x + (q.x - p.x) * u + (p.rx + q.rx) * 0.5 * e.hw * f, z = p.z + (q.z - p.z) * u + (p.rz + q.rz) * 0.5 * e.hw * f;
+        const ii = Math.round(x - ras.x0), jj = Math.round(z - ras.z0);
+        if (ii < 0 || jj < 0 || ii >= ras.nx || jj >= ras.nz) continue;
+        const want = net.profAt(e, p.s + (q.s - p.s) * u);
+        if (Math.abs(h[jj * ras.nx + ii] - want) > G.overlayTolerance) { ov[i] = 1; anyOv = true; }
+      }
+    }
+    if (anyOv) { e.overlay = ov; flagged++; }
+  }
+  void flagged;
+
+}
+
+/**
+ * Flat caps beyond the open end of at-grade roads that stop at a dead end inside the map: [ax, az, bx, bz, cx, cz,
+ * dx, dz, y, outward nx, nz] (quad left-end, right-end, right-out, left-out).
+ */
+export function deadEndCaps(net: RoadNet): number[][] {
+  const out: number[][] = [];
+  for (const e of net.edges) {
+    if (e.deck) continue;
+    for (const atStart of [true, false]) {
+      const n = atStart ? e.a : e.b;
+      if (n.arms.length !== 1) continue;
+      const q = pointAtS(e, atStart ? 0 : e.L);
+      const ux = atStart ? -q.ux : q.ux, uz = atStart ? -q.uz : q.uz; // outward
+      const rx = -uz * e.hw, rz = ux * e.hw;
+      const L = DEAD_END_CAP, y = atStart ? e.prof[0] : e.prof[e.prof.length - 1];
+      out.push([q.x + rx, q.z + rz, q.x - rx, q.z - rz, q.x - rx + ux * L, q.z - rz + uz * L, q.x + rx + ux * L, q.z + rz + uz * L, y, ux, uz]);
+    }
+  }
+  return out;
+}
+
+/** A junction whose every arm is a bridge deck (real data splits bridges where ramps join): it is part of the deck. */
+export function isDeckNode(n: RNode): boolean {
+  return n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
 }
 
 /** Distance from a point to a segment (no allocation: the step raster calls this for every road cell). */
@@ -265,9 +353,18 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
     }
   }
 
+  // ---------------------------------------------------------------- dead-end caps (see rasterizeNet)
+  for (const c of deadEndCaps(net)) {
+    const mx = (c[0] + c[4]) / 2, mz = (c[1] + c[5]) / 2, y = c[8];
+    chunks.buf('ground', mx, mz).quad(c[2], y, c[3], c[0], y, c[1], c[6], y, c[7], c[4], y, c[5], COL.asphalt, 0, 1, 0);
+    phys.ground(mx, mz).quad(c[2], y, c[3], c[0], y, c[1], c[6], y, c[7], c[4], y, c[5]);
+    chunks.tag('decor'); // the skirt hangs below the cap's edge
+    chunks.buf('ground', mx, mz).wall(c[6], c[7], c[4], c[5], y - SKIRT, y, y - SKIRT, y, COL.skirt, c[9], c[10]);
+  }
+
   // ---------------------------------------------------------------- junctions and corners
   for (const n of net.nodes) {
-    const deckNode = n.arms.length > 0 && n.arms.every((a) => a.edge.deck);
+    const deckNode = isDeckNode(n);
     if (n.outline.length >= 6) {
       const buf = chunks.buf('ground', n.x, n.z);
       const pb = deckNode ? phys.trimesh(n.x, n.z, 'deck') : phys.ground(n.x, n.z);
@@ -280,6 +377,16 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
       }
     }
     for (const c of n.corners) { const dk = c.armA.edge.deck && c.armB.edge.deck; cornerMesh(n, c.pts, c.outward, dk ? sw : sw + FRONTAGE, dk); }
+    if (deckNode) {
+      // underside of a junction inside a bridge
+      const O = n.outline, m = O.length / 2, th = G.deckThickness;
+      const buf = chunks.buf('ground', n.x, n.z);
+      for (let i = 0; i < m; i++) {
+        const j = (i + 1) % m;
+        buf.tri(n.x, n.h - th, n.z, O[j * 2], n.h - th, O[j * 2 + 1], O[i * 2], n.h - th, O[i * 2 + 1], COL.deckUnder, 0, -1, 0);
+      }
+      continue;
+    }
     for (const path of n.kerbs) {
       const buf = chunks.buf('ground', n.x, n.z);
       for (let i = 2; i < path.length; i += 2) {

@@ -12,13 +12,13 @@ import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, polyArea, SegGrid } from './geoDoc';
 import { lin as linHex, PhysChunks, RenderChunks, type Layer } from './meshKit';
 import { B, GeoRaster, K, buildOuterLand, buildTerrainMesh } from './terrain';
-import { buildRoadNet, OMITTED_ROADS, solveProfiles, type REdge, type RoadNet } from './roadNet';
-import { buildNetMeshes, drapeRibbon, rasterizeNet, sections } from './roadMesh';
+import { buildRoadNet, omittedRoads, solveProfiles, type REdge, type RNode, type RoadNet } from './roadNet';
+import { buildNetMeshes, drapeRibbon, isDeckNode, rasterizeNet, sections } from './roadMesh';
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
 import { buildBridges, buildStairs, rasterizeStairs, stairHoles } from './bridges';
 import { buildBuildings, createFacadeMaterial, rasterizeBuildings } from './facades';
 import { buildMonuments } from './monuments';
-import { buildLots, rasterizeLots, type GeoLot } from './lots';
+import { buildLots, conformToLots, planLots, rasterizeLots, type GeoLot } from './lots';
 import { buildProps } from './props';
 import { SurfaceIndex } from './surfaceIndex';
 import { SolidRecorder, type SolidTags } from '../objects/solidKinds';
@@ -85,7 +85,10 @@ export interface GeoJunction {
   y: number;
   degree: number;
   signals: boolean;
+  /** An all-way stop. */
   stop: boolean;
+  /** Road edges (GeoRoadPoly.edge) whose approach alone has a stop sign: they give way to the other arms. */
+  stopEdges: number[];
   roundabout: boolean;
   /** Junction surface outline (x, z pairs). Empty for dead ends / map edges. */
   outline: Float32Array;
@@ -188,7 +191,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   // ---------------------------------------------------------------- road graph and profiles
   const baseAt = (x: number, z: number) => ras.baseAt(x, z);
   const net = buildRoadNet(doc, baseAt);
-  const probe = makeProbe(net, W, ras, doc);
+  const probe = makeProbe(net, W, ras, doc, !!doc.meta.synthetic);
   solveProfiles(net, baseAt, probe);
   phase('roads');
 
@@ -198,8 +201,10 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   const dropped = buildingsUnderDecks(doc, net, ras);
   for (const id of clipped.drop) dropped.add(id);
   rasterizeBuildings(doc, ras, dropped);
+  const lotPlans = planLots(doc, ras, net);
+  conformToLots(net, lotPlans);
   rasterizeNet(net, ras, doc.parking);
-  const lotInfo = rasterizeLots(doc, ras, net);
+  const lotInfo = rasterizeLots(lotPlans, ras);
   const { plazaH } = rasterizePlaza(doc, ras);
   // the walking surface of the street nearest (x, z): carriageway, or its sidewalk one kerb up (where stairs end)
   const streetY = (x: number, z: number) => {
@@ -322,11 +327,14 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   // ---------------------------------------------------------------- exports for the graph builder
   const roadPolys = net.edges.map((e) => exportEdge(net, e));
   const junctions: GeoJunction[] = net.nodes.map((n) => ({
-    id: n.id, x: n.x, z: n.z, y: n.h, degree: n.arms.length, signals: n.signals, stop: n.stop, roundabout: n.roundabout, outline: Float32Array.from(n.outline),
+    id: n.id, x: n.x, z: n.z, y: n.h, degree: n.arms.length, signals: n.signals, stop: n.stop, stopEdges: n.arms.filter((A) => A.stop).map((A) => A.edge.id), roundabout: n.roundabout, outline: Float32Array.from(n.outline),
   }));
   const decks: GeoDeck[] = net.edges.filter((e) => e.deck).map((e) => ({ roadId: e.road.id, edge: e.id, name: e.name, layer: e.layer, centre: centreOf(net, e), halfWidth: e.hw }));
-  const omitted = doc.roads.filter((r) => OMITTED_ROADS.has(`${r.name}#${r.tunnel ? 'tunnel' : ''}`)).map((r) => ({
-    roadId: r.id, name: r.name ?? '', reason: 'K St underpass beneath Washington Circle: not rendered (ramps would need >15% grades between the split nodes and the ring); remove from the graph',
+  const omittedSet = omittedRoads(doc);
+  const omitted = doc.roads.filter((r) => omittedSet.has(r)).map((r) => ({
+    roadId: r.id, name: r.name ?? '', reason: doc.meta.synthetic
+      ? 'K St underpass beneath Washington Circle: not rendered (ramps would need >15% grades between the split nodes and the ring); remove from the graph'
+      : r.tunnel || r.layer < 0 ? 'tunnel or below-ground road (the K St underpass): the world has no tunnel geometry yet; not rendered, not in the graph' : 'approach to an omitted tunnel (would dead-end at the portal): not rendered, not in the graph',
   }));
 
   // ---------------------------------------------------------------- queries (no allocation)
@@ -460,7 +468,8 @@ function clipBuildingsToStreets(doc: GeoDoc, net: RoadNet): { clipped: string[];
   const SEGS = 1024;
   const grid = new SegGrid(32);
   for (const e of net.edges) {
-    if (e.deck) continue;
+    // (real data: a driveway or alley never cuts a building; the importer ends it at the facade)
+    if (e.deck || (!doc.meta.synthetic && (e.cls === 'service' || e.road.service))) continue;
     for (let k = 1; k < e.pts.length; k++) grid.add(e.pts[k - 1][0], e.pts[k - 1][1], e.pts[k][0], e.pts[k][1], e.id * SEGS + k, e.hw + G.sidewalkWidth + 2);
   }
   const MARGIN = 0.3; // m left between the back of the sidewalk and the cut facade
@@ -584,12 +593,23 @@ function buildingsUnderDecks(doc: GeoDoc, net: RoadNet, ras: GeoRaster): Set<str
 }
 
 /** Required deck heights for bridge profiles: what passes beneath + clearance. */
-function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc) {
+function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc, synthetic: boolean) {
   const grid = new SegGrid(32);
   for (const e of net.edges) grid.addLine(e.pts, e.id, e.hw + 4);
   const paths = new SegGrid(32);
   for (const f of doc.footways) if ((f.kind === 'path' || f.kind === 'cycleway') && !f.towpath) paths.addLine(f.pts, 0, 3); // the towpath is handled with the canal
   const CANAL_HALF = 6;
+  /** Nodes one short at-grade piece away from n. */
+  const hops = new Map<RNode, Set<RNode>>();
+  const hop1 = (n: RNode) => {
+    let s = hops.get(n);
+    if (!s) {
+      s = new Set();
+      for (const a of n.arms) if (!a.edge.deck && a.edge.L < G.deckJoinHop) s.add(a.edge.a === n ? a.edge.b : a.edge.a);
+      hops.set(n, s);
+    }
+    return s;
+  };
   return (x: number, z: number, layer: number, self: REdge) => {
     const th = G.deckThickness + (self.freeway ? 0.3 : 0);
     let req = -Infinity;
@@ -598,11 +618,18 @@ function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc) {
       const e = net.edges[id];
       if (e === self || d > e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 0.6) return;
       if (e.deck && e.layer >= layer) return;
-      if (e.a === self.a || e.a === self.b || e.b === self.a || e.b === self.b) {
-        // a road sharing a node with this deck: ignore near that node (it's where they join)
+      // real data: the street's own other carriageway is alongside, not beneath (no named road crosses itself on another
+      // layer in the data). The Whitehurst Freeway's two halves drop to layer 1 under the Key Bridge 8 m apart, so
+      // each half's layer-2 deck "cleared" the other half's layer-1 piece, which then cleared the first: they
+      // leapfrogged to 37 m and the Key Bridge, clearing them, to 38 m (M St is at 21 m)
+      if (!synthetic && self.name && e.name === self.name) return;
+      // a road sharing a node with this deck, or one short piece away (real data: K St's bridge over Rock Creek ends
+      // 6 m before the junction its at-grade continuation leaves): ignore it near that node, it is where they join
+      const near = (n: RNode) => n === self.a || n === self.b || (!synthetic && (hop1(self.a).has(n) || hop1(self.b).has(n)));
+      if (near(e.a) || near(e.b)) {
         const pr0 = net.project(e, x, z);
-        if (pr0.s < e.trimA + 25 && (e.a === self.a || e.a === self.b)) return;
-        if (pr0.s > e.L - e.trimB - 25 && (e.b === self.a || e.b === self.b)) return;
+        if (pr0.s < e.trimA + 25 && near(e.a)) return;
+        if (pr0.s > e.L - e.trimB - 25 && near(e.b)) return;
       }
       const pr = net.project(e, x, z);
       const hh = net.profAt(e, pr.s);
@@ -621,8 +648,8 @@ function makeProbe(net: RoadNet, W: WaterModel, ras: GeoRaster, doc: GeoDoc) {
     let dp = Infinity;
     paths.query(x, z, (_s, _p, d) => { if (d < dp) dp = d; });
     if (dp < 2.5) req = Math.max(req, ras.baseAt(x, z) + G.pathClearance + th);
-    // the freeway runs elevated above K St / Water St
-    if (self.freeway && x > -620 && x < 250) req = Math.max(req, ground + G.freewayClearance + th);
+    // the spec's freeway runs elevated above K St / Water St (real data: the roads beneath set the clearance)
+    if (synthetic && self.freeway && x > -620 && x < 250) req = Math.max(req, ground + G.freewayClearance + th);
     return req;
   };
 }
@@ -678,6 +705,36 @@ function buildDeckIndex(net: RoadNet | null, walkDecks: { pts: Pt[]; hw: number;
       S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), e.hw, wl, wr, 0);
       grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, Math.max(wl, wr) + 0.5);
     }
+    // the deck's own plateaus at its ends (flat at the junction's height, under the junction surface): carriageway only
+    for (const [a, b] of [[0, e.trimA], [e.L - e.trimB, e.L]]) {
+      if (b - a < 0.05) continue;
+      const P = sections(e, a, b);
+      for (let i = 1; i < P.length; i++) {
+        const id = S.length / N;
+        S.push(P[i - 1].x, P[i - 1].z, P[i].x, P[i].z, net.profAt(e, P[i - 1].s), net.profAt(e, P[i].s), e.hw, e.hw, e.hw, 0);
+        grid.add(P[i - 1].x, P[i - 1].z, P[i].x, P[i].z, id, e.hw + 0.5);
+      }
+    }
+  }
+  // at-grade stretches that pass over or under another road (flagged by rasterizeNet): their own surface, carriageway only
+  for (const e of net?.edges ?? []) {
+    if (e.deck || !e.overlay || !net) continue;
+    const X = sections(e, 0, e.L);
+    for (let i = 1; i < X.length; i++) {
+      if (!e.overlay[i]) continue;
+      const id = S.length / N;
+      S.push(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, net.profAt(e, X[i - 1].s), net.profAt(e, X[i].s), e.hw, e.hw, e.hw, 0);
+      grid.add(X[i - 1].x, X[i - 1].z, X[i].x, X[i].z, id, e.hw + 0.5);
+    }
+  }
+  // junctions inside a bridge: a flat disc at the node height covering its outline
+  for (const n of net?.nodes ?? []) {
+    if (n.outline.length < 6 || !isDeckNode(n)) continue;
+    let r = 0;
+    for (let i = 0; i < n.outline.length; i += 2) r = Math.max(r, Math.hypot(n.outline[i] - n.x, n.outline[i + 1] - n.z));
+    const id = S.length / N;
+    S.push(n.x, n.z, n.x + 0.01, n.z, n.h, n.h, r, r, r, 0);
+    grid.add(n.x, n.z, n.x + 0.01, n.z, id, r + 0.5);
   }
   for (const w of walkDecks) {
     for (let i = 1; i < w.pts.length; i++) {

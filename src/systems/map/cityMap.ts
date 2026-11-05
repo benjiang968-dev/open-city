@@ -120,6 +120,8 @@ export interface LaneEdge {
   /** Same-direction neighbour lanes on this segment (lane + 1 = further from the kerb / lane - 1), -1 if none. */
   left: number;
   right: number;
+  /** A stop sign at this lane's end on its approach only (a side street at a main road): it stops, then gives way. */
+  stopSign?: boolean;
   /** Cars park along this lane's kerb (see the contract): traffic avoids it when another lane goes the same way. */
   parking: boolean;
 }

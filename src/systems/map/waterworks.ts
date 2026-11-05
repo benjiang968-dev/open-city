@@ -61,14 +61,25 @@ export function makeWaterModel(doc: GeoDoc): WaterModel {
   const gates = doc.props.filter((p) => p[2] === 'lock_gate').map((p) => p[0]).sort((a, b) => a - b);
   const lockX: number[] = [];
   for (let i = 0; i + 1 < gates.length; i += 2) lockX.push((gates[i] + gates[i + 1]) / 2);
-  const levels = G.canalLevels;
+  // canal pound levels west -> east: imported data measures them (landmarks.canal.levels), else the tuned spec values
+  const dataLevels = doc.landmarks?.canal?.levels;
+  const levels: readonly number[] = dataLevels && dataLevels.length === lockX.length + 1 ? dataLevels : G.canalLevels;
   const canalLevelAt = (x: number) => {
     let i = 0;
     while (i < lockX.length && x > lockX[i] + 13) i++;
     return levels[Math.min(levels.length - 1, i)];
   };
+  // Rock Creek level by z: imported data carries a level per vertex of the creek line (from the terrain), the
+  // knowledge-based map uses CREEK_LEVELS
+  const creekW = doc.waterways.find((w) => w.kind === 'stream');
+  let creekTable = CREEK_LEVELS;
+  if (creekW?.levels && creekW.levels.length === creekW.pts.length) {
+    const t = creekW.pts.map((p, i) => [p[1], creekW.levels![i]] as [number, number]).sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < t.length; i++) t[i][1] = Math.min(t[i][1], t[i - 1][1]); // never rising downstream (south)
+    creekTable = t.filter((q, i) => i === 0 || q[0] > t[i - 1][0] + 0.05);
+  }
   const creekLevelAt = (z: number) => {
-    const L = CREEK_LEVELS;
+    const L = creekTable;
     if (z <= L[0][0]) return L[0][1];
     for (let i = 1; i < L.length; i++) if (z <= L[i][0]) return lerp(L[i - 1][1], L[i][1], (z - L[i - 1][0]) / (L[i][0] - L[i - 1][0]));
     return L[L.length - 1][1];

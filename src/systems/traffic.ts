@@ -879,6 +879,9 @@ export function updateTraffic(w: World, dt: number): void {
       let vEnd = car.move >= 0 ? J.mvSpeed[car.move] : car.target >= 0 ? e.speed : TT.turnSpeedMin;
       // a roundabout entry: reach the line slowly enough to stop there if a circulating car turns up late
       if (c.kind === CTL_RING && !e.roundabout) vEnd = Math.min(vEnd, TT.ringEntryCreep);
+      // nowhere to go at all (a one-way road leaving the map): pull up at the end. Rolling on at turn speed with no
+      // next lane, the car circled on the spot at the map edge for as long as the player watched
+      if (car.next < 0 && w.city.roads.nodes[e.to].out.length === 0) vEnd = 0;
       let remStop = rem;
       if (c.kind !== 0 && car.next >= 0 && !car.cleared) {
         if (rem < (car.speed * car.speed) / (2 * TT.approachDecel) + TT.decideDist) {
@@ -889,6 +892,9 @@ export function updateTraffic(w: World, dt: number): void {
       }
       // a road leaving the map: the car drives off it (moved near the player again once out of sight)
       if (J.mapEdge[e.to] && rem < 10 && !car.keep && !visible(w, car.px, car.py - 0.62, car.pz)) { car.respawnWanted = true; w.trafficSim.stats.leftMap++; }
+      // (a car tests follow round the map, which is never moved nearer the player, starts again somewhere else: on a one-way
+      // road off the map it would wait at the edge for ever)
+      else if (J.mapEdge[e.to] && rem < 3 && car.keep && car.speed < 0.5) placeRandom(w, car, 90, Math.random);
       want = Math.min(want, Math.sqrt(vEnd * vEnd + 2 * TT.approachDecel * Math.max(0, remStop)));
       if (car.speed < 0.5) car.commit = false;
       if (car.hold !== HOLD_GO && remStop < 1 && car.speed < 1) toWait(w, car); // pulled up at the line: wait there

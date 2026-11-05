@@ -5,6 +5,8 @@
 //    keeps coming, up to its longest green; cars stop on red and on amber when they can; left turns on green give way
 //    to oncoming traffic (and clear on amber);
 //  - stop signs (all-way): a full stop, then first come, first served;
+//  - a stop sign on some approaches only (a side street at a main road, real data): those approaches stop fully, then
+//    give way to every other approach as a minor road;
 //  - uncontrolled: the lower road class gives way; between equal roads a short pause and first come, first served;
 //  - roundabout (Washington Circle): entering cars yield to cars circulating toward their entry; circulating cars never
 //    stop at the ring's nodes;
@@ -81,12 +83,25 @@ export function turnCurve(e: LaneEdge, n: LaneEdge, P: Float32Array, C: Float32A
   const rx = b.x - a.x, rz = b.z - a.z, gap = Math.hypot(rx, rz);
   const cross = d1x * d2z - d1z * d2x, dot = d1x * d2x + d1z * d2z;
   let cx = (a.x + b.x) / 2, cz = (a.z + b.z) / 2;
+  // the exit lane starts a little BEHIND the stop line (offset lanes on the inside of a bend through a node with tiny
+  // plateaus, real data): no curve back to it (cars turned round to reach it); the car carries straight on from the
+  // stop line, and the exit lane picks it up where it stands
+  if (dot > -0.5 && (rx * d1x + rz * d1z < 0 || rx * d2x + rz * d2z < 0) && gap < TT.overlapStartMax) {
+    const oc0 = o / 2;
+    for (let k = 0; k <= TURN_SEGS; k++) { P[o + k * 2] = a.x; P[o + k * 2 + 1] = a.z; C[oc0 + k] = 0; }
+    return 0.01;
+  }
   if (dot < -0.5) {
     cx += d1x * (gap * 0.9 + TT.uTurnReach);
     cz += d1z * (gap * 0.9 + TT.uTurnReach);
   } else if (Math.abs(cross) > 0.05) {
     const t = (rx * d2z - rz * d2x) / cross;
-    if (t > 0 && t < gap * 2) { cx = a.x + d1x * t; cz = a.z + d1z * t; }
+    // the corner must lie ahead of the stop line AND before the exit lane's start: two nearly parallel lanes (a ring
+    // exit diverging at 5 degrees, real data) meet far beyond b, and a control point there hooked the curve past the
+    // lane start and back (cars reversed onto the exit lane)
+    const ux = a.x + d1x * t, uz = a.z + d1z * t;
+    const back = (b.x - ux) * d2x + (b.z - uz) * d2z;
+    if (t > 0 && t < gap * 2 && back > 0) { cx = ux; cz = uz; }
   }
   const oc = o / 2;
   for (let k = 0; k <= TURN_SEGS; k++) {
@@ -109,6 +124,8 @@ export interface NodeCtl {
   /** Approaches: groups of in-lanes from the same neighbour on the same road. */
   apCount: number;
   apRank: Int8Array;
+  /** Per approach: 1 = a stop sign on this approach only (minor: full stop, then give way). */
+  apStop: Uint8Array;
   apHeading: Float32Array;
   majorRank: number;
   // ---- signals ----
@@ -259,7 +276,7 @@ export function createJunctions(map: CityMap): JunctionState {
     const m0 = mvIn.length;
     // approaches
     const apKeys: string[] = [];
-    const apRankL: number[] = [], apHeadL: number[] = [];
+    const apRankL: number[] = [], apHeadL: number[] = [], apStopL: number[] = [];
     for (const id of node.in) {
       const e = edges[id];
       const key = `${e.from}|${e.roadId}`;
@@ -269,9 +286,17 @@ export function createJunctions(map: CityMap): JunctionState {
         apKeys.push(key);
         apRankL.push(rankOf(e));
         apHeadL.push(laneSample(e, stopLine(e), LA).heading);
+        apStopL.push(0);
       } else apRankL[ap] = Math.max(apRankL[ap], rankOf(e));
+      if (e.stopSign) apStopL[ap] = 1;
       edgeAp[id] = ap;
     }
+    // stop signs on some approaches only: those rank below every approach without one (the side street gives way)
+    if (apStopL.some((s) => s) && apStopL.some((s) => !s) && !node.signals && !node.stop) {
+      let low = 127;
+      for (let a = 0; a < apRankL.length; a++) if (!apStopL[a]) low = Math.min(low, apRankL[a]);
+      for (let a = 0; a < apRankL.length; a++) if (apStopL[a]) apRankL[a] = Math.min(apRankL[a], low - 1);
+    } else apStopL.fill(0);
     for (const id of node.in) {
       const a = edges[id];
       edgeM0[id] = mvIn.length;
@@ -353,7 +378,7 @@ export function createJunctions(map: CityMap): JunctionState {
     }
     // ---- control ----
     const apCount = apKeys.length;
-    const apRank = Int8Array.from(apRankL), apHeading = Float32Array.from(apHeadL);
+    const apRank = Int8Array.from(apRankL), apHeading = Float32Array.from(apHeadL), apStop = Uint8Array.from(apStopL);
     const majorRank = apCount ? Math.max(...apRankL) : 0;
     let kind = CTL_NONE;
     if (node.roundabout && (node.in.some((i) => edges[i].roundabout) || node.out.some((i) => edges[i].roundabout))) kind = CTL_RING;
@@ -386,7 +411,7 @@ export function createJunctions(map: CityMap): JunctionState {
       for (let p = 0; p < phases; p++) if (!(pedPhase && p === phases - 1) && apRankL.some((r, a) => apPhase[a] === p && r === majorRank)) greensL[p] = SG.green;
     }
     const ctl: NodeCtl = {
-      id: node.id, kind, m0, nm, conflict, apCount, apRank, apHeading, majorRank,
+      id: node.id, kind, m0, nm, conflict, apCount, apRank, apStop, apHeading, majorRank,
       phases, pedPhase, apPhase, greens: Float32Array.from(greensL), phase: 0, stage: 0, t: 0, checkT: 0,
     };
     ctls.push(ctl);
@@ -466,16 +491,32 @@ function phaseDemand(w: World, J: JunctionState, c: NodeCtl, phase: number, near
     const o = t[i];
     if (o.phase === 'turn' || o.respawnWanted) continue;
     const e = edges[o.edge];
-    if (e.to !== c.id) continue;
-    const ap = J.edgeAp[o.edge];
+    // on an approach, or waiting before a lane into it too short to stop on (holdAhead: the Key Bridge north end, a
+    // few metres before M St): the detector loop reaches back over the short lane
+    let ap = -1;
+    if (e.to === c.id) ap = J.edgeAp[o.edge];
+    else if (o.next >= 0 && J.shortLane[o.next] && edges[o.next].to === c.id) ap = J.edgeAp[o.next];
+    else continue;
     if (ap < 0 || c.apPhase[ap] !== phase) continue;
     const rem = stopLine(e) - o.s;
     if (rem > near || (moving && o.speed < 1 && rem > 8)) continue;
     return true;
   }
   if (J.playerEdge >= 0) {
-    const e = edges[J.playerEdge], ap = J.edgeAp[J.playerEdge];
-    if (e.to === c.id && ap >= 0 && c.apPhase[ap] === phase && stopLine(e) - J.playerS < near) return true;
+    const e = edges[J.playerEdge];
+    if (stopLine(e) - J.playerS < near) {
+      if (e.to === c.id) { const ap = J.edgeAp[J.playerEdge]; if (ap >= 0 && c.apPhase[ap] === phase) return true; }
+      else {
+        // (the player's next lane is unknown: any short lane from the junction ahead into this one calls its phase)
+        const out = w.city.roads.nodes[e.to].out;
+        for (let k = 0; k < out.length; k++) {
+          const n = out[k];
+          if (!J.shortLane[n] || edges[n].to !== c.id) continue;
+          const ap = J.edgeAp[n];
+          if (ap >= 0 && c.apPhase[ap] === phase) return true;
+        }
+      }
+    }
   }
   return false;
 }
@@ -694,6 +735,7 @@ export function junctionHold(w: World, car: AiCar, atLine: boolean): number {
   let mode = 0; // 1: yield to straight/right moves of other approaches that may go; 2: (minor road) yield to every bigger road
   if (k === CTL_SIGNALS) mode = myType === MOVE_LEFT || myType === MOVE_UTURN ? 1 : 0;
   else if (k === CTL_PRIORITY) mode = c.apRank[myAp] < c.majorRank ? 2 : myType === MOVE_LEFT || myType === MOVE_UTURN ? 1 : 0;
+  if (k === CTL_PRIORITY && mode === 2 && c.apStop[myAp] && (!atLine || car.stopT < TT.stopSignWait)) return HOLD_STOP; // a stop sign: a full stop first
   if (k === CTL_PRIORITY && mode === 2 && atLine && car.stopT < TT.yieldPause) return HOLD_YIELD;
   if (mode) {
     const patient = !(atLine && car.waitT > TT.maxYieldWait);

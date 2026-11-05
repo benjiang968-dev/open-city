@@ -940,7 +940,12 @@ export async function witness(page, S) {
     window.__mh.put(w.player.body, bottle.px, bottle.pz - 1.0, 1.2); w.player.facing = 0;
     run(0.3); w.input.pressed.add('KeyE'); run(0.1);
     const pp = w.player.mesh.position;
-    const victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly'));
+    // (real maps: the bottle may lie on a quiet street where nobody suitable is out yet; let the crowd fill in)
+    let victim = null;
+    for (let k = 0; k < 40 && !victim; k++) {
+      victim = w.peds.find((p) => p.active && p.archetype === 'adult' && (p.npc.personality === 'posh' || p.npc.personality === 'friendly')) ?? (k > 10 ? w.peds.find((p) => p.active && p.archetype === 'adult') : null);
+      if (!victim) run(0.5);
+    }
     victim.pos.set(pp.x, window.__mh.gy(pp.x, pp.z + 5) + 0.02, pp.z + 5); victim.state = 'idle'; victim.timer = 30; victim.route = [];
     w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
     w.input.keys.add('KeyF'); run(0.36); w.input.keys.delete('KeyF');
@@ -1003,8 +1008,12 @@ export async function gate2(page, S) {
   // 2) an NPC stands in front; hold F to charge, release to throw
   const victim = await page.evaluate(() => {
     const w = window.__oc; const pp = w.player.mesh.position;
-    const v = w.peds.find((p) => p.active && p.archetype === 'adult' && p.npc.personality === 'friendly') ?? w.peds.find((p) => p.active && p.archetype === 'adult');
-    v.pos.set(pp.x, 0.02, pp.z + 5); v.state = 'idle'; v.timer = 30; v.route = [];
+    let v = null;
+    for (let k = 0; k < 40 && !v; k++) {
+      v = w.peds.find((p) => p.active && p.archetype === 'adult' && p.npc.personality === 'friendly') ?? w.peds.find((p) => p.active && p.archetype === 'adult');
+      if (!v) window.__ocRun(0.5); // (real maps: a quiet street; let the crowd fill in)
+    }
+    v.pos.set(pp.x, window.__mh?.gy ? window.__mh.gy(pp.x, pp.z + 5) + 0.02 : 0.02, pp.z + 5); v.state = 'idle'; v.timer = 30; v.route = [];
     w.player.facing = 0; w.cam.yaw = Math.PI; w.cam.pitch = 0.49;
     return { id: v.id, personality: v.npc.personality };
   });
@@ -1623,7 +1632,9 @@ export async function mapcheck(page, S) {
     const simStart = w.time;
     while (streak < 30 && w.time - simStart < 900) {
       window.__ocRun(0.1, 30);
-      if (car.phase === 'lane' && car.stunT <= 0) {
+      // (not on the tick a recycled car reappears elsewhere: that is a jump, counted below, not a lane-keeping error)
+      const jumped = car.edge !== prev && !N[E[prev].to].out.includes(car.edge);
+      if (car.phase === 'lane' && car.stunT <= 0 && !jumped) {
         // off its lane beyond the sideways offset of a lane change it is making (car.latOff)
         const h = M.projectOnLane(E[car.edge], car.px, car.pz, hit);
         const lat = (car.px - h.x) * -Math.cos(h.heading) + (car.pz - h.z) * Math.sin(h.heading);
@@ -2450,6 +2461,273 @@ export async function physf4(page) {
   return { shots, pass: shots.every((s) => s.edges > 0) };
 }
 
+// Debug probe (any map): starts the game and prints the JSON value of the expression in $PROBE, evaluated in the page
+// with w = window.__oc, c = the CityMap, M = window.__ocMap.  PROBE='c.roads.edges.length' node scripts/shot.mjs x probe
+export async function probe(page, S) {
+  await S.start(page);
+  return page.evaluate((src) => { const w = window.__oc, c = w.city, M = window.__ocMap; return eval(src); }, process.env.PROBE ?? 'null');
+}
+
+// Road smoothness audit (MAP=georgetown node scripts/shot.mjs x roadaudit): casts rays at the static colliders along
+// every lane (centre and both wheel tracks, every 0.5 m), across every junction (each arriving lane to each leaving
+// lane, straight chord) and along every walk link, and measures grade, grade change per metre, kinks (second
+// difference: bumps, seams, deck joins), cross-slope and the gap between the lane and the surface under it. Limits:
+// TUNING.geo.roadLimits. Prints counts over the limits, percentiles and the worst places.
+export async function roadaudit(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, M = window.__ocMap, Lm = M.roadLimits, R = w.R, P = w.physics;
+    const E = c.roads.edges, N = c.roads.nodes;
+    const ray = new R.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
+    const fixedOnly = (col) => { const b = col.parent(); return !b || b.isFixed(); };
+    const cast = (x, y, z, down) => {
+      ray.origin.x = x; ray.origin.y = y; ray.origin.z = z;
+      const hit = P.castRay(ray, down, true, undefined, undefined, undefined, undefined, fixedOnly);
+      return hit ? y - hit.timeOfImpact : NaN;
+    };
+    const main = new Set(['primary', 'secondary', 'trunk', 'parkway']);
+    const LP = { x: 0, y: 0, z: 0, heading: 0 };
+    const stat = () => ({ n: 0, over: 0, worst: [] });
+    const S2 = { grade: stat(), gradeChange: stat(), step: stat(), cross: stat(), gap: stat(), junction: stat(), walk: stat(), walkWall: stat(), holes: stat() };
+    const vals = { grade: [], gradeChange: [], step: [], cross: [] };
+    const byCls = {};
+    let rs = 7;
+    const rnd = () => ((rs = (Math.imul(rs, 1103515245) + 12345) >>> 0) / 4294967296);
+    let curEnd = false;
+    const note = (st, v, lim, where) => {
+      st.n++;
+      if (v > lim) {
+        st.over++;
+        const key = `${Object.keys(S2).find((k) => S2[k] === st)}:${where[1]}${curEnd ? ':end' : ''}`;
+        byCls[key] = (byCls[key] ?? 0) + 1;
+        // a reservoir sample of typical cases (the worst list only shows the extremes)
+        st.sample ??= [];
+        if (st.sample.length < 40) st.sample.push([+v.toFixed(3), ...where, curEnd ? 'end' : 'mid']);
+        else { const j = Math.floor(rnd() * st.over); if (j < 40) st.sample[j] = [+v.toFixed(3), ...where, curEnd ? 'end' : 'mid']; }
+        st.worst.push([+v.toFixed(3), ...where]);
+        if (st.worst.length > 4000) { st.worst.sort((a, b) => b[0] - a[0]); st.worst.length = 2000; }
+      }
+    };
+    const DS = 0.5;
+    for (const e of E) {
+      if (e.len < 2) continue;
+      const isMain = main.has(e.cls), isSvc = e.cls === 'service';
+      const n = Math.floor(e.len / DS) + 1;
+      const ys = new Float32Array(n);
+      const where = (s) => { curEnd = s < e.trimStart + 6 || s > e.len - e.trimEnd - 6; M.laneSample(e, s, LP); return [e.name ?? e.roadId, e.cls, Math.round(LP.x), Math.round(LP.z)]; };
+      for (let i = 0; i < n; i++) {
+        const s = Math.min(e.len, i * DS);
+        M.laneSample(e, s, LP);
+        const y = cast(LP.x, LP.y + 1.5, LP.z, 4);
+        ys[i] = y;
+        if (Number.isNaN(y)) { note(S2.holes, 1, 0.5, where(s)); continue; }
+        note(S2.gap, Math.abs(y - LP.y), Lm.maxSurfaceGap, where(s));
+        if (i % 2 === 0) {
+          const rx = -Math.cos(LP.heading) * 0.8, rz = Math.sin(LP.heading) * 0.8;
+          const yl = cast(LP.x - rx, LP.y + 1.5, LP.z - rz, 4), yr = cast(LP.x + rx, LP.y + 1.5, LP.z + rz, 4);
+          if (!Number.isNaN(yl) && !Number.isNaN(yr)) { const cs = Math.abs(yl - yr) / 1.6; vals.cross.push(cs); note(S2.cross, cs, Lm.maxCrossSlope, where(s)); }
+        }
+      }
+      // kinks: second difference over 0.5 m (a seam, a bump, a deck join); grades on a 4 m baseline
+      for (let i = 1; i + 1 < n; i++) {
+        if (Number.isNaN(ys[i - 1] + ys[i] + ys[i + 1])) continue;
+        const k = Math.abs(ys[i + 1] - 2 * ys[i] + ys[i - 1]);
+        vals.step.push(k);
+        note(S2.step, k, Lm.maxStep, where(i * DS));
+      }
+      const g = new Float32Array(n).fill(NaN);
+      for (let i = 4; i + 4 < n; i++) if (!Number.isNaN(ys[i - 4] + ys[i + 4])) g[i] = (ys[i + 4] - ys[i - 4]) / 4;
+      for (let i = 4; i + 4 < n; i++) {
+        if (Number.isNaN(g[i])) continue;
+        vals.grade.push(Math.abs(g[i]));
+        note(S2.grade, Math.abs(g[i]), isMain ? Lm.maxGradeMain : isSvc ? Lm.maxGradeService : Lm.maxGrade, where(i * DS));
+        if (i + 2 < n && i >= 2 && !Number.isNaN(g[i - 2] + g[i + 2])) {
+          const gc = Math.abs(g[i + 2] - g[i - 2]) / 2;
+          vals.gradeChange.push(gc);
+          note(S2.gradeChange, gc, isMain ? Lm.maxGradeChangeMain : isSvc ? Lm.maxGradeChangeService : Lm.maxGradeChange, where(i * DS));
+        }
+      }
+    }
+    // junctions: arriving lane end -> leaving lane start, a straight chord (the plateau and its seams with the arms)
+    for (const nd of N) {
+      if (!nd.junction) continue;
+      for (const ia of nd.in) for (const ob of nd.out) {
+        const a = E[ia], b = E[ob];
+        if (b.twin === a.id && !nd.deadEnd) continue;
+        M.laneSample(a, a.len - Math.min(a.len, 3), LP);
+        const ax = LP.x, ay = LP.y, az = LP.z;
+        M.laneSample(b, Math.min(b.len, 3), LP);
+        const bx = LP.x, by = LP.y, bz = LP.z;
+        const L = Math.hypot(bx - ax, bz - az);
+        if (L < 1) continue;
+        const m = Math.ceil(L / DS);
+        let y0 = NaN, y1 = NaN, worst = 0, wx = 0, wz = 0;
+        for (let i = 0; i <= m; i++) {
+          const t = i / m, x = ax + (bx - ax) * t, z = az + (bz - az) * t, yy = ay + (by - ay) * t;
+          const y = cast(x, yy + 1.5, z, 4);
+          if (!Number.isNaN(y + y0 + y1)) { const k = Math.abs(y - 2 * y1 + y0); if (k > worst) { worst = k; wx = x; wz = z; } }
+          y0 = y1; y1 = y;
+        }
+        note(S2.junction, worst, Lm.maxJunctionStep, [`${a.name ?? a.roadId} -> ${b.name ?? b.roadId}`, nd.id, Math.round(wx), Math.round(wz)]);
+      }
+    }
+    // walk links: steps along the way people walk (kerbs at crossings are 0.15 m)
+    const W = c.walk.nodes;
+    for (const a of W) for (const j of a.nbrs) {
+      if (j < a.id) continue;
+      const b = W[j];
+      const L = Math.hypot(b.x - a.x, b.z - a.z);
+      if (L < 0.5) continue;
+      const m = Math.ceil(L / DS);
+      let prev = NaN, worst = 0, wx = 0, wz = 0;
+      for (let i = 0; i <= m; i++) {
+        const t = i / m, x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t, yy = a.y + (b.y - a.y) * t;
+        const y = cast(x, yy + 1.2, z, 3);
+        if (!Number.isNaN(y + prev) && Math.abs(y - prev) > worst) { worst = Math.abs(y - prev); wx = x; wz = z; }
+        prev = y;
+      }
+      note(S2.walk, worst, Lm.maxWalkStep, [a.kind + '-' + b.kind, a.street ?? '', Math.round(wx), Math.round(wz)]);
+      if (worst > 0.45) note(S2.walkWall, worst, 0.45, [a.kind + '-' + b.kind, a.street ?? '', Math.round(wx), Math.round(wz)]);
+    }
+    const pct = (a, q) => { if (!a.length) return 0; a.sort((x, y) => x - y); return +a[Math.min(a.length - 1, Math.floor(a.length * q))].toFixed(3); };
+    curEnd = false;
+    const out = { limits: Lm, lanes: E.length, metrics: {}, areas: {}, byClass: byCls };
+    // where the over-limit samples are: 250 m cells
+    for (const [k, st] of Object.entries(S2)) for (const wv of st.worst) { const key = `${Math.floor(wv[wv.length - 2] / 250) * 250},${Math.floor(wv[wv.length - 1] / 250) * 250}`; out.areas[key] = (out.areas[key] ?? 0) + 1; }
+    for (const [k, st] of Object.entries(S2)) {
+      st.worst.sort((a, b) => b[0] - a[0]);
+      out.metrics[k] = { samples: st.n, over: st.over, worst: st.worst.slice(0, 12), sample: st.sample ?? [] };
+      if (vals[k]) Object.assign(out.metrics[k], { p50: pct(vals[k], 0.5), p99: pct(vals[k], 0.99), p999: pct(vals[k], 0.999), max: pct(vals[k], 1) });
+    }
+    return out;
+  });
+}
+
+// Drive test (MAP=georgetown node scripts/shot.mjs x roaddrive): the player's car driven physically along every
+// major street (primary, secondary, tertiary, parkway; lanes chained straight on through junctions), at street speed,
+// steered by a path follower that only turns the body about the vertical (suspension, pitch and roll stay physical).
+// Measures the chassis' vertical acceleration and the time with all four wheels off the ground; reports the worst
+// streets and places against TUNING.geo.roadLimits (maxVertAccel, maxAirtime). Other traffic is moved away first.
+export async function roaddrive(page, S) {
+  await S.start(page);
+  return page.evaluate(() => {
+    const w = window.__oc, c = w.city, M = window.__ocMap, Lm = M.roadLimits;
+    const E = c.roads.edges, N = c.roads.nodes;
+    const STEP = 1 / 60;
+    const major = new Set(['primary', 'secondary', 'tertiary', 'parkway']);
+    const dir = (e, atEnd) => { const p = e.pts, n = p.length; return atEnd ? Math.atan2(p[n - 3] - p[n - 6], p[n - 1] - p[n - 4]) : Math.atan2(p[3] - p[0], p[5] - p[2]); };
+    const dAng = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+    const next = (e) => N[e.to].out.map((i) => E[i]).filter((n) => n.name && n.name === e.name && major.has(n.cls) && n.to !== e.from && !n.parking && dAng(dir(n, false), dir(e, true)) < 0.5).sort((a, b) => dAng(dir(a, false), dir(e, true)) - dAng(dir(b, false), dir(e, true)) || b.lane - a.lane)[0];
+    const prev = (e) => N[e.from].in.map((i) => E[i]).find((p) => p.name === e.name && major.has(p.cls) && p.from !== e.to && dAng(dir(p, true), dir(e, false)) < 0.5);
+    // chains of lanes along each major street (the inner lane: the kerbside one may be a parking lane), longest first,
+    // each lane used once
+    const used = new Set();
+    const chains = [];
+    for (const e of E) {
+      if (!major.has(e.cls) || !e.name || e.lane !== e.lanesSameDir - 1 || e.parking || used.has(e.id) || prev(e)) continue;
+      const list = [];
+      for (let k = e, guard = 0; k && !used.has(k.id) && guard < 200; k = next(k), guard++) { list.push(k); used.add(k.id); }
+      const len = list.reduce((s, q) => s + q.len, 0);
+      if (len >= 120) chains.push({ name: e.name, cls: e.cls, list, len });
+    }
+    chains.sort((a, b) => b.len - a.len);
+    const LP = { x: 0, y: 0, z: 0, heading: 0 };
+    const pathOf = (ch) => {
+      const P = [];
+      for (const e of ch.list) for (let s = 0; s < e.len; s += 1) { M.laneSample(e, s, LP); P.push(LP.x, LP.y, LP.z); }
+      return P;
+    };
+    // the player's car
+    let v = w.player.vehicle;
+    if (!v) {
+      v = w.vehicles.find((q) => q.owned) ?? w.vehicles[0];
+      window.__mh.put(w.player.body, v.px - Math.cos(v.heading) * 2.2, v.pz + Math.sin(v.heading) * 2.2, 1.2);
+      window.__ocRun(0.2); w.input.pressed.add('KeyE'); window.__ocRun(0.2);
+      v = w.player.vehicle ?? v;
+    }
+    // other traffic, parked cars and people out of the way (a collision would skew the numbers)
+    for (const t of w.traffic) if (t.body) t.body.setTranslation({ x: t.px, y: -500, z: t.pz }, false);
+    for (const q of w.vehicles) if (q !== v) { q.body.setTranslation({ x: q.px, y: -600, z: q.pz }, false); q.body.setLinvel({ x: 0, y: 0, z: 0 }, false); q.body.setBodyType(w.R.RigidBodyType.Fixed, false); }
+    w.peds.length = 0;
+    w.traffic.length = 0;
+    const out = [];
+    let worstA = 0, worstAir = 0, overA = 0, overAir = 0, samples = 0, metres = 0;
+    const budgetM = 30000;
+    for (const ch of chains) {
+      if (metres > budgetM) break;
+      const P = pathOf(ch), n = P.length / 3;
+      if (n < 30) continue;
+      const target = Math.min(ch.cls === 'parkway' ? 18 : 13.9, ch.list[0].speed || 13.9);
+      const h0 = Math.atan2(P[9] - P[0], P[11] - P[2]);
+      // a fresh, drivable car each run (a collision in the previous run may have wrecked it)
+      v.health = v.maxHealth; v.wrecked = false; v.driven = true; v.upsideTimer = 0;
+      v.body.setTranslation({ x: P[3], y: P[4] + 0.9, z: P[5] }, true);
+      v.body.setRotation({ x: 0, y: Math.sin(h0 / 2), z: 0, w: Math.cos(h0 / 2) }, true);
+      v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      v.body.setLinvel({ x: Math.sin(h0) * target, y: 0, z: Math.cos(h0) * target }, true);
+      v.prevVel?.set(Math.sin(h0) * target, 0, Math.cos(h0) * target);
+      let idx = 1, t = 0, vyPrev = 0, air = 0, maxA = 0, maxAir = 0, at = null, airAt = null, lost = false, crash = null, spPrev = target;
+      const recent = []; // last 0.4 s of samples: dropped if a collision follows (its spike is not the road's)
+      const vys = [];
+      const K = w.input.keys;
+      for (let step = 0; step < 60 * 400; step++) {
+        const p = v.body.translation();
+        let bd = Infinity, bi = idx;
+        for (let i = idx; i < Math.min(n, idx + 40); i++) { const d = Math.hypot(P[i * 3] - p.x, P[i * 3 + 2] - p.z); if (d < bd) { bd = d; bi = i; } }
+        idx = bi;
+        if (bd > 6) { lost = true; break; }
+        if (idx >= n - 8) break;
+        const la = Math.min(n - 1, idx + 7);
+        const want = Math.atan2(P[la * 3] - p.x, P[la * 3 + 2] - p.z);
+        const r = v.body.rotation();
+        const fwdx = 2 * (r.x * r.z + r.w * r.y), fwdz = 1 - 2 * (r.x * r.x + r.y * r.y);
+        const cur = Math.atan2(fwdx, fwdz);
+        const err = Math.atan2(Math.sin(want - cur), Math.cos(want - cur));
+        const d = err * 0.25;
+        const cy = Math.cos(d / 2), sy = Math.sin(d / 2);
+        v.body.setRotation({ w: cy * r.w - sy * r.y, x: cy * r.x + sy * r.z, y: cy * r.y + sy * r.w, z: cy * r.z - sy * r.x }, true);
+        const lv = v.body.linvel();
+        const cd = Math.cos(d), sd = Math.sin(d);
+        v.body.setLinvel({ x: lv.x * cd + lv.z * sd, y: lv.y, z: -lv.x * sd + lv.z * cd }, true);
+        const sp = Math.hypot(lv.x, lv.z);
+        if (sp < target - 0.5) { K.add('KeyW'); K.delete('KeyS'); } else if (sp > target + 2) { K.delete('KeyW'); K.add('KeyS'); } else { K.delete('KeyW'); K.delete('KeyS'); }
+        window.__ocStep(1);
+        t += STEP;
+        // vertical acceleration felt in the cabin: the change of vertical speed over 0.1 s (a single 1/60 s step is
+        // contact-solver noise)
+        const vy = v.body.linvel().y;
+        vys.push(vy);
+        if (vys.length > 7) vys.shift();
+        const ay = vys.length === 7 ? (vys[6] - vys[0]) / (6 * STEP) : 0;
+        vyPrev = vy;
+        let contacts = 0;
+        for (let i = 0; i < 4; i++) if (v.ctrl.wheelIsInContact(i)) contacts++;
+        const lv2 = v.body.linvel(), sp2 = Math.hypot(lv2.x, lv2.z);
+        if (t < 1.5) { air = 0; spPrev = sp2; continue; }
+        if (spPrev - sp2 > 0.8 || (sp2 < target * 0.4 && t > 3)) { crash = [Math.round(p.x), Math.round(p.z)]; break; } // hit something
+        spPrev = sp2;
+        air = contacts === 0 ? air + STEP : 0;
+        recent.push([ay, air, Math.round(p.x), Math.round(p.z)]);
+        if (recent.length > 24) {
+          const [a0, air0, x0, z0] = recent.shift();
+          samples++;
+          if (Math.abs(a0) > Math.abs(maxA)) { maxA = a0; at = [x0, z0]; }
+          if (Math.abs(a0) > Lm.maxVertAccel) overA++;
+          if (air0 > maxAir) { maxAir = air0; airAt = [x0, z0]; }
+          if (air0 > Lm.maxAirtime && air0 - STEP <= Lm.maxAirtime) overAir++;
+        }
+      }
+      K.delete('KeyW'); K.delete('KeyS');
+      metres += (idx / n) * ch.len;
+      worstA = Math.max(worstA, Math.abs(maxA));
+      worstAir = Math.max(worstAir, maxAir);
+      out.push({ street: ch.name, cls: ch.cls, len: Math.round(ch.len), driven: Math.round((idx / n) * ch.len), maxVertAccel: +maxA.toFixed(2), at, maxAirtime: +maxAir.toFixed(3), airAt, lost, crash });
+    }
+    out.sort((a, b) => Math.abs(b.maxVertAccel) - Math.abs(a.maxVertAccel));
+    return { limits: { maxVertAccel: Lm.maxVertAccel, maxAirtime: Lm.maxAirtime }, chains: chains.length, drivenKm: +(metres / 1000).toFixed(1), samples, worstVertAccel: +worstA.toFixed(2), worstAirtime: +worstAir.toFixed(3), samplesOverAccel: overA, airEventsOver: overAir, pass: worstA <= Lm.maxVertAccel && worstAir <= Lm.maxAirtime, runs: out };
+  });
+}
+
 // Gate drive on the real graph (MAP=georgetown node scripts/shot.mjs x geodrive): your car drives Key Bridge -> M St
 // east -> Pennsylvania Ave -> once round Washington Circle -> K St west to the waterfront, steered by a simple
 // autopilot that only presses W/A/S/D/Space (no teleports after the start), stopping at red lights, waiting at stop
@@ -2482,10 +2760,13 @@ export async function geodrive(page, S) {
     for (const n of wps) if (!n || !go(n.id)) return { error: `no route to ${n ? n.id : '?'}`, route };
     // into the circle from Pennsylvania Ave (the entry nearest the end of the route so far)
     const here = N[E[route[route.length - 1]].to];
-    const entry = N.filter((n) => n.roundabout && namesAt(n).has('Pennsylvania Ave NW')).sort((a, b) => Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z))[0];
+    // (real data: each carriageway of an avenue meets the ring at its own node, so look for one with an arm coming in)
+    const armIn = (n, name) => n.roundabout && n.in.some((i) => !E[i].roundabout && E[i].name === name && traffic(E[i]));
+    const armOut = (n, name) => n.roundabout && n.out.some((i) => !E[i].roundabout && E[i].name === name && traffic(E[i]));
+    const entry = N.filter((n) => armIn(n, 'Pennsylvania Ave NW')).sort((a, b) => Math.hypot(a.x - here.x, a.z - here.z) - Math.hypot(b.x - here.x, b.z - here.z))[0];
     if (!entry || !go(entry.id)) return { error: 'no way into the circle', route };
     // once round (outer lane) and on to the K St exit on the west side
-    const kExit = N.filter((n) => n.roundabout && namesAt(n).has('K St NW')).sort((a, b) => a.x - b.x)[0];
+    const kExit = N.filter((n) => armOut(n, 'K St NW')).sort((a, b) => a.x - b.x)[0];
     let at = entry.id, ringSteps = 0;
     for (let k = 0; k < 20; k++) {
       const e = E.find((q) => q.roundabout && q.from === at && J.edgeRank[q.id] === 0);
