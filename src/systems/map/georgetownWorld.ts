@@ -155,7 +155,7 @@ export interface GeoWorld {
   /** Ways left out of the render (to be removed from the graph): data ids with a reason. */
   omitted: { roadId: string; name: string; reason: string }[];
   /** Review data (optional): footprints cut back from streets / dropped, stoop bottoms (x, y, z, 0 per stoop). */
-  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array; stoopInfo: Float32Array; decalFit?: { triangles: number; lifted: number; removed: number } };
+  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array; stoopInfo: Float32Array; decalFit?: { triangles: number; lifted: number; removed: number; removedBySurface: Record<number, number> } };
   /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
   droppedBuildings: ReadonlySet<string>;
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number; surfaceTris: number };

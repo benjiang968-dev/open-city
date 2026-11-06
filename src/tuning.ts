@@ -785,7 +785,7 @@ const RAW = {
   // people and the road graph depend on. Pure looks (colours, window sizes, LOD distances) live in the art files.
   geo: {
     decalClearance: 0.008, // m: road paint is kept at least this far above any surface under it (render/decal fit, map/decalFit.ts)
-    decalLiftReach: 0.15, // m: a marking is lifted onto a surface up to this far above its own road (junction plateaus); deeper under one, it is removed
+    decalLiftReach: 0.07, // m: a marking is lifted onto a surface up to this far above it (junction plateaus); a surface higher than that (a kerb) hides it cleanly
     decalSampleStep: 0.5, // m: spacing of the clearance checks along a marking triangle's edges
     laneWidth: 3.3, // m per lane; the map data's carriageway width is lanes x laneWidth
     minTwoWayWidth: 5.6, // m: a two-way street tagged with 1 lane is widened to this (two narrow lanes)

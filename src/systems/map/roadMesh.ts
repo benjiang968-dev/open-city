@@ -458,10 +458,12 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
       const sx = mx + cx * t, sz = mz + cz * t;
       const off = (sx - q.x) * rx + (sz - q.z) * rz;
       if (Math.abs(off) > e.hw - 0.35) continue;
-      const pr2 = net.project(e, sx, sz);
-      const y = net.profAt(e, pr2.s) + DH;
       const ax = q.ux * 1.5, az = q.uz * 1.5, bx = cx * 0.28, bz = cz * 0.28;
-      dec.quad(sx - ax - bx, y, sz - az - bz, sx + ax - bx, y, sz + az - bz, sx + ax + bx, y, sz + az + bz, sx - ax + bx, y, sz - az + bz, COL.white, 0, 1, 0);
+      // each corner on the road's profile where it lies: a stripe is 3 m long along the road, and on a 4 % grade a flat
+      // one ends 6 cm under the carriageway at one end (it flickered through the decal offset)
+      const yAt = (x: number, z: number) => net.profAt(e, net.project(e, x, z).s) + DH;
+      const x0 = sx - ax - bx, z0 = sz - az - bz, x1 = sx + ax - bx, z1 = sz + az - bz, x2 = sx + ax + bx, z2 = sz + az + bz, x3 = sx - ax + bx, z3 = sz - az + bz;
+      dec.quad(x0, yAt(x0, z0), z0, x1, yAt(x1, z1), z1, x2, yAt(x2, z2), z2, x3, yAt(x3, z3), z3, COL.white, 0, 1, 0);
     }
   }
 
@@ -541,15 +543,16 @@ export function buildNetMeshes(net: RoadNet, doc: GeoDoc, chunks: RenderChunks, 
   }
   function arrow(e: REdge, s: number, off: number, dir: number) {
     const q = pointAtS(e, s);
-    const y = net.profAt(e, s) + DH;
+    // along the arrow the road may climb: each point at the profile height where it lies (see the crossing stripes)
+    const yA = (a: number) => net.profAt(e, Math.min(e.L, Math.max(0, s + a * dir))) + DH;
     const ux = q.ux * dir, uz = q.uz * dir, rx = -q.uz, rz = q.ux;
     const cx = q.x + rx * off, cz = q.z + rz * off;
     const buf = chunks.buf('decal', cx, cz);
     const P = (a: number, b: number): [number, number] => [cx + ux * a + rx * b, cz + uz * a + rz * b];
     const s0 = P(-2.2, -0.13), s1 = P(-2.2, 0.13), s2 = P(0.6, 0.13), s3 = P(0.6, -0.13);
-    buf.quad(s0[0], y, s0[1], s1[0], y, s1[1], s2[0], y, s2[1], s3[0], y, s3[1], COL.white, 0, 1, 0);
+    buf.quad(s0[0], yA(-2.2), s0[1], s1[0], yA(-2.2), s1[1], s2[0], yA(0.6), s2[1], s3[0], yA(0.6), s3[1], COL.white, 0, 1, 0);
     const h0 = P(0.6, -0.5), h1 = P(0.6, 0.5), h2 = P(2.0, 0);
-    buf.tri(h0[0], y, h0[1], h1[0], y, h1[1], h2[0], y, h2[1], COL.white, 0, 1, 0);
+    buf.tri(h0[0], yA(0.6), h0[1], h1[0], yA(0.6), h1[1], h2[0], yA(2.0), h2[1], COL.white, 0, 1, 0);
   }
   return { edgeGrid, stops, crossings };
 }
