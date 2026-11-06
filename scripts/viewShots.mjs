@@ -214,7 +214,9 @@ for (const full of views) {
   // fix the camera, people, traffic; force the weather look and the sky light for the final sun
   await page.evaluate(({ v, hour, weather, followGround }) => {
     const w = window.__oc, c = w.city;
-    const L = { clear: { cloud: 0, fogFar: 750, rain: 0, snow: 0, wet: 0, grip: 1 } }[weather];
+    // the game's own look for that weather if the build publishes it (weather.presets), else the clear look of the
+    // BEFORE and Stage 1 builds (linear fog to 750 m)
+    const L = w.weather.presets?.[weather] ?? { clear: { cloud: 0, fogFar: 750, rain: 0, snow: 0, wet: 0, grip: 1 } }[weather];
     if (L) { Object.assign(w.weather.look, L); w.weather.snowCover = 0; }
     w.dayNight.hour = hour;
     const env = w.dayNight.env;

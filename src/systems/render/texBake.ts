@@ -36,7 +36,7 @@ export function bakedBytes(res: number): number {
   return Math.round(res * res * 4 * BAKE_LAYERS.length * 2 * mip + MACRO_RES * MACRO_RES * 4 * mip);
 }
 
-export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anisotropy: number): BakedMaps {
+export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anisotropy: number, skip: ReadonlySet<number> = new Set()): BakedMaps {
   const t0 = performance.now();
   const n = BAKE_LAYERS.length;
   const common = {
@@ -45,6 +45,22 @@ export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anis
   } as const;
   const alb = new THREE.WebGLArrayRenderTarget(res, res, n, { ...common, colorSpace: THREE.SRGBColorSpace });
   const nrm = new THREE.WebGLArrayRenderTarget(res, res, n, { ...common });
+  const macro = new THREE.WebGLRenderTarget(MACRO_RES, MACRO_RES, { ...common, anisotropy: 1 });
+  const maps: BakedMaps = { alb, nrm, macro, res, layers: n, ms: 0 };
+  const layers: number[] = [];
+  for (let i = 0; i < n; i++) if (!skip.has(i)) layers.push(i);
+  bakeProceduralLayers(renderer, maps, layers, true);
+  maps.ms = performance.now() - t0;
+  return maps;
+}
+
+/**
+ * Bake the procedural maps of `layers` into the arrays (all of them at boot; later only the layers a photo set was
+ * meant to fill but could not). Mipmaps are regenerated once, after the last layer. `withMacro` also bakes the macro
+ * variation texture.
+ */
+export function bakeProceduralLayers(renderer: THREE.WebGLRenderer, maps: BakedMaps, layers: readonly number[], withMacro = false): void {
+  const { alb, nrm, macro, res } = maps;
   // mipmaps once at the end, not after every layer
   alb.texture.mipmapsAutoUpdate = false;
   nrm.texture.mipmapsAutoUpdate = false;
@@ -52,9 +68,9 @@ export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anis
     depthBuffer: false, type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter,
     wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, generateMipmaps: false,
   });
-  const macro = new THREE.WebGLRenderTarget(MACRO_RES, MACRO_RES, { ...common, anisotropy: 1 });
-
-  const bakeUniforms = { uSize: { value: new THREE.Vector2(2, 2) }, uMat: { value: 0 }, uPass: { value: 0 }, uSeed: { value: 0 } };
+  const bakeUniforms = {
+    uSize: { value: new THREE.Vector2(2, 2) }, uMat: { value: 0 }, uPass: { value: 0 }, uSeed: { value: 0 }, uTexel: { value: 0.01 },
+  };
   const bakeMat = (i: number) => new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader: BAKE_VERT, fragmentShader: bakeFragment(BRICK, i), uniforms: bakeUniforms,
     depthTest: false, depthWrite: false,
@@ -66,7 +82,7 @@ export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anis
   });
   const macroMat = new THREE.ShaderMaterial({
     glslVersion: THREE.GLSL3, vertexShader: BAKE_VERT, fragmentShader: MACRO_FRAG,
-    uniforms: { uSize: { value: new THREE.Vector2(256, 256) }, uMat: { value: 0 }, uPass: { value: 0 }, uSeed: { value: 0 } },
+    uniforms: { uSize: { value: new THREE.Vector2(256, 256) }, uMat: { value: 0 }, uPass: { value: 0 }, uSeed: { value: 0 }, uTexel: { value: 0 } },
     depthTest: false, depthWrite: false,
   });
   const quad = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), macroMat);
@@ -78,14 +94,17 @@ export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anis
   const prevTarget = renderer.getRenderTarget();
   const prevAutoClear = renderer.autoClear;
   renderer.autoClear = false;
-  for (let i = 0; i < n; i++) {
+  for (let k = 0; k < layers.length; k++) {
+    const i = layers[k];
+    const last = k === layers.length - 1;
     const [sx, sz] = layerSize(i);
     bakeUniforms.uSize.value.set(sx, sz);
+    bakeUniforms.uTexel.value = Math.max(sx, sz) / res;
     normal.uniforms.uSize.value.set(sx, sz);
     bakeUniforms.uMat.value = i;
     const bake = bakeMat(i);
     quad.material = bake;
-    if (i === n - 1) alb.texture.mipmapsAutoUpdate = true;
+    if (last) alb.texture.mipmapsAutoUpdate = true;
     bakeUniforms.uPass.value = 0;
     renderer.setRenderTarget(alb, i);
     renderer.render(scene, cam);
@@ -93,14 +112,16 @@ export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anis
     renderer.setRenderTarget(tmp);
     renderer.render(scene, cam);
     quad.material = normal;
-    if (i === n - 1) nrm.texture.mipmapsAutoUpdate = true;
+    if (last) nrm.texture.mipmapsAutoUpdate = true;
     renderer.setRenderTarget(nrm, i);
     renderer.render(scene, cam);
     bake.dispose();
   }
-  quad.material = macroMat;
-  renderer.setRenderTarget(macro);
-  renderer.render(scene, cam);
+  if (withMacro) {
+    quad.material = macroMat;
+    renderer.setRenderTarget(macro);
+    renderer.render(scene, cam);
+  }
   renderer.setRenderTarget(prevTarget);
   renderer.autoClear = prevAutoClear;
 
@@ -108,7 +129,6 @@ export function bakeSurfaceMaps(renderer: THREE.WebGLRenderer, res: number, anis
   normal.dispose();
   macroMat.dispose();
   quad.geometry.dispose();
-  return { alb, nrm, macro, res, layers: n, ms: performance.now() - t0 };
 }
 
 export function disposeBaked(m: BakedMaps): void {

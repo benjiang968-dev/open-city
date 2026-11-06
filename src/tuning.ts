@@ -579,6 +579,10 @@ const RAW = {
     maxDuration: 420, // ...and at most
     blendSeconds: 25, // how long a change of weather takes to roll in
     fogVisibility: 90, // metres you can see in fog
+    // metres at which the exponential-squared fog hides 95 % (weather.ts): clear days get gentle aerial perspective
+    // (about 20 % at 1 km), rain and snow close in
+    visibility: { clear: 3500, cloudy: 1800, rain: 320, storm: 220, snow: 260 },
+    trafficViewCap: 900, // m: cars are not (de)spawned in view nearer than this, or 0.8 x the visibility if that is less
     rainGrip: 0.82, // tyre grip multiplier on wet roads
     stormGrip: 0.75, // tyre grip in a storm (standing water)
     snowGrip: 0.62, // tyre grip on snow
@@ -780,6 +784,9 @@ const RAW = {
   // Georgetown world generator v2 (src/systems/map/): the physical shape of streets, decks and water that cars,
   // people and the road graph depend on. Pure looks (colours, window sizes, LOD distances) live in the art files.
   geo: {
+    decalClearance: 0.008, // m: road paint is kept at least this far above any surface under it (render/decal fit, map/decalFit.ts)
+    decalLiftReach: 0.15, // m: a marking is lifted onto a surface up to this far above its own road (junction plateaus); deeper under one, it is removed
+    decalSampleStep: 0.5, // m: spacing of the clearance checks along a marking triangle's edges
     laneWidth: 3.3, // m per lane; the map data's carriageway width is lanes x laneWidth
     minTwoWayWidth: 5.6, // m: a two-way street tagged with 1 lane is widened to this (two narrow lanes)
     minRoadWidth: 3, // m: narrowest carriageway drawn (imported driveways and alleys keep their own width above this)
@@ -878,25 +885,40 @@ const RAW = {
     skyCloudDensityClear: 0.45, // cloud opacity in clear weather (three's Sky cloudDensity)...
     skyCloudDensityOvercast: 0.85, // ...and at full cloud (an opaque grey deck)
     skyCloudElevation: 0.55, // apparent height of the cloud layer (three's Sky cloudElevation, 0..1)
+    paintFade: [0.22, 0.5], // road markings fade into the asphalt between these shares of the map's draw distance (Medium: 210-475 m)
+    libraryWaitMs: 12000, // ms the boot waits for the photo texture sets (render/texLibrary.ts) before falling back to the procedural maps
     envCubeSize: 128, // px per face of the sky capture that lights everything (PMREM)
     envRefreshDegrees: 1.5, // recapture the sky when the sun has moved this far...
     envRefreshMinSeconds: 1.5, // ...but at most this often (real seconds)
     envIntensityDay: 1.0, // scene.environmentIntensity by day (sky light on PBR materials)
     envIntensityNight: 0.16, // at night (the night sky is dark anyway; this keeps a little moonlit fill)
-    skyDiffuseDay: 0.42, // share of the sky light that reaches diffuse surfaces by day (reflections keep it all): sets how
-    // bright the shade is next to sunlight (about 1:4 on a clear day)
+    skyDiffuseDay: 1.0, // share of the sky light that reaches diffuse surfaces by day: 1 now that the capture holds the
+    // city and a sunlit ground and its sky is scaled to a physical sun:shade ratio (envSkyScale); it was 0.42, a cut that
+    // also cut the warm bounce from below
     skyDiffuseNight: 0.7,
-    skyDiffuseSaturation: 0.55, // colour saturation of that sky fill (1 = the sky's own blue; lower stands in for the warm
-    // light bounced off sunlit streets and walls, which the sky capture does not hold)
+    skyDiffuseSaturation: 0.65, // colour saturation of that fill (1 = as captured); below 1 for the inter-reflections
+    // between facades and pavement that the capture's generic city does not hold...
+    shadeTint: [1.04, 1.0, 0.93], // ...the neutral it is pulled toward (slightly warm: shade under a blue sky in a brick street)
     nightSkyZenith: [0.006, 0.008, 0.018], // linear radiance of the night sky overhead...
     nightSkyHorizon: [0.035, 0.028, 0.026], // ...and near the horizon (city glow)
     overcastDim: 0.62, // how much darker the sky (and so its light) gets under full cloud
-    groundBounce: 0.45, // brightness of the ground below the horizon in the sky capture by day (bounce light from below)
+    // the city in the sky capture (render/sky.ts): what reflections and fill light see at the horizon and below it
+    envCityMinDeg: 6, // degrees: the lowest and...
+    envCityMaxDeg: 22, // ...the highest building top of the capture's skyline ring
+    envCityWindowGlow: 0.35, // radiance of a lit window in the ring at full night
+    envGroundAlbedo: [0.16, 0.15, 0.135], // average albedo of the city floor (asphalt, paving, lawns)
+    envGroundShade: 0.45, // share of that floor in the shade of buildings
+    envGroundNightGlow: 0.004, // radiance of the floor at night (street lights)
+    skyVisibleScale: 0.85, // brightness of the drawn sky (the scattering model's horizon clipped to white at the day exposure)
+    envSkyScale: 0.52, // brightness of the sky in the environment capture (sky light) relative to the visible sky: sets
+    // sun:shade on the ground to about 4:1 at noon (it was 2:1 with the full sky, the washed-out shade of the audit)
+    envSkyIrradiance: 0.2, // sky irradiance on the ring and ground by day, as a share of the noon sun's
+    envSkyIrradianceNight: 0.004, // ...and at night
     sunrise: 6.0, // game hour the sun crosses the horizon in the morning (matches the day/night keys in dayNight.ts)...
     sunset: 19.8, // ...and in the evening (the keys fade the sun out by 21:00; noon falls half way, about 12:54)
     sunIntensity: 6.5, // sunlight at noon (the day/night keys scale it toward dawn and dusk)
     moonIntensity: 0.25, // night key light
-    exposureDay: 0.86, // tone mapping exposure by day (ACES filmic)
+    exposureDay: 0.74, // tone mapping exposure by day (ACES filmic): a sunlit 18 % grey card about 0.5 sRGB
     exposureNight: 1.1, // at night (eyes adapt)
     hemiDay: 0.12, // hemisphere fill by day (the sky environment does most of it)
     hemiNight: 0.32, // at night (city glow and moonlight)

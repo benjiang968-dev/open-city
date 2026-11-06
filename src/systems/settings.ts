@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { bakeLook } from './render/look';
+import { loadTextureLibrary } from './render/texLibrary';
 
 export type Quality = 'low' | 'medium' | 'high';
 export const QUALITIES: Quality[] = ['low', 'medium', 'high'];
@@ -38,7 +39,8 @@ export function applyQuality(w: World, q: Quality, boot = false): void {
   w.settings.quality = q;
   w.settings.pedBudget = p.pedBudget;
   w.city?.setQuality?.(q); // the map's own draw distance, detail and trees (not yet loaded at the first call)
-  if (!boot && w.look) bakeLook(w.look, w.renderer, q); // surface maps at the preset's resolution (a re-bake only if it changed)
+  // surface maps at the preset's resolution (a re-bake only if it changed), then the photo sets again at that size
+  if (!boot && w.look && bakeLook(w.look, w.renderer, q)) void loadTextureLibrary(w.look, w.renderer);
   w.dayNight.lamps?.setActive(p.lampLights); // real lights at the nearest street lamps
   const r = w.renderer;
   r.setPixelRatio(Math.min(window.devicePixelRatio || 1, p.maxDevicePixelRatio) * p.resolutionScale);

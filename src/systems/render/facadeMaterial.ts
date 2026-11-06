@@ -157,7 +157,7 @@ diffuseColor.rgb *= fAlb;`)
       .replace('#include <emissivemap_fragment>', 'totalEmissiveRadiance += fEmit;')
       .replace('#include <aomap_fragment>', /* glsl */ `
 reflectedLight.indirectDiffuse *= fAO * uSkyDiffuse;
-reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722))), reflectedLight.indirectDiffuse, OC_SKY_SAT);
+reflectedLight.indirectDiffuse = ocShade(reflectedLight.indirectDiffuse);
 reflectedLight.indirectSpecular *= mix(fAO, 1.0, 0.5);
 reflectedLight.directDiffuse *= mix(1.0, fAO, 0.6);`);
   };

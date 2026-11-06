@@ -12,25 +12,31 @@ export const WEATHER_KINDS: WeatherKind[] = ['clear', 'cloudy', 'fog', 'rain', '
 
 interface Look {
   cloud: number; // 0..1 sky cover (dims sun, greys sky)
-  fogFar: number; // metres of visibility
+  visibility: number; // metres at which the fog (aerial perspective) hides 95 % of what is behind it
   rain: number; // 0..1 rain particles
   snow: number; // 0..1 snow particles
   wet: number; // 0..1 how wet roads get
   grip: number; // tyre grip multiplier
 }
 const LOOKS: Record<WeatherKind, Look> = {
-  clear: { cloud: 0, fogFar: 750, rain: 0, snow: 0, wet: 0, grip: 1 },
-  cloudy: { cloud: 0.65, fogFar: 520, rain: 0, snow: 0, wet: 0, grip: 1 },
-  fog: { cloud: 0.55, fogFar: WT.fogVisibility, rain: 0, snow: 0, wet: 0.2, grip: 0.97 },
-  rain: { cloud: 0.8, fogFar: 300, rain: 0.6, snow: 0, wet: 1, grip: WT.rainGrip },
-  storm: { cloud: 0.95, fogFar: 200, rain: 1, snow: 0, wet: 1, grip: WT.stormGrip },
-  snow: { cloud: 0.75, fogFar: 240, rain: 0, snow: 1, wet: 0.4, grip: WT.snowGrip },
+  clear: { cloud: 0, visibility: WT.visibility.clear, rain: 0, snow: 0, wet: 0, grip: 1 },
+  cloudy: { cloud: 0.65, visibility: WT.visibility.cloudy, rain: 0, snow: 0, wet: 0, grip: 1 },
+  fog: { cloud: 0.55, visibility: WT.fogVisibility, rain: 0, snow: 0, wet: 0.2, grip: 0.97 },
+  rain: { cloud: 0.8, visibility: WT.visibility.rain, rain: 0.6, snow: 0, wet: 1, grip: WT.rainGrip },
+  storm: { cloud: 0.95, visibility: WT.visibility.storm, rain: 1, snow: 0, wet: 1, grip: WT.stormGrip },
+  snow: { cloud: 0.75, visibility: WT.visibility.snow, rain: 0, snow: 1, wet: 0.4, grip: WT.snowGrip },
 };
+/** The weather looks (tools such as scripts/viewShots.mjs read them to hold a weather exactly). */
+export const WEATHER_LOOKS: Readonly<Record<WeatherKind, Readonly<Look>>> = LOOKS;
 export const WEATHER_ICON: Record<WeatherKind, string> = { clear: '☀️', cloudy: '☁️', fog: '🌫️', rain: '🌧️', storm: '⛈️', snow: '🌨️' };
 
 export interface WeatherState {
   kind: WeatherKind; // target weather
   look: Look; // current blended values
+  /** metres within which a car (de)spawning in view could be noticed (trafficPopulation.ts; from the visibility) */
+  viewDist: number;
+  /** the weather looks by kind (for tools) */
+  presets: Readonly<Record<WeatherKind, Readonly<Look>>>;
   timer: number; // real seconds until the next change
   flash: number; // lightning brightness 0..1
   nextLightning: number;
@@ -98,7 +104,7 @@ export function createWeather(w: World): WeatherState {
   const forced = new URLSearchParams(location.search).get('weather') as WeatherKind | null;
   const kind: WeatherKind = forced && WEATHER_KINDS.includes(forced) ? forced : 'clear';
   return {
-    kind, look: { ...LOOKS[kind] }, timer: forced ? 1e9 : rangeRand(WT.minDuration, WT.maxDuration), flash: 0, nextLightning: 5,
+    kind, look: { ...LOOKS[kind] }, viewDist: Math.min(WT.trafficViewCap, 0.8 * LOOKS[kind].visibility), presets: LOOKS, timer: forced ? 1e9 : rangeRand(WT.minDuration, WT.maxDuration), flash: 0, nextLightning: 5,
     snowCover: kind === 'snow' ? 0.6 : 0, grip: LOOKS[kind].grip, rainPts, snowPts, stars, moon,
   };
 }
@@ -149,10 +155,12 @@ export function updateWeather(w: World, dt: number): void {
   grey.setRGB(0.5, 0.53, 0.58).multiplyScalar(0.25 + 0.75 * (1 - dn.night));
   dn.skyTop.lerp(grey, Math.min(1, L.cloud * 1.05));
   dn.skyHorizon.lerp(grey, L.cloud * 0.7);
-  const fog = w.scene.fog as THREE.Fog;
-  fog.far = L.fogFar;
-  fog.near = Math.min(180, L.fogFar * 0.25);
+  // exponential-squared fog: clear near the camera, 95 % at the visibility (density = sqrt(3) / visibility); on a clear
+  // day it is gentle aerial perspective (about 20 % at 1 km), not the old full haze at 750 m
+  const fog = w.scene.fog as THREE.FogExp2;
+  fog.density = 1.7320508 / Math.max(1, L.visibility);
   fog.color.copy(dn.skyHorizon);
+  s.viewDist = Math.min(WT.trafficViewCap, 0.8 * L.visibility);
 
   // lightning during storms
   s.flash = Math.max(0, s.flash - dt * 4);

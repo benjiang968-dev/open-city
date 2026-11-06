@@ -55,7 +55,7 @@ export function createDayNight(scene: THREE.Scene): DayNightState {
   const hemi = new THREE.HemisphereLight(0xcfe8ff, 0x8a7d6a, 0.8);
   scene.add(hemi);
   const env = createSkyEnv(scene);
-  scene.fog = new THREE.Fog(0xbfe0f5, 180, 750);
+  scene.fog = new THREE.FogExp2(0xbfe0f5, 1.7320508 / TUNING.weather.visibility.clear); // weather.ts sets its density
   // one headlight for the player's car (cheap: a single spot light that follows whichever car you drive)
   const headlight = new THREE.SpotLight(0xfff2d0, 0, 60, 0.55, 0.5, 1.2);
   headlight.position.set(0, 0.4, 2);
@@ -116,7 +116,7 @@ export function updateDayNight(w: World, dt: number): void {
   s.hemi.intensity = THREE.MathUtils.lerp(LT.hemiDay, LT.hemiNight, s.night) * Math.min(1, hemiI * 1.2);
   s.hemi.color.copy(s.skyTop).lerp(ca.set(0xffffff), 0.5);
   s.sky.position.copy(w.camera.position);
-  (w.scene.fog as THREE.Fog).color.copy(s.skyHorizon);
+  (w.scene.fog as THREE.FogExp2).color.copy(s.skyHorizon);
   w.renderer.toneMappingExposure = THREE.MathUtils.lerp(LT.exposureDay, LT.exposureNight, s.night);
   w.scene.environmentIntensity = THREE.MathUtils.lerp(LT.envIntensityDay, LT.envIntensityNight, s.night);
 
@@ -154,10 +154,18 @@ export function attachLampLights(w: World, active: number): void {
   s.lamps.setActive(active);
 }
 
+const sunIrr = new THREE.Color();
+const skyIrr = new THREE.Color();
 /** After the weather has adjusted the light: point the sky and refresh the sky light if needed. */
 export function updateSky(w: World, force = false): void {
   const s = w.dayNight;
-  updateSkyEnv(s.env, w.renderer, w.scene, s.sunDir, w.weather ? w.weather.look.cloud : 0, s.night, s.daylight, w.time, force);
+  const cloud = w.weather ? w.weather.look.cloud : 0;
+  // the sun as it lights the city in the capture (by day; the moon lights nothing much)
+  if (s.sunDir.y > 0.02) sunIrr.copy(s.sun.color).multiplyScalar(s.sun.intensity); else sunIrr.setRGB(0, 0, 0);
+  // the sky's irradiance: a share of the noon sun, bluish in clear weather and grey under cloud, fading with the day
+  skyIrr.copy(s.skyTop).lerp(ca.setRGB(1, 1, 1), 0.35 + 0.4 * cloud)
+    .multiplyScalar(LT.sunIntensity * (LT.envSkyIrradiance * s.daylight * (1 - 0.35 * cloud) + LT.envSkyIrradianceNight * s.night));
+  updateSkyEnv(s.env, w.renderer, w.scene, s.sunDir, cloud, s.night, sunIrr, skyIrr, w.time, force);
 }
 
 export function formatClock(hour: number): string {

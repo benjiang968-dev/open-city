@@ -1,5 +1,6 @@
 // Pause menu: Esc / P (or losing the mouse lock) pauses the world. Resume, graphics quality, mute, controls,
 // and the map's attribution line in small print.
+import { CREDITS } from '../data/credits';
 import type { World } from '../world';
 import { applyQuality, QUALITIES, type Quality } from './settings';
 import { toggleMute } from './audio';
@@ -35,8 +36,10 @@ export function createPauseMenu(w: World): void {
         N weather · M mute · \` or F3 stats · F4 collision shapes · Esc or P pause
       </div>
       <div class="attrib"></div>
+      <div class="attrib credits"></div>
     </div>`;
   (root.querySelector('.attrib') as HTMLElement).textContent = w.city.attribution; // map credit (e.g. OpenStreetMap)
+  (root.querySelector('.credits') as HTMLElement).textContent = CREDITS.join(' · '); // asset credits (ASSET_SOURCES.md)
   document.getElementById('ui')!.appendChild(root);
   qualityBtns = Object.fromEntries(QUALITIES.map((k) => [k, root.querySelector(`#q-${k}`) as HTMLButtonElement])) as Record<Quality, HTMLButtonElement>;
   const descEl = root.querySelector('#q-desc') as HTMLElement;

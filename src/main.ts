@@ -46,6 +46,7 @@ import { createWeather, updateWeather, cycleWeather } from './systems/weather';
 import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtFx';
 import { createPhysDebug, physDebugKeys, updatePhysDebug } from './systems/physicsDebug';
 import { createLook, bakeLook } from './systems/render/look';
+import { fillMissingLayers, loadTextureLibrary } from './systems/render/texLibrary';
 import { warmDraw } from './systems/render/warmup';
 import { separateInstancedDepth } from './systems/render/shadowCasters';
 
@@ -85,11 +86,17 @@ async function boot() {
   w.dayNight = createDayNight(scene);
   // procedural PBR surface maps, baked on the GPU before any world material is built (render/texBake.ts)
   w.look = createLook(w.settings.quality);
-  bakeLook(w.look, renderer, w.settings.quality);
+  bakeLook(w.look, renderer, w.settings.quality, true);
+  // the photo texture sets load (fetch + off-thread decode) while the map is generated; awaited below
+  const library = loadTextureLibrary(w.look, renderer);
   applyQuality(w, w.settings.quality, true);
   const tMap = performance.now();
   w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality, w.look); // ?map= picks the map; the seed never does
   w.city.setQuality?.(w.settings.quality);
+  // the texture library is normally in by now; a slow network gets a bounded wait, then the procedural fallback (the
+  // photos still replace it when they arrive)
+  await Promise.race([library, new Promise((r) => setTimeout(r, TUNING.look.libraryWaitMs))]);
+  fillMissingLayers(w.look, renderer);
   attachLampLights(w, TUNING.quality[w.settings.quality].lampLights);
   const mapMs = performance.now() - tMap;
   w.weather = createWeather(w);

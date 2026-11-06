@@ -72,6 +72,10 @@ three files with their own licences (`src/data/georgetown.LICENSE.md`):
   source are left out);
 - `src/data/georgetown-buildings-ccby.json`: the building footprints that come from Esri Community Maps (CC BY 4.0).
 
+Asset credits: textures from ambientCG.com and cgbookcase.com (CC0 1.0). Every downloaded asset (source URL, author,
+licence, date, use, changes) is listed in `ASSET_SOURCES.md`; the credits are also in the pause menu
+(`src/data/credits.ts`).
+
 Real street, river, canal and park names are kept; business names never: places carry a category only and the game
 invents a name from `src/data/poiNames.ts`. Street furniture the data lacks (street trees on shopping streets, lamps,
 benches, bins, hydrants, woodland trees) is synthesized and flagged in the file.

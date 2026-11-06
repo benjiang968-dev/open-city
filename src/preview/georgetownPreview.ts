@@ -9,6 +9,7 @@ import { buildGeorgetownWorld, type GeoQuality, type GeoWorld } from '../systems
 import { loadGeoDoc } from '../systems/map/geoDoc';
 import type { World } from '../world';
 import { bakeLook, createLook } from '../systems/render/look';
+import { fillMissingLayers, loadTextureLibrary } from '../systems/render/texLibrary';
 import { createTexSheet } from '../systems/render/texSheet';
 import { warmDraw } from '../systems/render/warmup';
 
@@ -84,12 +85,14 @@ async function boot() {
   const seed = Number(params.get('seed') ?? TUNING.world.defaultSeed) || TUNING.world.defaultSeed;
   const dn = createDayNight(scene);
   const look = createLook(quality);
-  bakeLook(look, renderer, quality);
+  bakeLook(look, renderer, quality, true);
+  await loadTextureLibrary(look, renderer);
+  fillMissingLayers(look, renderer);
   const geo: GeoWorld = buildGeorgetownWorld(scene, RAPIER, physics, doc, { seed, quality, look });
   document.getElementById('loading')!.remove();
   const applyQ = (q: GeoQuality) => {
     geo.setQuality(q);
-    bakeLook(look, renderer, q);
+    if (bakeLook(look, renderer, q)) void loadTextureLibrary(look, renderer);
     const Q = TUNING.quality[q];
     const on = Q.shadows, size = Q.shadowMapSize;
     dn.sun.shadow.camera.far = Math.max(1, Q.shadowDistance);
@@ -134,9 +137,8 @@ async function boot() {
     camera.updateProjectionMatrix();
     setCam(px, gy + py, pz, lx, gl + ly, lz);
     hour = v.hour;
-    const fog = scene.fog as THREE.Fog;
-    fog.near = v.abs ? 2500 : 180;
-    fog.far = v.abs ? 6000 : 750;
+    const fog = scene.fog as THREE.FogExp2;
+    fog.density = 1.7320508 / (v.abs ? 9000 : TUNING.weather.visibility.clear);
   };
   setView(params.get('view') ?? 'aerial');
   if (params.get('hour')) hour = Number(params.get('hour'));
@@ -275,9 +277,8 @@ async function boot() {
       camera.fov = fov;
       camera.far = py > 300 ? 6000 : 1600;
       camera.updateProjectionMatrix();
-      const fog = scene.fog as THREE.Fog;
-      fog.near = py > 300 ? 2500 : 180;
-      fog.far = py > 300 ? 6000 : 750;
+      const fog = scene.fog as THREE.FogExp2;
+      fog.density = 1.7320508 / (py > 300 ? 9000 : TUNING.weather.visibility.clear);
       setCam(px, py, pz, lx, ly, lz);
     },
     perf: () => ({ ...perf, view: state.view, quality: geo.quality }),

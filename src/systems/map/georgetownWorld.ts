@@ -29,6 +29,7 @@ import { upgradePropMaterials } from '../render/propMaterials';
 import { createTreeLod } from '../render/trees';
 import { upgradeWater } from '../render/water';
 import { SURF, surf } from '../render/surfaces';
+import { fitDecals } from './decalFit';
 
 const G = TUNING.geo;
 
@@ -154,7 +155,7 @@ export interface GeoWorld {
   /** Ways left out of the render (to be removed from the graph): data ids with a reason. */
   omitted: { roadId: string; name: string; reason: string }[];
   /** Review data (optional): footprints cut back from streets / dropped, stoop bottoms (x, y, z, 0 per stoop). */
-  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array; stoopInfo: Float32Array };
+  audit?: { buildingsClipped: string[]; buildingsDropped: string[]; stoops: Float32Array; stoopInfo: Float32Array; decalFit?: { triangles: number; lifted: number; removed: number } };
   /** Data buildings left out of the world (they stood under a deck): no mesh, no collider. */
   droppedBuildings: ReadonlySet<string>;
   stats: { bootMs: number; phases: Record<string, number>; tris: number; meshes: number; colliders: number; trimeshTris: number; surfaceTris: number };
@@ -292,7 +293,8 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
 
   // ---------------------------------------------------------------- materials and chunk meshes
   const groundMat = makeWorldMaterial(look, { name: 'geo-ground', roughness: 0.93 });
-  const decalMat = makeWorldMaterial(look, { name: 'geo-decal', roughness: 0.85, decal: true });
+  const decalFade = { value: new THREE.Vector2(1e5, 2e5) };
+  const decalMat = makeWorldMaterial(look, { name: 'geo-decal', roughness: 0.85, decal: true, decalFade });
   const detailMat = makeWorldMaterial(look, { name: 'geo-detail', roughness: 0.8 });
   const mats: Record<Layer, THREE.Material> = { ground: groundMat, decal: decalMat, facade: facadeMat, detail: detailMat };
   const groups = new Map<number, ChunkGroup>();
@@ -342,6 +344,8 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   const surf = new SurfaceIndex([...phys.kept.get('ground')!, ...phys.kept.get('stair')!]);
   const deckSurf = new SurfaceIndex(phys.kept.get('deck')!); // bridge and freeway decks, footbridges
   phys.kept.clear();
+  // road paint fitted to the surfaces it lies on: no marking under (or a hair above) another road surface
+  const decalFit = fitDecals(groupList.map((g) => g.meshes.decal).filter((m): m is THREE.Mesh => !!m), surf, deckSurf);
   const pierIdx = buildDeckIndex(null, pierDecks); // the boardwalk piers (box colliders, not in the triangles)
   phase('physics');
 
@@ -410,6 +414,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   const setQuality = (q: GeoQuality) => {
     quality = q;
     const Q = GEO_QUALITY[q];
+    decalFade.value.set(Q.draw * TUNING.look.paintFade[0], Q.draw * TUNING.look.paintFade[1]);
     props.setTreeShare(Q.trees);
     treeLod.setRadius(TUNING.quality[q].treeNear);
     world.quality = q;
@@ -453,7 +458,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     water: { meshes: water.meshes, update: water.update },
     update, setQuality, quality,
     omitted,
-    audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops, stoopInfo: bld.stoopInfo },
+    audit: { buildingsClipped: clipped.clipped, buildingsDropped: clipped.drop, stoops: bld.stoops, stoopInfo: bld.stoopInfo, decalFit },
     droppedBuildings: dropped,
     stats: { bootMs: 0, phases, tris: tris + props.tris + bld.extraTris, meshes: meshCount, colliders: phys.colliders, trimeshTris, surfaceTris: surf.count },
     solidTags: phys.tags,

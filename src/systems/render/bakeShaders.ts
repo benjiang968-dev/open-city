@@ -22,6 +22,11 @@ uniform vec2 uSize;   // tile size in metres
 uniform int uMat;     // bake layer
 uniform int uPass;    // 0 albedo+tint, 1 height/roughness/ao
 uniform float uSeed;
+uniform float uTexel;  // metres per texel of the layer being baked
+
+/** Amplitude for a feature of size m (metres): fades out below ~2 texels, so no detail is finer than the bake can hold
+ * (sub-texel noise point-sampled per texel is what made the old asphalt and granite speckle). */
+float band(float m) { return smoothstep(1.5, 3.0, m / max(uTexel, 1e-5)); }
 
 uint ihash(uint x) { x ^= x >> 16; x *= 0x7feb352du; x ^= x >> 15; x *= 0x846ca68bu; x ^= x >> 16; return x; }
 float hash(vec2 p, int s) {
@@ -79,49 +84,51 @@ vec4 worley(vec2 uv, vec2 per, int s, float jit) {
 struct Mat { vec3 alb; float tint; float h; float rough; float ao; };
 
 // ------------------------------------------------------------------------------------------------ ground
+/**
+ * Procedural asphalt (the fallback for the photo set, render/texLibrary.ts): fine aggregate at low contrast. The old
+ * bake (pale 1-2 cm stones on near-black binder, 6.6:1, per-texel noise) read as salt and pepper at every distance;
+ * here stones differ from the binder by about 20 %, features under two texels fade out, and the interest is at the
+ * metre scale (tone, sealed cracks).
+ */
 Mat asphalt(vec2 uv) {
   float base = fbm(uv, cyc(0.6), 4, 1);
-  vec4 w = worley(uv, cyc(0.022), 2, 0.9);
-  float stone = smoothstep(0.46, 0.30, w.x);
-  vec4 w2 = worley(uv, cyc(0.009), 3, 0.9);
-  float grit = smoothstep(0.42, 0.25, w2.x) * step(0.55, w2.z);
-  float fine = gnoise(uv, cyc(0.004), 4);
-  vec3 binder = srgb(vec3(0.21, 0.21, 0.215));
-  vec3 stoneCol = mix(srgb(vec3(0.36, 0.35, 0.34)), srgb(vec3(0.60, 0.58, 0.55)), w.z);
-  vec3 alb = mix(binder, stoneCol, stone * (0.45 + 0.55 * w.z));
-  alb = mix(alb, srgb(vec3(0.5, 0.49, 0.47)), grit * 0.5);
-  alb *= (0.82 + 0.36 * base) * (0.9 + 0.2 * fine);
-  // crack networks (warped cell borders) only in places, and tar-sealed cracks elsewhere
+  vec4 w = worley(uv, cyc(0.012), 2, 0.9);
+  float stone = smoothstep(0.45, 0.28, w.x) * band(0.012);
+  float fine = (gnoise(uv, cyc(0.005), 4) - 0.5) * band(0.005);
+  vec3 binder = vec3(0.085, 0.085, 0.088);
+  vec3 alb = binder * (1.0 + stone * (0.12 + 0.18 * w.z) + 0.12 * fine);
+  alb *= 0.9 + 0.2 * base;
   vec2 warp = vec2(gnoise(uv, cyc(0.5), 5), gnoise(uv, cyc(0.5), 6)) - 0.5;
   vec4 c = worley(uv + warp * 0.06, cyc(1.3), 7, 0.9);
   float edge = c.y - c.x;
-  float crackZone = smoothstep(0.63, 0.74, fbm(uv, cyc(2.0), 3, 9));
-  float crack = (1.0 - smoothstep(0.0, 0.018, edge)) * crackZone * 0.75;
-  float sealZone = smoothstep(0.6, 0.68, fbm(uv, cyc(2.0), 2, 11)) * (1.0 - crackZone);
-  float seal = (1.0 - smoothstep(0.02, 0.07, edge)) * sealZone;
-  alb = mix(alb, srgb(vec3(0.12, 0.12, 0.125)), seal * 0.7);
-  alb = mix(alb, srgb(vec3(0.08, 0.08, 0.08)), crack);
-  float h = stone * 0.0025 * (0.4 + w.z) + grit * 0.0008 + fine * 0.0006 - crack * 0.004 + seal * 0.0005;
-  float rough = mix(0.93, 0.8, stone);
-  rough = mix(rough, 0.5, seal);
-  return Mat(alb, 1.0, h, rough, 1.0 - crack * 0.7 - (1.0 - stone) * 0.12);
+  float sealZone = smoothstep(0.6, 0.68, fbm(uv, cyc(2.0), 2, 11));
+  float seal = (1.0 - smoothstep(0.02, 0.06, edge)) * sealZone;
+  alb = mix(alb, vec3(0.05), seal * 0.6);
+  float h = stone * 0.0012 * (0.5 + w.z) + fine * 0.0003 + seal * 0.0004;
+  float rough = mix(0.9, 0.82, stone);
+  rough = mix(rough, 0.55, seal);
+  return Mat(alb, 1.0, h, rough, 1.0 - (1.0 - stone) * 0.06);
 }
 
+/**
+ * Road paint (thermoplastic): bright, faintly glossy, slightly uneven, with soft metre-scale wear where tyres cross it.
+ * Worn paint shows a calm asphalt tone (the asphalt layer's average), never the aggregate: the old paint mixed the
+ * speckled asphalt texture in and so carried its grain onto every marking. Edges stay the geometry's clean edges.
+ */
 Mat paint(vec2 uv) {
-  float wear = fbm(uv, cyc(0.35), 5, 21);
-  float speck = gnoise(uv, cyc(0.008), 22);
-  float scuff = fbm(uv, cyc(0.06), 3, 23);
-  float worn = smoothstep(0.6, 0.7, wear + 0.35 * (scuff - 0.5) + 0.12 * (speck - 0.5));
-  Mat a = asphalt(uv);
-  vec3 paintCol = srgb(vec3(0.86)) * (0.9 + 0.1 * speck);
-  // aggregate peeks through thin paint
-  paintCol = mix(paintCol, a.alb * 2.2, smoothstep(0.75, 0.95, scuff) * 0.35);
+  float wear = fbm(uv, cyc(0.5), 4, 21);
+  float scuff = fbm(uv, cyc(0.08), 3, 23);
+  float grain = (gnoise(uv, cyc(0.006), 22) - 0.5) * band(0.006);
+  float worn = smoothstep(0.6, 0.8, wear + 0.3 * (scuff - 0.5));
+  float thin = worn * (0.45 + 0.4 * scuff);
+  vec3 paintCol = srgb(vec3(0.84, 0.84, 0.82)) * (0.96 + 0.06 * (scuff - 0.5) + 0.05 * grain);
+  vec3 road = vec3(0.10, 0.10, 0.105) * (0.94 + 0.12 * scuff);
   Mat m;
-  m.alb = mix(paintCol, a.alb, worn);
-  m.tint = 1.0 - worn;
-  m.h = a.h * 0.6 + (1.0 - worn) * 0.0012;
-  m.rough = mix(0.62, a.rough, worn);
-  m.ao = mix(1.0, a.ao, worn);
+  m.alb = mix(paintCol, road, thin);
+  m.tint = 1.0 - thin;
+  m.h = (1.0 - thin) * 0.0008 + grain * 0.0002;
+  m.rough = mix(0.5, 0.86, thin);
+  m.ao = 1.0;
   return m;
 }
 
@@ -133,9 +140,9 @@ Mat concreteSlab(vec2 uv) {
   float groove = 1.0 - smoothstep(0.003, 0.009, edge);
   float tone = hash(mod(cell, 2.0), 31);
   float base = fbm(uv, cyc(0.4), 5, 32);
-  float grain = gnoise(uv, cyc(0.003), 33);
+  float grain = mix(0.5, gnoise(uv, cyc(0.003), 33), band(0.003));
   vec4 pores = worley(uv, cyc(0.012), 34, 1.0);
-  float pore = smoothstep(0.18, 0.08, pores.x) * step(0.7, pores.z);
+  float pore = smoothstep(0.18, 0.08, pores.x) * step(0.7, pores.z) * band(0.012);
   vec4 stains = worley(uv, cyc(0.5), 35, 1.0);
   float stain = smoothstep(0.35, 0.1, stains.x) * step(0.8, stains.z);
   vec4 gum = worley(uv, cyc(0.09), 36, 1.0);
@@ -168,17 +175,17 @@ Mat brickPaver(vec2 uv) {
   float e = min(dEdge.x, dEdge.y);
   float joint = 1.0 - smoothstep(0.0015, 0.004, e);
   float bevel = smoothstep(0.0, 0.012, e);
-  vec3 c = mix(srgb(vec3(0.56, 0.29, 0.21)), srgb(vec3(0.66, 0.38, 0.27)), r);
-  c = mix(c, srgb(vec3(0.38, 0.21, 0.17)), step(0.82, r2) * 0.8);
-  c = mix(c, srgb(vec3(0.5, 0.36, 0.3)), step(0.9, r3) * 0.6);
-  float sand = gnoise(uv, cyc(0.004), 44);
+  vec3 c = mix(srgb(vec3(0.57, 0.31, 0.23)), srgb(vec3(0.64, 0.37, 0.27)), r);
+  c = mix(c, srgb(vec3(0.42, 0.24, 0.19)), step(0.88, r2) * 0.5);
+  c = mix(c, srgb(vec3(0.52, 0.38, 0.31)), step(0.93, r3) * 0.4);
+  float sand = (gnoise(uv, cyc(0.004), 44) - 0.5) * band(0.004);
   float wear = fbm(uv, cyc(0.25), 4, 45);
-  c *= (0.86 + 0.24 * sand) * (0.85 + 0.3 * wear);
-  vec3 jointCol = srgb(vec3(0.42, 0.38, 0.32)) * (0.8 + 0.4 * sand);
+  c *= (1.0 + 0.14 * sand) * (0.9 + 0.2 * wear);
+  vec3 jointCol = srgb(vec3(0.42, 0.38, 0.32)) * (1.0 + 0.2 * sand);
   vec3 alb = mix(c, jointCol, joint);
   float tilt = dot(local - dims * 0.5, vec2(r2 - 0.5, r3 - 0.5)) * 0.0012;
   float h = (bevel * 0.004 + (r - 0.5) * 0.002 + tilt) * (1.0 - joint) + sand * 0.0003;
-  return Mat(alb, 1.0, h, mix(0.82, 0.95, joint) - wear * 0.06, mix(1.0, 0.55, joint));
+  return Mat(alb, 1.0, h, mix(0.82, 0.95, joint) - wear * 0.06, mix(1.0, 0.65, joint));
 }
 
 Mat granite(vec2 uv) {
@@ -186,8 +193,8 @@ Mat granite(vec2 uv) {
   vec4 g2 = worley(uv, cyc(0.0035), 52, 1.0);
   float base = fbm(uv, cyc(0.3), 4, 53);
   vec3 alb = srgb(vec3(0.6, 0.59, 0.57)) * (0.88 + 0.24 * base);
-  alb = mix(alb, srgb(vec3(0.16, 0.16, 0.17)), step(0.72, g1.z) * smoothstep(0.5, 0.3, g1.x));
-  alb = mix(alb, srgb(vec3(0.82, 0.8, 0.77)), step(0.7, g2.z) * smoothstep(0.5, 0.3, g2.x) * 0.8);
+  alb = mix(alb, srgb(vec3(0.3, 0.3, 0.31)), step(0.72, g1.z) * smoothstep(0.5, 0.3, g1.x) * band(0.006));
+  alb = mix(alb, srgb(vec3(0.74, 0.72, 0.7)), step(0.7, g2.z) * smoothstep(0.5, 0.3, g2.x) * 0.6 * band(0.0035));
   alb = mix(alb, srgb(vec3(0.66, 0.55, 0.52)), step(0.9, g1.w) * 0.35);
   float h = (g1.x * 0.0004 + base * 0.0008);
   return Mat(alb, 1.0, h, 0.62 + 0.12 * base, 1.0);
@@ -213,7 +220,7 @@ Mat sett(vec2 uv) {
   vec3 c = mix(srgb(vec3(0.42, 0.4, 0.38)), srgb(vec3(0.56, 0.52, 0.48)), r);
   c = mix(c, srgb(vec3(0.5, 0.42, 0.36)), step(0.75, r2) * 0.6);
   float grain = gnoise(uv, cyc(0.004), 66);
-  c *= 0.88 + 0.24 * grain;
+  c *= 1.0 + 0.2 * (grain - 0.5) * band(0.004);
   float polish = smoothstep(0.02, 0.05, e);
   vec3 alb = mix(c, srgb(vec3(0.24, 0.21, 0.18)), joint);
   float h = (dome * 0.012 + (r - 0.5) * 0.004) * (1.0 - joint) + grain * 0.0004;
@@ -229,8 +236,8 @@ Mat grass(vec2 uv) {
   float bare = smoothstep(0.35, 0.15, soilP.x) * step(0.85, soilP.z);
   vec3 green = mix(srgb(vec3(0.23, 0.33, 0.12)), srgb(vec3(0.33, 0.43, 0.17)), clump);
   green = mix(green, srgb(vec3(0.46, 0.45, 0.24)), dry * 0.6);
-  float b = max(blades, blades2);
-  green *= 0.7 + 0.55 * b;
+  float b = mix(0.5, max(blades, blades2), band(0.004));
+  green *= 0.75 + 0.45 * b;
   vec3 alb = mix(green, srgb(vec3(0.33, 0.27, 0.2)), bare * 0.7);
   float h = b * 0.006 + clump * 0.01 - bare * 0.004;
   return Mat(alb, 1.0, h, 0.93, 0.75 + 0.25 * b);
@@ -239,7 +246,7 @@ Mat grass(vec2 uv) {
 Mat soil(vec2 uv) {
   float base = fbm(uv, cyc(0.4), 5, 81);
   vec4 peb = worley(uv, cyc(0.025), 82, 1.0);
-  float pebble = smoothstep(0.38, 0.22, peb.x) * step(0.6, peb.z);
+  float pebble = smoothstep(0.38, 0.22, peb.x) * step(0.6, peb.z) * band(0.025);
   float damp = smoothstep(0.5, 0.7, fbm(uv, cyc(1.0), 3, 83));
   vec3 alb = mix(srgb(vec3(0.36, 0.28, 0.2)), srgb(vec3(0.46, 0.37, 0.27)), base);
   alb = mix(alb, mix(srgb(vec3(0.5, 0.48, 0.45)), srgb(vec3(0.62, 0.56, 0.48)), peb.w), pebble);
@@ -255,7 +262,7 @@ Mat gravel(vec2 uv) {
   vec3 c = mix(srgb(vec3(0.58, 0.53, 0.45)), srgb(vec3(0.74, 0.68, 0.58)), w.z);
   c = mix(c, srgb(vec3(0.5, 0.5, 0.5)), step(0.7, w.w) * 0.5);
   vec3 alb = mix(srgb(vec3(0.34, 0.3, 0.25)), c, peb);
-  alb *= 0.9 + 0.2 * smoothstep(0.4, 0.1, w2.x);
+  alb *= 0.9 + 0.2 * smoothstep(0.4, 0.1, w2.x) * band(0.008);
   float h = peb * (0.006 - w.x * 0.006) + smoothstep(0.4, 0.1, w2.x) * 0.0015;
   return Mat(alb, 1.0, h, 0.88, mix(0.6, 1.0, peb));
 }
@@ -267,7 +274,7 @@ Mat bark(vec2 uv) {
   float r2 = ridged(uv + warp * 1.5, cyc2(vec2(0.025, 0.15)), 103);
   float fiss = smoothstep(0.55, 0.95, r * 0.65 + r2 * 0.35);
   float lichen = smoothstep(0.62, 0.72, fbm(uv, cyc(0.25), 3, 104));
-  vec3 alb = mix(srgb(vec3(0.16, 0.13, 0.1)), srgb(vec3(0.38, 0.33, 0.28)), fiss);
+  vec3 alb = mix(srgb(vec3(0.23, 0.2, 0.16)), srgb(vec3(0.43, 0.38, 0.32)), fiss);
   alb = mix(alb, srgb(vec3(0.45, 0.48, 0.38)), lichen * 0.5);
   float h = fiss * 0.012 + r2 * 0.003;
   return Mat(alb, 1.0, h, 0.95, mix(0.55, 1.0, fiss));
@@ -305,7 +312,7 @@ Mat wood(vec2 uv) {
   float u = fract(uv.x * joints + hash(vec2(row, 1.0), 122));
   float gap = 1.0 - smoothstep(0.02, 0.06, min(fy, 1.0 - fy));
   float butt = 1.0 - smoothstep(0.002, 0.006, min(u, 1.0 - u) * uSize.x / joints);
-  float grain = gnoise(vec2(uv.x, uv.y), cyc2(vec2(0.5, 0.006)), 123);
+  float grain = mix(0.5, gnoise(vec2(uv.x, uv.y), cyc2(vec2(0.5, 0.006)), 123), band(0.006));
   float knots = smoothstep(0.15, 0.05, worley(uv, cyc(0.4), 124, 1.0).x);
   float weather = fbm(uv, cyc(0.5), 3, 125);
   vec3 c = mix(srgb(vec3(0.45, 0.34, 0.24)), srgb(vec3(0.56, 0.45, 0.34)), r);
@@ -319,19 +326,19 @@ Mat wood(vec2 uv) {
 
 // ------------------------------------------------------------------------------------------------ metal, concrete, stone
 Mat metalPaint(vec2 uv) {
-  float peel = gnoise(uv, cyc(0.01), 131);
+  float peel = mix(0.5, gnoise(uv, cyc(0.01), 131), band(0.01));
   float scr = smoothstep(0.985, 1.0, ridged(uv, cyc2(vec2(0.3, 0.02)), 132));
   vec4 rs = worley(uv, cyc(0.12), 133, 1.0);
-  float rust = smoothstep(0.3, 0.1, rs.x) * step(0.92, rs.z);
+  float rust = smoothstep(0.3, 0.1, rs.x) * step(0.975, rs.z) * 0.7;
   vec3 alb = srgb(vec3(0.184, 0.196, 0.212)) * (0.95 + 0.1 * peel);
   alb = mix(alb, alb * 1.8, scr * 0.5);
-  alb = mix(alb, srgb(vec3(0.35, 0.18, 0.1)), rust);
+  alb = mix(alb, srgb(vec3(0.32, 0.22, 0.16)), rust);
   return Mat(alb, 1.0 - rust, peel * 0.0002 - rust * 0.0005, 0.42 + 0.3 * rust, 1.0);
 }
 
 Mat metalBare(vec2 uv) {
   vec4 sp = worley(uv, cyc(0.02), 141, 1.0);
-  float brush = gnoise(uv, cyc2(vec2(0.3, 0.002)), 142);
+  float brush = mix(0.5, gnoise(uv, cyc2(vec2(0.3, 0.002)), 142), band(0.002));
   vec3 alb = srgb(vec3(0.62, 0.63, 0.64)) * (0.88 + 0.16 * sp.z) * (0.95 + 0.1 * brush);
   return Mat(alb, 1.0, brush * 0.0001, 0.3 + 0.18 * sp.z, 1.0);
 }
@@ -340,7 +347,7 @@ Mat concrete(vec2 uv) {
   float base = fbm(uv, cyc(0.5), 5, 151);
   float mott = fbm(uv, cyc(0.08), 3, 152);
   vec4 p = worley(uv, cyc(0.01), 153, 1.0);
-  float pore = smoothstep(0.2, 0.08, p.x) * step(0.75, p.z);
+  float pore = smoothstep(0.2, 0.08, p.x) * step(0.75, p.z) * band(0.01);
   // formwork panel joints every 1.33 m (v) and tie holes on a 0.66 m grid
   float fv = fract(uv.y * 3.0);
   float joint = 1.0 - smoothstep(0.001, 0.004, min(fv, 1.0 - fv) * uSize.y / 3.0);
@@ -387,9 +394,9 @@ vec3 brickFace(vec2 id, float burnt, vec2 uv, out float hb) {
   c = mix(c, srgb(vec3(0.42, 0.2, 0.16)), step(0.8, r2) * 0.85);
   c = mix(c, srgb(vec3(0.7, 0.42, 0.3)), step(0.92, r3) * 0.7);
   c = mix(c, srgb(vec3(0.24, 0.15, 0.14)), burnt * (0.6 + 0.3 * r));
-  float sand = gnoise(uv, cyc(0.003), 174);
+  float sand = (gnoise(uv, cyc(0.003), 174) - 0.5) * band(0.003);
   float blot = fbm(uv, cyc(0.05), 2, 175);
-  c *= (0.84 + 0.26 * sand) * (0.9 + 0.2 * blot);
+  c *= (1.0 + 0.18 * sand) * (0.9 + 0.2 * blot);
   hb = sand * 0.0005 + (r - 0.5) * 0.001;
   return c;
 }
@@ -429,14 +436,14 @@ Mat brickWall(vec2 uv, int bond, bool painted) {
   float bevel = smoothstep(j * 0.5, j * 0.5 + 0.004, e);
   float hb;
   vec3 b = brickFace(id, burnt, uv, hb);
-  float mg = gnoise(uv, cyc(0.002), 177);
-  vec3 mortarCol = srgb(vec3(0.66, 0.63, 0.57)) * (0.85 + 0.25 * mg);
+  float mg = (gnoise(uv, cyc(0.002), 177) - 0.5) * band(0.002);
+  vec3 mortarCol = srgb(vec3(0.66, 0.63, 0.57)) * (1.0 + 0.2 * mg);
   float soot = fbm(uv, cyc(0.6), 3, 178);
   Mat o;
   if (painted) {
     float paintVar = fbm(uv, cyc(0.15), 3, 179);
     vec4 chip = worley(uv, cyc(0.12), 180, 1.0);
-    float peel = smoothstep(0.25, 0.15, chip.x) * step(0.9, chip.z) * (1.0 - mortar);
+    float peel = smoothstep(0.25, 0.15, chip.x) * step(0.975, chip.z) * (1.0 - mortar) * 0.6;
     vec3 paintCol = srgb(vec3(0.86, 0.85, 0.82)) * (0.92 + 0.1 * paintVar) * mix(1.0, 0.8, mortar);
     o.alb = mix(paintCol, b, peel);
     o.tint = 1.0 - peel;
@@ -456,7 +463,7 @@ Mat brickWall(vec2 uv, int bond, bool painted) {
 Mat stucco(vec2 uv) {
   vec2 warp = vec2(gnoise(uv, cyc(0.4), 191), gnoise(uv, cyc(0.4), 192)) - 0.5;
   float trowel = fbm(uv + warp * 0.08, cyc(0.15), 4, 193);
-  float grain = gnoise(uv, cyc(0.002), 194);
+  float grain = mix(0.5, gnoise(uv, cyc(0.002), 194), band(0.002));
   vec4 c = worley(uv, cyc(0.7), 195, 1.0);
   float crack = (1.0 - smoothstep(0.0, 0.015, c.y - c.x)) * smoothstep(0.7, 0.8, fbm(uv, cyc(1.5), 2, 196));
   vec3 alb = srgb(vec3(0.84, 0.83, 0.8)) * (0.9 + 0.1 * trowel) * (0.95 + 0.08 * grain);
@@ -468,7 +475,7 @@ Mat stucco(vec2 uv) {
 Mat clapboard(vec2 uv) {
   float n = max(1.0, floor(uSize.y / 0.15 + 0.5));
   float row = floor(uv.y * n), fy = fract(uv.y * n);
-  float grain = gnoise(uv, cyc2(vec2(0.6, 0.004)), 201);
+  float grain = mix(0.5, gnoise(uv, cyc2(vec2(0.6, 0.004)), 201), band(0.004));
   float r = hash(vec2(row, 0.0), 202);
   vec3 alb = srgb(vec3(0.85, 0.84, 0.81)) * (0.94 + 0.06 * r) * (0.95 + 0.08 * grain);
   float lip = 1.0 - smoothstep(0.0, 0.08, fy);
@@ -489,7 +496,7 @@ Mat slate(vec2 uv) {
   float fx = fract(x);
   float side = 1.0 - smoothstep(0.0, 0.012, min(fx, 1.0 - fx));
   float lip = 1.0 - smoothstep(0.0, 0.05, fy);
-  float grain = gnoise(uv, cyc2(vec2(0.01, 0.03)), 213);
+  float grain = mix(0.5, gnoise(uv, cyc2(vec2(0.01, 0.03)), 213), band(0.01));
   vec3 c = mix(srgb(vec3(0.22, 0.24, 0.27)), srgb(vec3(0.33, 0.35, 0.38)), r);
   c = mix(c, srgb(vec3(0.3, 0.26, 0.24)), step(0.85, r2) * 0.6);
   c *= 0.9 + 0.15 * grain;
@@ -510,7 +517,7 @@ Mat metalSeam(vec2 uv) {
 }
 
 Mat roofTar(vec2 uv) {
-  float speck = gnoise(uv, cyc(0.005), 231);
+  float speck = mix(0.5, gnoise(uv, cyc(0.005), 231), band(0.005));
   float base = fbm(uv, cyc(0.6), 4, 232);
   float fv = fract(uv.y * 4.0);
   float lap = 1.0 - smoothstep(0.0, 0.01, fv * uSize.y / 4.0);
@@ -518,7 +525,7 @@ Mat roofTar(vec2 uv) {
   // repair patches: rare and faint, because any distinct shape repeats with the 4 m tile (dark ones read as a lattice of
   // oval pairs across every flat roof from the air)
   float pat = step(0.92, pt.z) * smoothstep(0.42, 0.3, pt.x);
-  vec3 alb = srgb(vec3(0.45, 0.44, 0.42)) * (0.8 + 0.35 * speck) * (0.85 + 0.3 * base);
+  vec3 alb = srgb(vec3(0.45, 0.44, 0.42)) * (0.9 + 0.2 * speck) * (0.88 + 0.24 * base);
   alb = mix(alb, srgb(vec3(0.3, 0.3, 0.3)), pat * 0.25);
   alb *= 1.0 - 0.3 * lap;
   float h = speck * 0.0015 + base * 0.003 + lap * 0.002 + pat * 0.0005;
@@ -528,7 +535,7 @@ Mat roofTar(vec2 uv) {
 Mat canvas(vec2 uv) {
   vec2 n = cyc(0.003);
   vec2 x = uv * n;
-  float weave = 0.5 + 0.25 * (sin(x.x * 6.2831853) * sign(sin(x.y * 3.14159)) + sin(x.y * 6.2831853) * sign(sin(x.x * 3.14159)));
+  float weave = 0.5 + 0.25 * band(0.003) * (sin(x.x * 6.2831853) * sign(sin(x.y * 3.14159)) + sin(x.y * 6.2831853) * sign(sin(x.x * 3.14159)));
   float dirt = fbm(uv, cyc(0.3), 3, 241);
   vec3 alb = srgb(vec3(0.84)) * (0.88 + 0.12 * weave) * (0.9 + 0.1 * dirt);
   return Mat(alb, 1.0, weave * 0.0004, 0.9, 1.0);
@@ -633,6 +640,45 @@ void main() {
   float dy = ((tl + 2.0 * t + tr) - (bl + 2.0 * b + br)) / (8.0 * texel.y);
   vec3 n = normalize(vec3(-dx, -dy, 1.0));
   gl_FragColor = vec4(n.xy * 0.5 + 0.5, c.g, c.b);
+}`;
+
+/**
+ * Photo layers (render/texLibrary.ts): one CC0 PBR set resampled into a bake layer. Pass 0 writes albedo (re-centred on
+ * the set's mean colour, contrast scaled around it) and the tint mask; pass 1 writes normal xy, roughness and a cavity
+ * occlusion (mortar joints of brick sets). The sources are mipmapped, so textureLod at log2(source / layer) is an exact
+ * box downsample (no aliasing at Low's 256 px), and their 1x1 level is the image's average colour.
+ */
+export const PHOTO_FRAG = FRAG_OUT + /* glsl */ `
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uCol;
+uniform sampler2D uNrm;
+uniform sampler2D uRgh;
+uniform vec3 uLod;       // source mip level for colour, normal, roughness
+uniform vec4 uMean;      // target average colour (linear), w = 1 to use it, 0 to keep the photographed average
+uniform float uContrast;
+uniform float uNormal;
+uniform vec2 uRough;     // roughness scale, offset
+uniform int uTint;       // 0 none, 1 all, 2 brick faces only
+uniform int uPass;
+float brickMask(vec3 c) {
+  float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+  return smoothstep(0.3, 0.55, (mx - mn) / max(mx, 1e-4));
+}
+void main() {
+  vec3 c = textureLod(uCol, vUv, uLod.x).rgb;
+  if (uPass == 0) {
+    vec3 m = textureLod(uCol, vec2(0.5), 16.0).rgb;
+    vec3 rel = mix(vec3(1.0), c / max(m, vec3(1e-4)), uContrast);
+    vec3 alb = clamp(mix(m, uMean.rgb, uMean.w) * rel, 0.0, 1.0);
+    float tint = uTint == 0 ? 0.0 : uTint == 2 ? brickMask(c) : 1.0;
+    gl_FragColor = vec4(alb, tint);
+  } else {
+    vec2 xy = (textureLod(uNrm, vUv, uLod.y).rg * 2.0 - 1.0) * uNormal;
+    float r = clamp(textureLod(uRgh, vUv, uLod.z).r * uRough.x + uRough.y, 0.02, 1.0);
+    float ao = uTint == 2 ? mix(0.62, 1.0, brickMask(c)) : 1.0;
+    gl_FragColor = vec4(clamp(xy * 0.5 + 0.5, 0.0, 1.0), r, ao);
+  }
 }`;
 
 /** Macro variation texture: R/G large-scale tone fields, B puddle field, A grime field (periodic). */

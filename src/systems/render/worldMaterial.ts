@@ -6,6 +6,7 @@
 import * as THREE from 'three';
 import type { Look } from './look';
 import { TUNING } from '../../tuning';
+import { LAYER, SURF } from './surfaces';
 
 /** Vertex additions: world position and normal, surface id. */
 export const OC_VERT_PARS = /* glsl */ `
@@ -30,6 +31,7 @@ export const OC_VERT_MAIN = /* glsl */ `
 /** Fragment declarations and the surface sampler shared by the world and facade materials. */
 export const OC_FRAG_PARS = /* glsl */ `
 #define OC_SKY_SAT ${TUNING.look.skyDiffuseSaturation.toFixed(3)}
+#define OC_SHADE_TINT vec3(${TUNING.look.shadeTint.map((v) => v.toFixed(3)).join(', ')})
 uniform highp sampler2DArray uAlbTex;
 uniform highp sampler2DArray uNrmTex;
 uniform sampler2D uMacro;
@@ -41,6 +43,10 @@ uniform float uSkyDiffuse;
 flat varying float vSurf;
 varying vec3 vOcP;
 varying vec3 vOcN;
+
+/** Indirect diffuse light (shade): partly desaturated toward a slightly warm neutral, for the inter-reflections between
+ * sunlit facades and pavement that the capture's generic city does not hold. */
+vec3 ocShade(vec3 c) { return mix(vec3(dot(c, vec3(0.2126, 0.7152, 0.0722))) * OC_SHADE_TINT, c, OC_SKY_SAT); }
 
 struct OcOut { vec3 alb; float rough; float metal; vec3 nW; float ao; float alpha; vec2 wuv; float up; };
 
@@ -175,12 +181,24 @@ const LEAF_LIGHTS: string | null = (() => {
   return `vec3 ocLeafT = diffuseColor.rgb * vec3(0.9, 1.0, 0.55) * ${T.leafTranslucency.toFixed(3)};\n` + src.slice(0, k) + add + src.slice(k);
 })();
 
+/** Road paint fades into the road's average colour and roughness with distance (decal materials with decalFade). */
+const DECAL_FADE = /* glsl */ `
+if (int(vSurf + 0.5) == ${SURF.PAINT}) {
+  float ocFd = smoothstep(uDecalFade.x, uDecalFade.y, distance(cameraPosition, vOcP));
+  vec3 ocRoad = textureLod(uAlbTex, vec3(0.5, 0.5, ${LAYER.asphalt}.0), 12.0).rgb;
+  diffuseColor.rgb = mix(diffuseColor.rgb, ocRoad, ocFd);
+  ocS.rough = mix(ocS.rough, 0.9, ocFd);
+}`;
+
 export interface WorldMatOptions {
   name: string;
   roughness?: number;
   metalness?: number;
   /** Decals (road paint, path ribbons): drawn over the ground with a polygon offset. */
   decal?: boolean;
+  /** Decals: road paint fades into the asphalt between x and y metres from the camera (no pop where the decal chunks
+   * stop being drawn, and no shimmer of sub-pixel lines far away). */
+  decalFade?: THREE.IUniform<THREE.Vector2>;
   /** Foliage cards: alpha cut-out from the leaf texture, both sides. */
   foliage?: boolean;
   /** Instanced far trees: instances within `radius` of `centre` (xz) are not drawn (detailed trees stand there). */
@@ -197,11 +215,12 @@ export function makeWorldMaterial(look: Look, o: WorldMatOptions): THREE.MeshSta
   // leaf cards: soft cut-out edges with MSAA (alpha to coverage), a hard 0.5 cut without it
   if (o.foliage) { mat.alphaTest = 0.5; mat.alphaToCoverage = true; }
   mat.name = o.name;
-  const key = `oc-world-1-${o.foliage ? 'f' : 's'}${o.hideNear ? 'h' : ''}`;
+  const key = `oc-world-1-${o.foliage ? 'f' : 's'}${o.hideNear ? 'h' : ''}${o.decalFade ? 'd' : ''}`;
   mat.customProgramCacheKey = () => key;
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, look.uniforms);
     if (o.hideNear) { sh.uniforms.uNearCentre = o.hideNear.centre; sh.uniforms.uNearRadius = o.hideNear.radius; }
+    if (o.decalFade) sh.uniforms.uDecalFade = o.decalFade;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>\n${OC_VERT_PARS}${o.hideNear ? '\nuniform vec3 uNearCentre;\nuniform float uNearRadius;' : ''}${o.foliage ? '\nattribute vec2 aCard;\nvarying vec2 vCard;' : ''}`)
       .replace('#include <worldpos_vertex>', `#include <worldpos_vertex>\n${OC_VERT_MAIN}${o.foliage ? '\nvCard = aCard;' : ''}`);
@@ -214,7 +233,7 @@ export function makeWorldMaterial(look: Look, o: WorldMatOptions): THREE.MeshSta
 }
 #endif`);
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\n${OC_FRAG_PARS}${o.foliage ? '\nvarying vec2 vCard;' : ''}`)
+      .replace('#include <common>', `#include <common>\n${OC_FRAG_PARS}${o.foliage ? '\nvarying vec2 vCard;' : ''}${o.decalFade ? '\nuniform vec2 uDecalFade;' : ''}`)
       .replace('#include <map_fragment>', /* glsl */ `
 vec3 ocNg = normalize(vOcN);
 ${o.foliage ? '' : '#ifdef DOUBLE_SIDED\n  ocNg *= gl_FrontFacing ? 1.0 : -1.0;\n#endif'}
@@ -225,14 +244,14 @@ ${o.foliage ? '' : '#ifdef DOUBLE_SIDED\n  ocNg *= gl_FrontFacing ? 1.0 : -1.0;\
 #endif
 OcOut ocS = ocSurface(int(vSurf + 0.5), ocNg, ocVc, roughness, metalness);
 diffuseColor.rgb *= ocS.alb;
-${o.foliage ? FOLIAGE_ALPHA : ''}`)
+${o.foliage ? FOLIAGE_ALPHA : ''}${o.decalFade ? DECAL_FADE : ''}`)
       .replace('#include <color_fragment>', '')
       .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = clamp(ocS.rough, 0.03, 1.0);')
       .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = ocS.metal;')
       .replace('#include <normal_fragment_maps>', o.foliage ? FOLIAGE_NORMAL : 'normal = normalize((viewMatrix * vec4(ocS.nW, 0.0)).xyz);')
       .replace('#include <aomap_fragment>', /* glsl */ `
 reflectedLight.indirectDiffuse *= ocS.ao * uSkyDiffuse;
-reflectedLight.indirectDiffuse = mix(vec3(dot(reflectedLight.indirectDiffuse, vec3(0.2126, 0.7152, 0.0722))), reflectedLight.indirectDiffuse, OC_SKY_SAT);
+reflectedLight.indirectDiffuse = ocShade(reflectedLight.indirectDiffuse);
 reflectedLight.indirectSpecular *= ocS.ao${o.foliage ? ` * ${TUNING.look.leafSkyReflection.toFixed(3)}` : ''};
 reflectedLight.directDiffuse *= mix(1.0, ocS.ao, 0.5);`);
     if (o.foliage && LEAF_LIGHTS) sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_begin>', LEAF_LIGHTS);

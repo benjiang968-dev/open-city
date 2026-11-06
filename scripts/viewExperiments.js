@@ -93,10 +93,10 @@ window.__vsApply = () => {
   if (variant === 'env0' || variant === 'onlysun') w.scene.environmentIntensity = 0;
   if (variant === 'hemi0' || variant === 'onlysun') dn.hemi.intensity = 0;
   if (variant === 'sun0') dn.sun.intensity = 0;
-  if (variant === 'nofog') { w.scene.fog.near = 1e5; w.scene.fog.far = 1e6; }
+  if (variant === 'nofog') { w.scene.fog.near = 1e5; w.scene.fog.far = 1e6; if ('density' in w.scene.fog) w.scene.fog.density = 0; }
   if (variant === 'skydiff1') look.uniforms.uSkyDiffuse.value = 1;
   if (dn.sun.shadow && 'intensity' in dn.sun.shadow) dn.sun.shadow.intensity = variant === 'noshadow' ? 0 : 1;
-  window.__vsLight = { exposure: r.toneMappingExposure, toneMapping: r.toneMapping, env: w.scene.environmentIntensity, sun: dn.sun.intensity, sunColor: dn.sun.color.getHexString(), hemi: dn.hemi.intensity, hemiSky: dn.hemi.color.getHexString(), hemiGround: dn.hemi.groundColor.getHexString(), skyDiffuse: look.uniforms.uSkyDiffuse.value, fog: [w.scene.fog.near, w.scene.fog.far, w.scene.fog.color.getHexString()] };
+  window.__vsLight = { exposure: r.toneMappingExposure, toneMapping: r.toneMapping, env: w.scene.environmentIntensity, sun: dn.sun.intensity, sunColor: dn.sun.color.getHexString(), hemi: dn.hemi.intensity, hemiSky: dn.hemi.color.getHexString(), hemiGround: dn.hemi.groundColor.getHexString(), skyDiffuse: look.uniforms.uSkyDiffuse.value, fog: [w.scene.fog.near, w.scene.fog.far, w.scene.fog.density, w.scene.fog.color.getHexString()] };
 };
 if (variant === 'texinfo') {
   const r = w.renderer, gl = r.getContext();

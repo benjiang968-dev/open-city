@@ -58,11 +58,10 @@ function refreshCamera(w: World, P: TrafficPopulation): void {
   const halfV = THREE.MathUtils.degToRad(cam.fov) / 2;
   const halfH = Math.atan(Math.tan(halfV) * cam.aspect);
   P.cosView = Math.cos(Math.min(Math.PI / 2, Math.max(halfV, halfH) + TT.spawnViewMargin));
-  const fog = w.scene.fog as THREE.Fog | null;
-  P.viewDist = fog && 'far' in fog ? fog.far : cam.far;
+  P.viewDist = w.weather ? w.weather.viewDist : cam.far;
 }
 
-/** Could the camera see a car at (x, y, z)? (inside the view cone, nearer than the fog's far end; occlusion ignored) */
+/** Could the camera see a car at (x, y, z)? (inside the view cone, nearer than the weather's view distance; occlusion ignored) */
 export function inView(P: TrafficPopulation, x: number, y: number, z: number): boolean {
   const dx = x - P.cx, dy = y + 1 - P.cy, dz = z - P.cz;
   const d = Math.sqrt(dx * dx + dy * dy + dz * dz);

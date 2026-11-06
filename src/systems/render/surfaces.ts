@@ -72,8 +72,12 @@ export const BAKE_LAYERS = [
 export type BakeLayer = (typeof BAKE_LAYERS)[number];
 export const LAYER = Object.fromEntries(BAKE_LAYERS.map((n, i) => [n, i])) as Record<BakeLayer, number>;
 
-/** Brick module (US standard 203 x 57 mm brick + 10 mm joint) and the bond tiles built from it (texBake.ts). */
-export const BRICK = { len: 0.213, course: 0.067, header: 0.102 };
+/**
+ * Brick module: a 215 x 65 mm brick (102.5 mm wide) with 10 mm joints, close to the hand-made bricks of Federal-era
+ * Georgetown (about 8 1/4 x 2 1/2 in). The procedural bonds (bakeShaders.ts) and the photo brick sets (data/
+ * textureSets.ts, measured in courses and bricks per image) are all laid out on it, so every wall has the same brick.
+ */
+export const BRICK = { len: 0.225, course: 0.075, header: 0.1125 };
 
 export interface SurfaceDef {
   id: number;
