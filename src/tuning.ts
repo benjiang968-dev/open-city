@@ -659,7 +659,7 @@ const RAW = {
 
   interiors: {
     // which buildings get a real doorway and an interior (systems/interiors/): 'pilot' = only pilotIds (the Stage C
-    // house and shop), 'all' = every building a template can plan (Stage D; ?interiors=all tries it)
+    // house and shop), 'all' = every building a template can plan (Stage D: set here; nothing else changes)
     scope: 'pilot' as 'pilot' | 'all',
     pilotIds: ['b23e0ce279d85', 'be01bab3a0eeb'], // Georgetown data ids: the rowhouse on the 3400 block and the M St shop
     buildRadius: 32, // m from a door (on foot) at which a building's interior is built (before you can reach the door)
@@ -697,13 +697,18 @@ const RAW = {
     doorFacing: 0.25, // how directly you must face it (dot product)
     doorSwingSpeed: 2.4, // rad/s a door swings
     doorOpenAngle: 1.62, // rad a door opens to (a little past square)
+    doorClearance: 0.09, // m: a swinging leaf stops this far from the player or a loose item (more than the character
+    // controller's 0.04 m skin, so a door that stopped next to you never leaves you stuck against it)
     // stairs
     stairWidth: 1.05, // m (house); shops and offices use stairWidthWide
     stairWidthWide: 1.2,
     stairRun: 0.24, // m per tread (a 3.3 m storey: 16 risers of 0.21 m, 15 treads, 3.6 m of run, 42 degrees)
     stairRiseMax: 0.21, // m per riser at most
     stairLanding: 0.9, // m clear landing at the foot and head of a flight
-    stairHeadroom: 2.05, // m clear above the treads under the slab above (the hole in the slab starts there)
+    // headroom over a flight: a standing player needs this much clear above the ramp line (capsule 1.8 m + skin + the
+    // capsule riding 0.14 m above a 42 degree ramp + half a riser), and the slab edge must be this far behind its head
+    stairHeadroom: 2.15,
+    stairHeadBack: 0.4,
     railHeight: 1.0, // m: balustrade round a stairwell on the floor above
     // house plan (side hall)
     hallWidth: 1.25, // m: the hall and stair band on the door side
@@ -717,7 +722,7 @@ const RAW = {
     itemSlotJitter: 0.03, // m of placement variation of items on a shelf (from the seed)
     // the camera indoors
     cameraDistance: 2.6, // m orbit distance inside a building (rooms are 3-5 m across)
-    cameraMinDistance: 0.5, // m: how close a wall may pull the camera in indoors
+    cameraHidePlayer: 0.8, // m: indoors, a camera pulled closer than this to the player's head hides the player
     saveDebounce: 2, // s after a pickup, drop or door before the autosave writes
     autosaveEvery: 60, // s between autosaves while something changed
   },

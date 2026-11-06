@@ -85,10 +85,22 @@ export function updateCamera(w: World, dt: number): void {
   const R = w.R;
   const ray = new R.Ray({ x: c.focus.x, y: c.focus.y, z: c.focus.z }, { x: tmp.x, y: tmp.y, z: tmp.z });
   const hit = w.physics.castRay(ray, dist, true, R.QueryFilterFlags.EXCLUDE_DYNAMIC | R.QueryFilterFlags.EXCLUDE_KINEMATIC);
-  if (hit) dist = Math.max(indoor ? TUNING.interiors.cameraMinDistance : 1.2, hit.timeOfImpact - (indoor ? 0.2 : 0.3));
+  if (hit) dist = indoor ? Math.max(0.05, hit.timeOfImpact - 0.2) : Math.max(1.2, hit.timeOfImpact - 0.3);
   cam.position.copy(c.focus).addScaledVector(tmp, dist);
-  const floor = w.city.heightAt(cam.position.x, cam.position.z, cam.position.y) + 0.4;
-  if (cam.position.y < floor) cam.position.y = floor;
+  // indoors a wall can pull the camera into the player's head: hide the player then (seen from their own eyes)
+  const pl = w.player;
+  if (!veh && !pl.dead) { const show = !(indoor && dist < TUNING.interiors.cameraHidePlayer); if (pl.mesh.visible !== show) pl.mesh.visible = show; }
+  if (indoor) {
+    // indoors the ray already stops at walls and floors; keep the camera under the ceiling of the floor you are on (a
+    // stairwell would otherwise let it rise into the room above)
+    const L = w.interiors.inside!.plan.levels, feet = target.y;
+    let k = 0;
+    for (let i = L.length - 1; i >= 0; i--) if (L[i].y <= feet + 0.3) { k = i; break; }
+    if (cam.position.y > L[k].ceil - 0.2) cam.position.y = L[k].ceil - 0.2;
+  } else {
+    const floor = w.city.heightAt(cam.position.x, cam.position.z, cam.position.y) + 0.4;
+    if (cam.position.y < floor) cam.position.y = floor;
+  }
   cam.lookAt(c.focus);
   const sway = injurySway(w);
   if (sway) cam.rotateZ(sway);

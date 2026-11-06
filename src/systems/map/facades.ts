@@ -19,6 +19,7 @@ import { planInterior } from '../interiors/templates';
 
 // ----------------------------------------------------------------------------------------- art constants
 const STOREY = 3.2; // m
+const DOOR_TRANSOM = 0.45; // m: the glazed transom light over a house front door (art, not gameplay)
 const PARAPET = 0.7; // m of wall above the top floor on flat roofs
 const WEST_END_X = 380;
 const hx = (h: number) => facadeColour(h); // packed linear, tagged with the wall / roof surface (render/palette.ts)
@@ -504,9 +505,26 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     // door case proud of the wall (architrave and head)
     const cw = d.style === 'house' ? 0.14 : 0.07, out = 0.04;
     const [cmx, cmz] = Pw(d.s, -out / 2);
-    grd.obox(cmx - w.ux * (d.width / 2 + cw / 2), y0, cmz - w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yH + cw, w.ux, w.uz, rc);
-    grd.obox(cmx + w.ux * (d.width / 2 + cw / 2), y0, cmz + w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yH + cw, w.ux, w.uz, rc);
-    grd.obox(cmx, yH, cmz, d.width / 2 + cw, out / 2 + (d.style === 'house' ? 0.03 : 0), yH + cw + (d.style === 'house' ? 0.06 : 0), w.ux, w.uz, rc);
+    if (d.style === 'house') {
+      // Federal door case like the painted ones next door: pilasters, a transom light over the door, an entablature
+      const yT = Math.min(yH + DOOR_TRANSOM, yG - 0.3);
+      grd.obox(cmx - w.ux * (d.width / 2 + cw / 2), y0, cmz - w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yT + 0.04, w.ux, w.uz, rc);
+      grd.obox(cmx + w.ux * (d.width / 2 + cw / 2), y0, cmz + w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yT + 0.04, w.ux, w.uz, rc);
+      grd.obox(cmx, yH - 0.01, cmz, d.width / 2, out / 2, yH + 0.05, w.ux, w.uz, rc); // transom bar over the leaf
+      const [g0x, g0z] = Pw(sL, -0.006), [g1x, g1z] = Pw(sR, -0.006);
+      const glassC = lin(0x1e2a33);
+      grd.quad(g0x, yH + 0.05, g0z, g1x, yH + 0.05, g1z, g1x, yT, g1z, g0x, yT, g0z, glassC, w.nx, 0, w.nz);
+      for (const f of [-0.25, 0, 0.25]) {
+        const [mx, mz] = Pw(d.s + f * d.width, -0.012);
+        grd.obox(mx, yH + 0.05, mz, 0.012, 0.008, yT, w.ux, w.uz, rc);
+      }
+      grd.obox(cmx, yT, cmz, d.width / 2 + cw, out / 2, yT + 0.05, w.ux, w.uz, rc);
+      grd.obox(cmx, yT + 0.05, cmz, d.width / 2 + cw + 0.05, out / 2 + 0.035, yT + 0.2, w.ux, w.uz, rc); // entablature
+    } else {
+      grd.obox(cmx - w.ux * (d.width / 2 + cw / 2), y0, cmz - w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yH + cw, w.ux, w.uz, rc);
+      grd.obox(cmx + w.ux * (d.width / 2 + cw / 2), y0, cmz + w.uz * (d.width / 2 + cw / 2), cw / 2, out / 2, yH + cw, w.ux, w.uz, rc);
+      grd.obox(cmx, yH, cmz, d.width / 2 + cw, out / 2, yH + cw, w.ux, w.uz, rc);
+    }
     chunks.tag('untagged');
   }
   /** A facade quad over part of a wall: s from s0 to s1 (from the wall's a end), tile u = (s - sRef) / bw read from the
@@ -531,7 +549,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
    */
   function openCollider(rec: BuildingRecord, d: DoorRec, P: Pt[], yMin: number, y0: number, top: number) {
     const pieces = convexPieces(P);
-    for (const piece of pieces) phys.prism(piece.flat(), yMin, y0, 'building');
+    for (const piece of pieces) phys.prism(piece.flat(), yMin, y0, 'plinth');
     const ux = d.ux, uz = d.uz, ix = -d.nx, iz = -d.nz;
     const cu = d.x * ux + d.z * uz, cv = d.x * ix + d.z * iz;
     const uL = cu - d.width / 2, uR = cu + d.width / 2, vLeaf = cv + IN.leafRecess;

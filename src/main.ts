@@ -53,6 +53,7 @@ import { createInteriors, updateInteriors, interiorsSummary } from './systems/in
 import { openSave, applySave, updateSave, hookSaveEvents, saveBootMessage, writeSave, snapshot } from './systems/save';
 import { mapIdFromUrl } from './systems/map/loadMap';
 import { SOLID_KIND_LIST } from './systems/objects/solidKinds';
+import { FURNITURE } from './data/furniture';
 
 async function boot() {
   await RAPIER.init();
@@ -172,6 +173,8 @@ async function boot() {
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
   (window as unknown as { __ocKinds: unknown }).__ocKinds = SOLID_KIND_LIST;
+  (window as unknown as { __ocFurn: unknown }).__ocFurn = FURNITURE;
+  (window as unknown as { __ocItemDefs: unknown }).__ocItemDefs = TUNING.items.defs;
   (window as unknown as { __ocInteriors: unknown }).__ocInteriors = { summary: () => interiorsSummary(w), save: () => writeSave(w), snapshot: () => snapshot(w) };
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city), roadLimits: TUNING.geo.roadLimits };
   // physics audit (tests only, ?physaudit=1): drawn geometry vs colliders, see systems/physicsAudit.ts

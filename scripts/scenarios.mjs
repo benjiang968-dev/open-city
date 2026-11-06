@@ -3385,3 +3385,4 @@ export async function lookstall(page, S) {
   });
 }
 export * from './interiorScenarios.mjs';
+export * from './interiorWalks.mjs';

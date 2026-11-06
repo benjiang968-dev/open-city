@@ -15,7 +15,7 @@ import type { World } from '../world';
 import { TUNING } from '../tuning';
 import type { ItemId } from '../art/items';
 import { ITEM_IDS } from '../art/items';
-import { placeInWorld, removeFromWorld, restItem, spawnLazy, writeItem, type WorldItem } from './worldItems';
+import { removeFromWorld, restItem, setDormant, spawnLazy, writeItem, type WorldItem } from './worldItems';
 import { interiorAt, buildNow } from './interiors/interiors';
 import { PLAN_VERSION } from './interiors/plan';
 import { toast } from './hud';
@@ -183,7 +183,7 @@ export function applySave(w: World): void {
     // inside a building that is not built: kept as data until it is
     const inb = interiorAt(w.interiors, si.x, si.y, si.z);
     it.building = inb ? inb.rec.id : null;
-    it.dormant = !!inb && inb.state !== 'active';
+    if (inb && inb.state !== 'active') setDormant(w, it, true);
     writeItem(w, it);
   }
   // the hotbar

@@ -313,3 +313,65 @@ Measure, against the base build (`s1-integrate` dist) and interleaved, at least 
 8. Persistence: ids that change (re-imports, the 10 suffixed ids, template changes) and seed-dependent contents. Mitigation: map prefix + data id, `planVersion`, migrations, saves per map and seed.
 9. Merge conflicts: the look lane is rewriting facades, materials and models at the same time (`facades.ts`, `facadeMaterial.ts`, `facadeTex.ts`). Mitigation: the record and opening changes land early and small, in agreed functions.
 10. Scope: 4,693 buildings cannot all be hand-checked. Coverage is reported by template, fallback and building id; "every building enterable" is only claimed for what the headless coverage test and the keyboard walks prove.
+
+## 6. Stage C as built: the API for Stage D (branch `cr-interiors`)
+
+Stage C built the system above for two real buildings, end to end, with the mechanism general: the pilot house `geo:b23e0ce279d85` (3 storeys, 7-step stoop, door at -677.66, 119.85, sill 27.53 m) and the pilot shop `geo:be01bab3a0eeb` ("Easel House", shop=art, 2 storeys, door on M St NW at -649.42, 147.83, sill 21.80 m). `TUNING.interiors.scope` is `'pilot'` (only `pilotIds`); `'all'` lets every building a template can plan through the same code. Where this section and sections 4.x differ, this section is what the code does.
+
+### 6.1 Files
+
+| File | What it is |
+|---|---|
+| `src/systems/interiors/records.ts` | `BuildingRecord` (id `geo:<data id>`, footprint, walls with party / street / front flags and the facade's window bands, `storeys` = the exterior's floor levels, `y0` sill, `door`, `plan`, `planErrors`, runtime `core` colliders and `plug`), `chooseTemplate`, `planDoor`, `TILE_WINDOWS` (window rectangles per facade tile). |
+| `src/systems/interiors/geom.ts` | Pure 2D helpers: `clipHalf` (Sutherland-Hodgman), `clipBox` in a frame, `insetPoly`, `segmentInside`, `pointIn`, `edgeDist`, frames, `hash32`, `rng32`. |
+| `src/systems/interiors/plan.ts` | The plan data (`Plan`: levels, rooms, partitions with openings, doors, stairs, stairwell holes, rails, furniture, lights, errors, notes), `PlanBuilder` (the template API, 6.2), `validatePlan`, `PLAN_VERSION`, wall and floor finishes. No three.js, no Rapier. |
+| `src/systems/interiors/templates.ts` | `planHouse` (side-hall rowhouse), `planShop` (shop with office and stock room above), `TEMPLATES`, `planInterior(rec)`. |
+| `src/data/furniture.ts` | Furniture library: parts (boxes with surface tags), solid or not, item slots. |
+| `src/systems/interiors/interiorBuild.ts` | `buildInterior` (a generator: plan -> merged meshes and one fixed body of colliders, yielding between pieces), `disposeInterior`, `rampAt`. |
+| `src/systems/interiors/doors.ts` | Door leaves: instanced meshes per style (house, shop, inner), kinematic bodies while built, swing only into free space, `doorTarget` (E), `toggleDoor`, saved open states. |
+| `src/systems/interiors/interiors.ts` | Run time: activation by distance, sliced building, the core swap, retiring, `floorAt` (heights indoors), see-through windows, interior lights, the shop counter and shoplifting. |
+| `src/systems/save.ts` | IndexedDB save, schema 1, migrations table. |
+| `map/facades.ts` | Fills the records; plans the interior before cutting the doorway; `doorWall` (opening, reveal, door case with transom), `openCollider` (plinth, notched core, plug). |
+
+### 6.2 How a building gets its plan
+
+At boot, in `facades.ts buildOne` (same order for every building, never seed-dependent):
+1. Walls, party walls, street walls and the front wall as before; then the record. `chooseTemplate(dataId, type, placeCats)` gives a template id or null (cafes, offices, landmarks: null until Stage D).
+2. `planDoor(rec)` places the front door on the front wall (houses: at the end chosen by `hash32(id + ':door')`, far enough in for the stoop rails; shops: the middle). The ground floor level `y0` is then measured at the door (not the wall's middle), so the stoop and sill line up with it.
+3. Once `storeys`, `yTop` and the door's sill are known, `planInterior(rec)` runs the template and `validatePlan`. If it reports errors the door is dropped (`rec.planErrors` keeps the reasons) and the building is drawn and collides exactly as before. Only a valid plan cuts the doorway.
+4. With a plan: the front wall's ground band is drawn round a real opening with a reveal and a door case (`doorWall`), the window bands are recorded on the wall for the interior, and the collider becomes a `plinth` (lowest ground to `y0`, permanent: the ground floor's floor), a `building` core above `y0` with the doorway notched out, and a `door` plug box where the closed leaf is. `rec.core` holds the core pieces and the plug.
+
+### 6.3 Writing a template (Stage D)
+
+A template is `(B: PlanBuilder) => void`, registered in `TEMPLATES` and picked by `chooseTemplate`. Coordinates are in the record's frame: `u` along the front wall starting at the door's end, `v` inward; `B.W(u, v)` gives world x, z. Everything is clipped to `B.inner` (the footprint inset by 0.30 m outer and 0.15 m party walls), so templates may use `-1e4 / 1e4` for open sides and any footprint works.
+
+- Measuring: `B.uf0 / B.uf1` (inner extent across the front), `B.across(v)`, `B.along(u)`, `B.wallU(side, va, vb)`, `B.wallV(side, ua, ub)` (the tightest wall over a range, for furniture against walls).
+- Levels: `B.plan.levels[k]` = `{ y, ceil, top }` from the exterior's storeys (`y` finished floor, `ceil` underside of the slab above, `top` the next floor). Never invent floor heights: windows line up because the exterior drew them from the same numbers.
+- Rooms: `B.room(level, name, kind, u0, u1, v0, v1, floorFinish, wallFinish)` returns the room id `L<level>/<name>` (or null if nothing is left after clipping). `kind` drives nothing yet except validation (`stair` and `landing` rooms are exempt from the size check).
+- Walls: `B.partition(level, ua, va, ub, vb, openings)`; each opening is `[centre along the partition from (ua, va), width, height, doorId | null]`.
+- Doors: `B.frontDoor()` (once, required); `B.innerDoor(level, id, u, v, du, dv, hinge)` puts a leaf in an opening (the id must match the opening's door id). Inner doors open away from whoever opens them.
+- Stairs: `B.runOf(level)` (run of a flight from `level` to the next), `B.stair(level, u, v, du, dv, width, solid, rails)` (foot at (u, v) rising along (du, dv); `solid`: metres from the foot that are solid down to the floor, the rest is a sloped slab so the space under it is free), `B.holeStart(level)` (where the slab above must be cut for headroom: `TUNING.interiors.stairHeadroom` above the ramp line plus `stairHeadBack` behind the head), `B.hole(level, u0, u1, v0, v1)` (the stairwell in the slab of `level`), `B.rail(level, ua, va, ub, vb)` (balustrade with a collider).
+- Furniture: `B.furn(def, level, room, u, v, fu, fv)` (middle at (u, v), front facing (fu, fv)), `B.against(...)` (back against a wall), `B.side(def, level, room, side, v)` (against the left or right wall at depth v). Pieces that do not fit, block a doorway or a stair landing, or overlap are dropped by `validatePlan` and listed in `plan.notes`.
+- Lights: `B.light(level, room)` (a ceiling fixture; the run-time pool lights the nearest ones).
+- Errors: push to `B.plan.errors` when the footprint cannot take the template; the building then keeps its solid (and is reported).
+
+Validation (`validatePlan`): every door has floor on both sides (front doors: 0.9 m behind the facade), at least 0.85 m clear; every flight and its landings inside the building, no steeper than 46 degrees; rooms at least 2.2 m2; furniture inside its room, off doorways (a swing square each side) and stair landings, not overlapping. A coverage run over the whole city (Stage D) should call `planInterior` for every record and tabulate `planErrors` by template.
+
+### 6.4 Run time
+
+- `createInteriors(w)` (after the items): one entry per record with a plan; the front leaf is drawn closed at once (`addDoor`). `w.city.interiorFloorAt` is set so `heightAt` inside an active building returns its floors, landings and stair treads (with `y`) or its ground floor (without).
+- `updateInteriors(w, dt)` per frame: distances to the front doors; entries within `buildRadius` (32 m on foot; 15 m in a car slower than 3 m/s) are built nearest first, one at a time, `sliceMs` (3 ms Medium / High, 2 ms Low) per frame; at most `maxActive` (2 / 4 / 6) are kept; an entry beyond `retireRadius` (48 m) is retired only when `canRetire` (nobody inside its footprint + 1 m, no door swinging, no car or moving item inside).
+- Activation (one frame, in this order): door bodies (kinematic, at their saved states), core and plug disabled, dormant items woken, shelves stocked (`spawnLazy` per slot whose uid the world and the save do not already know), a see-through slot for the facade shader.
+- Retire (one frame): items inside become dormant data (no bodies), core and plug enabled, door bodies removed (inner leaves hidden, the front leaf drawn closed), interior colliders and meshes disposed.
+- `buildNow(w, e)` finishes a building synchronously: used when E is pressed at a front door that is not built yet (never an opening without collision behind it) and when a save puts the player inside a building at boot.
+- Doors: `doorTarget(w)` (facing within `doorReach`), `useDoor(w, d)` then `toggleDoor(w, d)`; `updateDoors(w, dt)` in the fixed step, before `physics.step`: each step tests the leaf's next pose (`intersectionsWithShape`) against the player and dynamic bodies and waits instead of pushing.
+- Item uids: interior slots `<building id>/<furniture id>/<slot row>.<position>` (e.g. `geo:b23e0ce279d85/L0/kitchen/kitchenRun0/0.2`), street items `street:<n>`, later items `new:<n>`. Owners: `business:<id>` (shop stock), `home:<id>`, `player`, `public`. Taking shop stock out of the shop's footprint unpaid sets `stolen` and raises a `shoplifting` event (witnesses can report it); `E` at the counter with unpaid stock pays for it.
+- Save (`save.ts`): `openSave(mapId, seed)` before items are made, `applySave(w)` after the hotbar exists, `updateSave(w)` per frame (debounced writes), `hookSaveEvents(w)` (page hidden, page hide). Key `auto:<map>:<seed>`. To change the stored shape: bump `SCHEMA` and add `MIGRATIONS[old]`. A save with a newer schema is kept and the session plays unsaved. `?nosave=1` disables it. If `PLAN_VERSION` changed since the save, door states are dropped; item records are applied by uid (a slot whose uid the save knows is never restocked).
+
+### 6.5 Stage D checklist
+
+1. Templates for cafe / restaurant, office lobby, apartment / hotel, garage / workshop, institution, shed (4.4); extend `chooseTemplate` (4.3) and the furniture library.
+2. Turn `scope` to `'all'`, then run a headless coverage pass over every record: plan time, `planErrors` by template and building id; check boot time (planning runs at boot for every record), collider count (the notched core adds pieces) and the door instance pools.
+3. The grid city's records (4.14).
+4. `Poi.door` from the record door (4.2): today the place door of the pilot shop is still `frontOf`'s point.
+5. NPCs indoors, opening hours (locked doors with the `locked` flag the prompt already shows), the shop's keeper.

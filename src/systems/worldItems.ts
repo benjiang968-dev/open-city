@@ -142,7 +142,8 @@ export function spawnLazy(w: World, type: ItemId, uid: string, x: number, y: num
 /** Hide an item lying in a building whose interior is taken down (no body), or bring it back. */
 export function setDormant(w: World, it: WorldItem, on: boolean): void {
   if (it.dormant === on) return;
-  if (on) restItem(w, it);
+  // its body goes (a street item too: from now on it is lazy, given a body again only when the player comes near)
+  if (on) { restItem(w, it); it.lazy = true; }
   it.dormant = on;
   writeMatrix(w.itemsState, it);
 }

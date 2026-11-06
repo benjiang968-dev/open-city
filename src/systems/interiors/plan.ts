@@ -243,7 +243,7 @@ export class PlanBuilder {
   holeStart(level: number): number {
     const lv = this.plan.levels;
     const rise = lv[level + 1].y - lv[level].y, run = this.runOf(level);
-    return Math.max(0.3, ((rise - I.slab - I.stairHeadroom) * run) / rise);
+    return Math.max(0.3, ((rise - I.slab - I.stairHeadroom) * run) / rise - I.stairHeadBack);
   }
   hole(level: number, u0: number, u1: number, v0: number, v1: number) {
     const poly = [this.W(u0, v0), this.W(u1, v0), this.W(u1, v1), this.W(u0, v1)];
@@ -341,7 +341,9 @@ export function validatePlan(plan: Plan): void {
   const inside = (x: number, z: number, m = 0.02) => pointIn(x, z, inner) && edgeDist(x, z, inner) >= m;
   // doors: both sides inside, a clear approach
   for (const d of plan.doors) {
-    const ox = d.x + d.nx * 0.6, oz = d.z + d.nz * 0.6;
+    // a front door's (x, z) is on the facade line, an inner door's on its partition's centre line
+    const back = d.front ? I.outerWall + 0.6 : 0.6;
+    const ox = d.x + d.nx * back, oz = d.z + d.nz * back;
     if (!inside(ox, oz, 0.3)) plan.errors.push(`door ${d.id}: no room behind it`);
     if (!d.front && !inside(d.x - d.nx * 0.6, d.z - d.nz * 0.6, 0.3)) plan.errors.push(`door ${d.id}: no room in front of it`);
     if (d.width < 0.85) plan.errors.push(`door ${d.id}: ${d.width.toFixed(2)} m is too narrow for the player`);

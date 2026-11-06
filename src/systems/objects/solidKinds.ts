@@ -49,7 +49,7 @@ export const SOLID_KINDS = {
   stairWall: k('stair side wall', 'static', 'trimesh', true, 0xe0b040),
   stoop: k('house stoop (landing + steps)', 'static', 'ramp', true, 0xffa040, 0.12),
   stoopRail: k('stoop railing', 'static', 'hull', true, 0xd08030, 0.1),
-  building: k('building (footprint box or prism)', 'static', 'hull', true, 0x9a8cff, 0.15),
+  building: k('building (footprint box or prism; above the ground floor of an enterable building: its removable core)', 'static', 'hull', true, 0x9a8cff, 0.15),
   tower: k('tower, steeple, smokestack', 'static', 'box', true, 0x8070e0, 0.3),
   column: k('column (portico, arcade, bridge pier)', 'static', 'cylinder', true, 0xb0a0ff, 0.12),
   bridgePier: k('bridge pier / abutment', 'static', 'box', true, 0x7090c0, 0.4),
@@ -87,6 +87,7 @@ export const SOLID_KINDS = {
   interiorWall: k('interior wall (outer walls from inside, partitions, door frames)', 'static', 'box', true, 0xc8a0ff, 0.12),
   floorSlab: k('floor slab / ceiling of an interior', 'static', 'hull', true, 0xa0d0ff, 0.12),
   furniture: k('substantial furniture (beds, sofas, counters, shelves, tables)', 'static', 'box', true, 0xff80c0, 0.12),
+  plinth: k('building plinth under an enterable building (its ground floor: the top is the floor level)', 'static', 'hull', true, 0x8a7cdf, 0.15),
 } as const satisfies Record<string, SolidKindDef>;
 
 export type SolidKind = keyof typeof SOLID_KINDS;

@@ -198,15 +198,22 @@ export function updateDoors(w: World, dt: number): void {
     if (!d.body || Math.abs(d.target - d.angle) < 1e-4) continue;
     const step = Math.sign(d.target - d.angle) * Math.min(Math.abs(d.target - d.angle), I.doorSwingSpeed * dt);
     const next = d.angle + step;
+    pose(d, d.angle, P6);
+    const mx0 = P6[4], mz0 = P6[5];
     pose(d, next, P6);
     const yaw = Math.atan2(-P6[3], P6[2]);
+    // the space the leaf moves into: the leaf at its next pose, thickened by doorClearance on the side it moves toward
+    // only (so a door you lean on still opens away from you), checked against you and loose items
+    let vx = P6[4] - mx0, vz = P6[5] - mz0;
+    const vl = Math.hypot(vx, vz) || 1;
+    vx /= vl; vz /= vl;
     const key = `${d.pd.width}:${d.pd.height}`;
     let sh = shapeCache.get(key);
-    if (!sh) shapeCache.set(key, (sh = new w.R.Cuboid((d.pd.width - 0.012) / 2 + 0.02, d.pd.height / 2 - 0.02, I.leafThickness / 2 + 0.03)));
-    const rot = { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
-    const pos = { x: P6[4], y: d.pd.y + d.pd.height / 2, z: P6[5] };
+    if (!sh) shapeCache.set(key, (sh = new w.R.Cuboid((d.pd.width - 0.012) / 2 + 0.02, d.pd.height / 2 - 0.02, I.leafThickness / 2 + I.doorClearance / 2)));
+    ROT.y = Math.sin(yaw / 2); ROT.w = Math.cos(yaw / 2);
+    POS.x = P6[4] + vx * I.doorClearance / 2; POS.y = d.pd.y + d.pd.height / 2; POS.z = P6[5] + vz * I.doorClearance / 2;
     let blocked = false;
-    w.physics.intersectionsWithShape(pos, rot, sh, (c) => {
+    w.physics.intersectionsWithShape(POS, ROT, sh, (c) => {
       if (c === d.collider) return true;
       const pb = c.parent();
       if (c === w.player.collider || (pb && pb.isDynamic())) { blocked = true; return false; }
@@ -215,11 +222,13 @@ export function updateDoors(w: World, dt: number): void {
     if (blocked) { d.waited += dt; continue; }
     d.waited = 0;
     d.angle = next;
-    d.body.setNextKinematicTranslation(pos);
-    d.body.setNextKinematicRotation(rot);
+    POS.x = P6[4]; POS.z = P6[5];
+    d.body.setNextKinematicTranslation(POS);
+    d.body.setNextKinematicRotation(ROT);
     writeInstance(S, d);
   }
 }
+const POS = { x: 0, y: 0, z: 0 }, ROT = { x: 0, y: 0, z: 0, w: 1 };
 
 /** The door the player is facing within reach (for the E prompt), or null. */
 export function doorTarget(w: World): DoorObj | null {
