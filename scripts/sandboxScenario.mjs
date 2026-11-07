@@ -18,7 +18,7 @@ export async function runSandboxFlow(page) {
       const entry = e(kind);
       assert(entry, `No ${kind} interior`);
       if (w.interiors.active) api.exitInterior();
-      run(0.6, 60);
+      run(1.0, 60);
       go(entry.exterior.x, entry.exterior.y, entry.exterior.z);
       use();
       assert(w.interiors.active === entry.id, `E failed to enter ${kind}`);
@@ -67,7 +67,7 @@ export async function runSandboxFlow(page) {
     assert(!api.rent(apartment.id), 'Lease duplicate was accepted');
     assert(w.cash === money - 90, 'Lease charged incorrectly');
     // Store a regular, unowned collectible (a shift prop is deliberately ineligible).
-    const normal = w.itemsState.items.find(it => it.inWorld && !it.owner && !Object.values(w.sandbox.save.pool).flat().includes(it.id));
+    const normal = w.itemsState.items.find(it => it.inWorld && !it.owner && ['can', 'bottle'].includes(it.type) && Math.hypot(it.px - w.city.spawn.x, it.pz - w.city.spawn.z) < 150 && !Object.values(w.sandbox.save.pool).flat().includes(it.id));
     assert(normal, 'No ordinary item available for storage');
     if (w.interiors.active) api.exitInterior();
     pick(normal.id);
