@@ -246,7 +246,7 @@ function placePlayer(w: World, x: number, y: number, z: number, heading: number)
   p.body.setTranslation({ x, y: y + capsule + 0.04, z }, true);
   p.body.setNextKinematicTranslation({ x, y: y + capsule + 0.04, z });
   p.mesh.position.set(x, y + 0.04, z); p.facing = heading; p.mesh.rotation.y = heading;
-  p.vy = 0; p.knockT = 0; p.knockX = 0; p.knockZ = 0;
+  p.vy = 0; p.moveSpeed = 0; p.grounded = true; p.knockT = 0; p.knockX = 0; p.knockZ = 0;
   w.cam.focus.set(x, y + TUNING.camera.heightOffset, z); w.cam.yaw = heading + Math.PI;
   w.input.keys.clear(); w.input.pressed.delete('KeyE'); w.input.mouse0 = false;
 }
