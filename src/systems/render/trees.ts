@@ -92,20 +92,21 @@ interface Crown { cy: number; rx: number; ry: number; cards: number; card: [numb
 /** Crowns matching the generator's species (props.ts): 0 round deciduous, 1 conifer, 2 street tree. */
 const CROWNS: Crown[] = [
   { cy: 4.1, rx: 2.3, ry: 2.4, cards: 46, card: [0.75, 1.0], conifer: false },
-  { cy: 4.0, rx: 2.0, ry: 3.6, cards: 40, card: [0.6, 0.85], conifer: true },
+  { cy: 4.0, rx: 2.0, ry: 3.6, cards: 40, card: [0.7, 0.6], conifer: true },
   { cy: 4.6, rx: 1.75, ry: 2.3, cards: 38, card: [0.65, 0.9], conifer: false },
 ];
 
 /** Near-detail tree for a species: wood (trunk, branches, inner crown) and leaves (cards). */
-function nearTree(sp: number): { wood: THREE.BufferGeometry; leaves: THREE.BufferGeometry } {
+export function nearTree(sp: number): { wood: THREE.BufferGeometry; leaves: THREE.BufferGeometry } {
   const C = CROWNS[sp];
   const r = rng(1234 + sp * 77);
   const wood = new Geo(), leaves = new Geo();
   const bark = surf(SURF.BARK, lin(0x6b4a2f));
+  const leanX = C.conifer ? 0.04 : (sp === 2 ? -0.1 : 0.13);
   const top = C.conifer ? C.cy + C.ry * 0.9 : C.cy - 0.2;
-  wood.tube(new THREE.Vector3(0, -0.1, 0), new THREE.Vector3(0, top, 0), 0.24, C.conifer ? 0.05 : 0.13, 8, bark);
+  wood.tube(new THREE.Vector3(0, -0.1, 0), new THREE.Vector3(leanX, top, 0.04), 0.24, C.conifer ? 0.05 : 0.13, 8, bark);
   // flared base
-  wood.tube(new THREE.Vector3(0, -0.1, 0), new THREE.Vector3(0, 0.45, 0), 0.34, 0.24, 8, bark);
+  wood.tube(new THREE.Vector3(0, -0.1, 0), new THREE.Vector3(0, 0.45, 0), 0.24, 0.22, 8, bark);
   const o = new THREE.Vector3(0, C.cy, 0);
   if (!C.conifer) {
     // main branches from the top of the trunk into the crown
@@ -117,15 +118,22 @@ function nearTree(sp: number): { wood: THREE.BufferGeometry; leaves: THREE.Buffe
     }
   }
   // inner crown: darker, keeps the canopy from looking hollow between the cards
-  const inner = surf(SURF.FOLIAGE, lin(sp === 1 ? 0x2f5a3a : 0x3f6e33));
+  const inner = surf(SURF.FOLIAGE, lin(sp === 1 ? 0x335c3b : 0x466c3e));
   if (C.conifer) {
     for (let t = 0; t < 3; t++) {
       const y = C.cy - C.ry * 0.55 + t * C.ry * 0.5, rr = C.rx * (1 - t * 0.28) * 0.75;
-      wood.blob(0, y, 0, rr, C.ry * 0.28, rr, inner, 0);
+      wood.tube(new THREE.Vector3(0, y - C.ry * 0.2, 0), new THREE.Vector3(0.03, y + C.ry * 0.48, 0.02), rr, 0.025, 10, inner);
     }
-  } else wood.blob(0, C.cy, 0, C.rx * 0.72, C.ry * 0.68, C.rx * 0.72, inner, 1);
+  } else {
+    // Overlapping irregular foliage clusters avoid the old dark sphere visible inside every backlit crown.
+    for (let k = 0; k < 3; k++) {
+      const a = k * Math.PI * 2 / 3 + sp * 0.65;
+      wood.blob(Math.cos(a) * C.rx * 0.25, C.cy + (k === 1 ? 0.34 : -0.12), Math.sin(a) * C.rx * 0.25,
+        C.rx * 0.72, C.ry * (k === 1 ? 0.68 : 0.58), C.rx * 0.72, inner, 1);
+    }
+  }
   // leaf cards over the crown surface, facing outward with some tilt
-  const leaf = surf(SURF.FOLIAGE, lin(sp === 1 ? 0x3b6b45 : 0x5c9e47));
+  const leaf = surf(SURF.FOLIAGE, lin(sp === 1 ? 0x3e6644 : 0x5b8149));
   const n = new THREE.Vector3(), t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), c = new THREE.Vector3();
   for (let k = 0; k < C.cards; k++) {
     // points spread over the ellipsoid (more on top), slightly inside it
@@ -140,9 +148,13 @@ function nearTree(sp: number): { wood: THREE.BufferGeometry; leaves: THREE.Buffe
       const rr = C.rx * (1 - tier * 0.22) * (0.55 + r() * 0.35);
       c.set(Math.cos(ph) * rr, y, Math.sin(ph) * rr);
       n.set(Math.cos(ph), 0.35, Math.sin(ph)).normalize();
+      wood.tube(new THREE.Vector3(0, y + 0.18, 0), c, 0.027, 0.008, 3, bark);
     } else {
-      const k2 = 0.82 + r() * 0.2;
-      c.set(n.x * C.rx * k2, C.cy + n.y * C.ry * k2, n.z * C.rx * k2);
+      const lobe = k % 3, a = lobe * Math.PI * 2 / 3 + sp * 0.65;
+      const k2 = 0.82 + r() * 0.18;
+      c.set(Math.cos(a) * C.rx * 0.25 + n.x * C.rx * 0.72 * k2,
+        C.cy + (lobe === 1 ? 0.34 : -0.12) + n.y * C.ry * (lobe === 1 ? 0.68 : 0.58) * k2,
+        Math.sin(a) * C.rx * 0.25 + n.z * C.rx * 0.72 * k2);
     }
     // card plane: mostly tangent to the crown, tilted at random so they cross each other
     t1.set(0, 1, 0).cross(n);
@@ -153,8 +165,12 @@ function nearTree(sp: number): { wood: THREE.BufferGeometry; leaves: THREE.Buffe
     t1.applyAxisAngle(n, r() * Math.PI);
     t2.crossVectors(n, t1).normalize();
     t2.applyAxisAngle(t1, tilt);
+    // Evergreen boughs spread out and droop, instead of hanging as upright balls on the stem.
+    if (C.conifer) t2.set(n.x, -0.32, n.z).normalize();
     const w = C.card[0] * (0.8 + r() * 0.5), h = C.card[1] * (0.8 + r() * 0.5);
-    leaves.card(c, t1.multiplyScalar(w), t2.multiplyScalar(h), o, leaf);
+    const shade = 0.88 + r() * 0.22;
+    const variedLeaf = (leaf & 0x7f000000) | (Math.round(((leaf >> 16) & 255) * shade) << 16) | (Math.round(((leaf >> 8) & 255) * shade) << 8) | Math.round((leaf & 255) * shade);
+    leaves.card(c, t1.multiplyScalar(w), t2.multiplyScalar(h), o, variedLeaf);
   }
   return { wood: wood.build(), leaves: leaves.build() };
 }

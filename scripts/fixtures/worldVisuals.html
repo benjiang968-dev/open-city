@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Open City human and tree detail fixture</title><style>html,body{margin:0;background:#c2d3db}canvas{display:block}#label{position:fixed;bottom:12px;left:16px;color:#fff;background:#213c43d9;padding:9px 14px;font:14px system-ui;border-radius:7px}</style></head><body><div id="label">Open City · shared people and instanced vegetation</div><script type="module">
+import * as THREE from 'three';
+import {makePerson,animatePerson} from '/src/art/person.ts';
+import {speciesGeometries} from '/src/systems/map/props.ts';
+import {nearTree} from '/src/systems/render/trees.ts';
+import {createLook,bakeLook} from '/src/systems/render/look.ts';
+import {makeWorldMaterial} from '/src/systems/render/worldMaterial.ts';
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(960,640);renderer.setPixelRatio(1);renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFShadowMap;document.body.prepend(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color('#c5d5dc');scene.add(new THREE.HemisphereLight('#eef5fa','#6c7166',2.1));const sun=new THREE.DirectionalLight('#fff0d5',2.8);sun.position.set(4,9,5);sun.castShadow=true;sun.shadow.mapSize.set(1024,1024);Object.assign(sun.shadow.camera,{left:-11,right:11,top:11,bottom:-11,near:.1,far:40});sun.shadow.normalBias=.02;scene.add(sun);
+const floor=new THREE.Mesh(new THREE.PlaneGeometry(60,60).rotateX(-Math.PI/2),new THREE.MeshStandardMaterial({color:'#a9ada3',roughness:.97}));floor.position.y=-.02;floor.receiveShadow=true;scene.add(floor);
+const people=new THREE.Group();scene.add(people);
+const palettes=[['#517d87','#303d50','#ac7456','#30251e'],['#a76246','#34424c','#d1a184','#5b3927'],['#667653','#4c4947','#754a38','#241f1b']];
+palettes.forEach((p,i)=>{const rig=makePerson(...p.map(c=>new THREE.Color(c)));rig.root.position.x=(i-1)*1.2;if(i!==1)animatePerson(rig,i*.9,.35);people.add(rig.root);});
+const look=createLook('low');bakeLook(look,renderer,'low');const wood=makeWorldMaterial(look,{name:'fixture-tree-wood',roughness:.9}),leaves=makeWorldMaterial(look,{name:'fixture-tree-leaves',roughness:.85,foliage:true});
+const trees=new THREE.Group();scene.add(trees);const far=speciesGeometries();for(let sp=0;sp<3;sp++){const near=nearTree(sp),g=new THREE.Group();const trunk=new THREE.Mesh(near.wood,wood);trunk.castShadow=true;g.add(trunk,new THREE.Mesh(near.leaves,leaves));g.position.set((sp-1)*5,0,-5);trees.add(g);const f=new THREE.Mesh(far[sp],wood);f.castShadow=true;f.position.set((sp-1)*5+.8,0,-12);trees.add(f);}
+const camera=new THREE.PerspectiveCamera(43,960/640,.05,150);
+window.__visuals={render(mode){trees.visible=mode==='trees';if(mode==='people'){camera.position.set(2.9,1.8,5);camera.lookAt(0,.97,0);document.querySelector('#label').textContent='Shared human silhouette · shaped faces, hands, shoes and tapered clothing';}else{camera.position.set(11,6,15);camera.lookAt(0,2.7,-4);document.querySelector('#label').textContent='Connected foliage clusters · three tree species · near and far detail';}renderer.render(scene,camera);return {calls:renderer.info.render.calls,triangles:renderer.info.render.triangles};}};window.__visuals.render('people');
+</script></body></html>

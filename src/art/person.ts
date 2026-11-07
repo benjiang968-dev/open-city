@@ -1,7 +1,8 @@
-// Low-poly person built from boxes: torso+head in one mesh, plus pivoting legs and arms for a walk cycle.
+// A shared metre-scale person, matching the crowd's instanced parts. Limbs pivot through the existing walk cycle.
 import * as THREE from 'three';
-import { GeoBuilder } from './geo';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { makePersonMaterial } from '../systems/render/vehicleMaterials';
+import { buildHumanGeometry } from './humanGeometry';
 
 export interface PersonRig {
   root: THREE.Group;
@@ -10,45 +11,28 @@ export interface PersonRig {
   armL: THREE.Object3D;
   armR: THREE.Object3D;
 }
-
-const matCache = makePersonMaterial(); // cloth with a soft sheen (render/vehicleMaterials.ts)
+const matCache = makePersonMaterial();
 
 export function makePerson(shirt: THREE.Color, pants: THREE.Color, skin: THREE.Color, hair: THREE.Color, scale = 1): PersonRig {
   const root = new THREE.Group();
-  const body = new GeoBuilder();
-  body.box(-0.24, 0.85, -0.14, 0.24, 1.45, 0.14, shirt); // torso
-  body.box(-0.13, 1.45, -0.12, 0.13, 1.72, 0.13, skin); // head
-  body.box(-0.14, 1.68, -0.14, 0.14, 1.78, 0.14, hair); // hair
-  body.box(-0.09, 1.55, 0.13, 0.09, 1.6, 0.135, new THREE.Color('#222')); // eyes band (faces +Z)
-  const torso = new THREE.Mesh(body.build(), matCache);
-  torso.castShadow = true;
-  root.add(torso);
-  const limb = (x0: number, x1: number, h: number, col: THREE.Color) => {
-    const b = new GeoBuilder();
-    b.box(x0, -h, -0.09, x1, 0, 0.09, col);
-    const m = new THREE.Mesh(b.build(), matCache);
-    m.castShadow = true;
-    return m;
-  };
+  const parts = buildHumanGeometry(shirt, pants, skin, hair);
+  const mesh = (g: THREE.BufferGeometry) => { const m = new THREE.Mesh(g, matCache); m.castShadow = true; return m; };
+  const body = mergeGeometries([parts.torso, parts.head, parts.hair], false);
+  const arm = mergeGeometries([parts.arm, parts.hand], false);
+  for (const g of [parts.torso, parts.head, parts.hair, parts.arm, parts.hand]) g.dispose();
+  root.add(mesh(body));
   const legL = new THREE.Group(), legR = new THREE.Group(), armL = new THREE.Group(), armR = new THREE.Group();
-  legL.position.set(-0.12, 0.86, 0);
-  legR.position.set(0.12, 0.86, 0);
-  armL.position.set(-0.31, 1.42, 0);
-  armR.position.set(0.31, 1.42, 0);
-  legL.add(limb(-0.09, 0.09, 0.86, pants));
-  legR.add(limb(-0.09, 0.09, 0.86, pants));
-  armL.add(limb(-0.07, 0.07, 0.6, shirt));
-  armR.add(limb(-0.07, 0.07, 0.6, shirt));
-  root.add(legL, legR, armL, armR);
-  root.scale.setScalar(scale);
+  legL.position.set(-0.105, 0.86, 0); legR.position.set(0.105, 0.86, 0);
+  armL.position.set(-0.245, 1.36, 0); armR.position.set(0.245, 1.36, 0);
+  legL.add(mesh(parts.leg)); legR.add(mesh(parts.leg));
+  armL.add(mesh(arm)); armR.add(mesh(arm));
+  root.add(legL, legR, armL, armR); root.scale.setScalar(scale);
   return { root, legL, legR, armL, armR };
 }
 
-/** Swing limbs. phase advances with distance walked; amount 0..1. */
+/** Swing limbs. Phase advances with distance, not display frames. */
 export function animatePerson(r: PersonRig, phase: number, amount: number): void {
   const s = Math.sin(phase) * 0.7 * amount;
-  r.legL.rotation.x = s;
-  r.legR.rotation.x = -s;
-  r.armL.rotation.x = -s * 0.8;
-  r.armR.rotation.x = s * 0.8;
+  r.legL.rotation.x = s; r.legR.rotation.x = -s;
+  r.armL.rotation.x = -s * 0.8; r.armR.rotation.x = s * 0.8;
 }

@@ -15,8 +15,8 @@ const G = TUNING.geo;
 // ----------------------------------------------------------------------------------------- art constants
 const STREET_TREE_STEP = 12; // m between street trees on shopping streets
 const LAMP_HEAD = 4.6; // m: globe height above the lamp base
-const GREENS = [0x5c9e47, 0x4f8a3e, 0x76b051, 0x3f7a3a, 0x88b84b, 0x6aa04a];
-const CONIFER = [0x3b6b45, 0x2f5e3c, 0x46784c];
+const GREENS = [0x5b8149, 0x4c7342, 0x718b52, 0x426d40, 0x7d925a, 0x5d8048];
+const CONIFER = [0x3e6644, 0x345c3e, 0x4a7050];
 const SHOPPING = [{ name: 'M St NW', maxX: 362 }, { name: 'Wisconsin Ave NW', minZ: -30 }];
 
 interface TreeSpot { x: number; y: number; z: number; s: number; sp: number; c: number; yaw: number; rank: number }
@@ -444,39 +444,38 @@ function inst(geo: THREE.BufferGeometry, mat: THREE.Material, n: number): THREE.
 }
 
 /** Three tree species with trunk and crown in one geometry (vertex colours; instance colour tints the crown). */
-function speciesGeometries(): THREE.BufferGeometry[] {
-  const trunk = lin(0x6b4a2f);
+export function speciesGeometries(): THREE.BufferGeometry[] {
+  const trunk = lin(0x6b4a2f), leaf = lin(GREENS[0]), cleaf = lin(CONIFER[0]);
   const mk = (crown: (b: MeshBuf) => void) => {
     const b = new MeshBuf();
+    b.cyl(0, -0.02, 0, 0.24, 0.21, 0.38, 6, trunk, false);
     b.cyl(0, 0, 0, 0.24, 0.16, 2.7, 6, trunk, false);
-    crown(b);
-    return b.toGeometry();
+    crown(b); return b.toGeometry();
   };
-  // crowns in a base green; the per-instance colour is a ratio around 1 so trunks stay brown
-  const leaf = lin(GREENS[0]);
-  const round = mk((b) => {
-    const ico = new THREE.IcosahedronGeometry(2.2, 0);
-    const p = ico.getAttribute('position');
-    for (let i = 0; i < p.count; i += 3) {
-      const v = (i: number) => [p.getX(i), p.getY(i) * 1.05 + 4.1, p.getZ(i)];
+  const blob = (b: MeshBuf, x: number, y: number, z: number, rx: number, ry: number, rz: number, color: number) => {
+    const ico = new THREE.IcosahedronGeometry(1, 0), P = ico.getAttribute('position');
+    for (let i = 0; i < P.count; i += 3) {
+      const v = (n: number) => [x + P.getX(n) * rx, y + P.getY(n) * ry, z + P.getZ(n) * rz];
       const a = v(i), c = v(i + 1), d = v(i + 2);
-      b.tri(a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2], shade(leaf, 0.86 + ((i / 3) % 4) * 0.05), (a[0] + c[0] + d[0]) / 3, (a[1] + c[1] + d[1]) / 3 - 4.1, (a[2] + c[2] + d[2]) / 3);
+      b.tri(...a as [number,number,number], ...c as [number,number,number], ...d as [number,number,number],
+        shade(color, 0.91 + (i / 3 % 3) * 0.035), (a[0] + c[0] + d[0]) / 3 - x, (a[1] + c[1] + d[1]) / 3 - y, (a[2] + c[2] + d[2]) / 3 - z);
     }
+    ico.dispose();
+  };
+  // Joined lobes read as a living crown at low quality as well; three meshes still cover the entire forest.
+  const round = mk(b => {
+    blob(b, -0.65, 3.8, 0.12, 1.58, 1.67, 1.7, leaf);
+    blob(b, 0.72, 4.15, 0.25, 1.52, 1.68, 1.62, shade(leaf, 0.95));
+    blob(b, 0.02, 5.1, -0.2, 1.53, 1.32, 1.65, shade(leaf, 1.025));
   });
-  const cleaf = lin(CONIFER[0]);
-  const conifer = mk((b) => {
-    b.cyl(0, 1.8, 0, 2.0, 0, 3.4, 7, cleaf, false);
-    b.cyl(0, 3.6, 0, 1.6, 0, 3.0, 7, shade(cleaf, 0.93), false);
-    b.cyl(0, 5.2, 0, 1.15, 0, 2.6, 7, shade(cleaf, 0.88), false);
+  const conifer = mk(b => {
+    b.cyl(0, 1.8, 0, 1.9, 0.08, 3.4, 8, cleaf, false);
+    b.cyl(-0.05, 3.6, 0.03, 1.5, 0.04, 3.0, 8, shade(cleaf, 0.97), false);
+    b.cyl(0.03, 5.2, -0.01, 1.0, 0, 2.6, 8, shade(cleaf, 1.025), false);
   });
-  const street = mk((b) => {
-    const ico = new THREE.IcosahedronGeometry(1.55, 0);
-    const p = ico.getAttribute('position');
-    for (let i = 0; i < p.count; i += 3) {
-      const v = (i: number) => [p.getX(i) * 1.05, p.getY(i) * 1.45 + 4.6, p.getZ(i) * 1.05];
-      const a = v(i), c = v(i + 1), d = v(i + 2);
-      b.tri(a[0], a[1], a[2], c[0], c[1], c[2], d[0], d[1], d[2], shade(leaf, 0.86 + ((i / 3) % 4) * 0.05), (a[0] + c[0] + d[0]) / 3, (a[1] + c[1] + d[1]) / 3 - 4.6, (a[2] + c[2] + d[2]) / 3);
-    }
+  const street = mk(b => {
+    blob(b, -0.32, 4.25, 0.05, 1.33, 1.7, 1.44, leaf);
+    blob(b, 0.24, 5.26, -0.13, 1.42, 1.56, 1.4, shade(leaf, 1.02));
   });
   return [round, conifer, street];
 }

@@ -1,0 +1,14 @@
+{
+  "fixture": "shared game assets; includes shadow passes",
+  "stats": {
+    "people": {
+      "calls": 31,
+      "triangles": 9506
+    },
+    "trees": {
+      "calls": 46,
+      "triangles": 12130
+    }
+  },
+  "errors": []
+}
