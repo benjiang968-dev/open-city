@@ -5,7 +5,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING, type CarSpec, type CarTypeName } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
-import { buildCarParts, carMaterial, makeWheel } from '../art/car';
+import { buildCarParts, carMaterial, makeWheel, makeCarInterior } from '../art/car';
 import { buildDamageableCar, applyImpact, type CarDamage } from './carDamage';
 import { GROUPS } from '../physicsGroups';
 import { act } from './input';
@@ -28,6 +28,7 @@ export interface Vehicle {
   mesh: THREE.Group;
   bodyMesh: THREE.Mesh;
   wheels: THREE.Group[];
+  steeringWheel: THREE.Object3D | null;
   health: number;
   maxHealth: number;
   steer: number; // current wheel angle (radians)
@@ -38,6 +39,7 @@ export interface Vehicle {
   rearGrip: number; // current rear friction slip (blends back after handbrake)
   prevVel: THREE.Vector3;
   upsideTimer: number;
+  lastRecovery: number;
   inWaterTimer: number;
   driven: boolean;
   wrecked: boolean;
@@ -125,6 +127,9 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   const group = new THREE.Group();
   const coat = paint ? paint.clone() : new THREE.Color(spec.color);
   const { bodyMesh, dmg } = buildDamageableCar({ mesh: group }, buildCarParts(type, coat));
+  const interior = makeCarInterior(type);
+  group.add(interior);
+  const steeringWheel = interior.getObjectByName('steeringWheel') ?? null;
   const wheels: THREE.Group[] = [];
   for (const p of wheelPos) {
     const wg = makeWheel(spec.wheelRadius);
@@ -134,9 +139,9 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   }
   w.scene.add(group);
   const v: Vehicle = {
-    id: w.vehicles.length, type, spec, body, collider, ctrl, mesh: group, bodyMesh, wheels,
+    id: w.vehicles.length, type, spec, body, collider, ctrl, mesh: group, bodyMesh, wheels, steeringWheel,
     health: spec.health, maxHealth: spec.health, steer: 0, speed: 0, heading, slip: 0, throttle: 0,
-    rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, inWaterTimer: 0,
+    rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, lastRecovery: -Infinity, inWaterTimer: 0,
     driven: false, wrecked: false, lastHitTime: -10, px: x, py: (y ?? w.city.heightAt(x, z)) + rideY, pz: z, dmg,
     owner: 'nobody', owned: false, locked: false, stolen: false, forSale: null, alarmUntil: 0, spotCls: null, ownerLocal: false,
     pooled: false, idle: false, parked: null, inst: -1, paint: coat, paintMask: null,
@@ -245,7 +250,7 @@ export function updateVehicles(w: World, dt: number): void {
         if (v.speed > 1) brake = 1;
         else throttle = -1;
       }
-      if (act.reset(inp)) resetUpright(w, v);
+      if (act.reset(inp) && resetUpright(w, v)) continue; // no forces from the old pose after teleporting
     } else if (!v.driven || v.wrecked) {
       brake = 0.4; // parked or wrecked: wheels drag
     }
@@ -363,14 +368,53 @@ function wreck(v: Vehicle) {
   v.bodyMesh.material = wreckMaterial;
 }
 
-export function resetUpright(w: World, v: Vehicle): void {
-  const p = v.body.translation();
+/** Recover to an absolute ground pose, never relative to the current chassis altitude. The full
+ * rotated footprint is tested, so recovery next to a facade cannot place the chassis inside it. */
+export function resetUpright(w: World, v: Vehicle): boolean {
+  if (w.time - v.lastRecovery < V.recoveryCooldown) return false;
+  const p = v.body.translation(), R = w.R;
+  const [hx, hy, hz] = v.spec.halfExtents;
   const qq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), v.heading);
-  v.body.setTranslation({ x: p.x, y: Math.max(p.y, w.city.heightAt(p.x, p.z)) + 1.2, z: p.z }, true);
-  v.body.setRotation({ x: qq.x, y: qq.y, z: qq.z, w: qq.w }, true);
+  const rotation = { x: qq.x, y: qq.y, z: qq.z, w: qq.w };
+  const shape = new R.Cuboid(hx + V.recoveryClearance, hy, hz + V.recoveryClearance);
+  const sin = Math.sin(v.heading), cos = Math.cos(v.heading);
+  const candidate = (x: number, z: number): { x: number; y: number; z: number } | null => {
+    let low = Infinity, high = -Infinity;
+    for (const lx of [-hx, 0, hx]) for (const lz of [-hz, 0, hz]) {
+      const sx = x + lx * cos + lz * sin, sz = z - lx * sin + lz * cos;
+      if (w.city.isBlocked(sx, sz) || w.city.isWater(sx, sz)) return null;
+      const gy = w.city.heightAt(sx, sz, p.y);
+      if (!Number.isFinite(gy)) return null;
+      low = Math.min(low, gy); high = Math.max(high, gy);
+    }
+    if (high - low > V.recoveryMaxGroundDelta) return null;
+    const pos = { x, y: high + Math.max(rideHeight(v.spec), hy) + V.recoveryClearance, z };
+    const blocked = w.physics.intersectionWithShape(pos, rotation, shape,
+      R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, v.collider, v.body);
+    return blocked ? null : pos;
+  };
+  let spot = candidate(p.x, p.z);
+  for (let radius = V.recoverySearchStep; !spot && radius <= V.recoverySearchRadius; radius += V.recoverySearchStep) {
+    const count = Math.ceil(2 * Math.PI * radius / V.recoverySearchStep);
+    for (let k = 0; k < count && !spot; k++) {
+      const angle = k * Math.PI * 2 / count;
+      spot = candidate(p.x + Math.cos(angle) * radius, p.z + Math.sin(angle) * radius);
+    }
+  }
+  if (!spot) return false; // keep the existing pose if every nearby surface is unsafe
+  v.body.setTranslation(spot, true);
+  v.body.setRotation(rotation, true);
   v.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
   v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-  v.upsideTimer = 0;
+  v.body.resetForces(true); v.body.resetTorques(true);
+  for (let i = 0; i < 4; i++) {
+    v.ctrl.setWheelEngineForce(i, 0); v.ctrl.setWheelBrake(i, 0); v.ctrl.setWheelSteering(i, 0);
+  }
+  v.prevVel.set(0, 0, 0); v.speed = 0; v.steer = 0; v.throttle = 0; v.slip = 0;
+  v.px = spot.x; v.py = spot.y; v.pz = spot.z;
+  v.upsideTimer = 0; v.inWaterTimer = 0; v.lastRecovery = w.time;
+  syncMesh(v);
+  return true;
 }
 
 function syncMesh(v: Vehicle) {
@@ -378,6 +422,7 @@ function syncMesh(v: Vehicle) {
   const r = v.body.rotation();
   v.mesh.position.set(t.x, t.y, t.z);
   v.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+  if (v.steeringWheel) v.steeringWheel.rotation.z = -v.steer * 2;
   for (let i = 0; i < 4; i++) {
     const susp = v.ctrl.wheelSuspensionLength(i) ?? v.spec.suspensionRest;
     const wg = v.wheels[i];

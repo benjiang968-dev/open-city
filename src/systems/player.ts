@@ -5,6 +5,7 @@ import { TUNING } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
 import { act } from './input';
+import { applyCameraInput } from './camera';
 import { makePerson, animatePerson, type PersonRig } from '../art/person';
 import type { Vehicle } from './vehicles';
 import { nearestPed } from './pedestrians';
@@ -12,7 +13,7 @@ import { openChat } from './chat';
 import { toast } from './hud';
 import { clinicNearby, clinicFee, treatAtClinic } from './health';
 import { GROUPS } from '../physicsGroups';
-import { pickUp, freeSlot } from './inventory';
+import { pickUp, freeSlot, pickupEligible } from './inventory';
 import { shovePed } from './npcReactions';
 import { carPrompt, useCar, type BreakIn } from './carTheft';
 import { showroomPrompt, buyDisplayCar } from './economy/dealership';
@@ -48,6 +49,7 @@ export interface PlayerState {
   grounded: boolean;
   facing: number;
   walkPhase: number;
+  moveSpeed: number; // smoothed signed speed along the current heading
   vehicle: Vehicle | null;
   /** Interaction hint shown in the HUD ("E: drive Sedan"). */
   prompt: string;
@@ -77,7 +79,7 @@ export function createPlayer(w: World, x: number, z: number): PlayerState {
   cc.setMinSlopeSlideAngle((P.minSlopeSlideDeg * Math.PI) / 180);
   cc.setApplyImpulsesToDynamicBodies(true);
   return {
-    mesh: rig.root, rig, body, collider, cc, vy: 0, grounded: true, facing: 0, walkPhase: 0, vehicle: null, prompt: '', lastVehicleId: -1,
+    mesh: rig.root, rig, body, collider, cc, vy: 0, grounded: true, facing: 0, walkPhase: 0, moveSpeed: 0, vehicle: null, prompt: '', lastVehicleId: -1,
     health: 100, lastHurt: -100, knockT: 0, knockX: 0, knockZ: 0, dead: false, deadT: 0, breakIn: null,
   };
 }
@@ -87,6 +89,7 @@ const move = new THREE.Vector3();
 export function updatePlayer(w: World, dt: number): void {
   const p = w.player;
   const inp = w.input;
+  applyCameraInput(w); // consume mouse/toggle once, before fixed-step movement
   p.prompt = '';
   if (!w.started || p.dead) {
     syncMesh(p);
@@ -130,11 +133,12 @@ export function updatePlayer(w: World, dt: number): void {
   let bd: number = P.enterCarRange;
   for (const v of w.vehicles) {
     const t = v.body.translation();
+    if (v.idle || Math.abs(t.y - pos.y) > TUNING.map.levelTolerance) continue;
     const d = Math.hypot(t.x - pos.x, t.z - pos.z) - v.spec.halfExtents[0];
     if (d < bd) { bd = d; best = v; }
   }
   // at a clinic door: get patched up (takes priority over talking and cars)
-  const clinic = clinicNearby(w);
+  const clinic = Math.abs(pos.y - w.city.heightAt(pos.x, pos.z, pos.y)) < TUNING.map.levelTolerance ? clinicNearby(w) : null;
   if (clinic && !w.chat.open) {
     p.prompt = `E  see a doctor at ${clinic.name} ($${clinicFee(w)})`;
     if (act.interact(inp)) {
@@ -144,13 +148,14 @@ export function updatePlayer(w: World, dt: number): void {
   }
 
   // nearest person to talk to (preferred over a car when closer)
-  const ped = w.chat.open ? null : nearestPed(w, pos.x, pos.z, P.talkRange);
+  const nearbyPed = w.chat.open ? null : nearestPed(w, pos.x, pos.z, P.talkRange);
+  const ped = nearbyPed && Math.abs(nearbyPed.pos.y - pos.y) < TUNING.map.levelTolerance ? nearbyPed : null;
   const pedD = ped ? Math.hypot(ped.pos.x - pos.x, ped.pos.z - pos.z) : Infinity;
   const item = w.chat.open ? null : w.itemsState.target;
   const itemD = item ? Math.hypot(item.px - pos.x, item.pz - pos.z) : Infinity;
   if (item && itemD <= pedD && itemD <= bd + 0.3) {
-    const room = freeSlot(w) >= 0;
-    p.prompt = room ? `E  pick up ${TUNING.items.defs[item.type].name}` : 'Hotbar full · Q drops the selected item';
+    const room = freeSlot(w) >= 0 && pickupEligible(w, item);
+    p.prompt = room ? `E  pick up ${TUNING.items.defs[item.type].name}` : 'Inventory limit · I inspect · G drop selected item';
     if (room && act.interact(inp)) {
       pickUp(w, item);
       return;
@@ -178,18 +183,23 @@ export function updatePlayer(w: World, dt: number): void {
 
   // tank-style movement: A/D turn the character, W/S walk along the way they face
   const turn = (act.left(inp) ? 1 : 0) - (act.right(inp) ? 1 : 0);
-  p.facing += turn * P.turnSpeed * dt;
+  const turnDelta = turn * P.turnSpeed * dt;
+  p.facing += turnDelta;
+  w.cam.yaw += turnDelta; // A/D always turn the view and movement heading together
   const fwdIn = (act.forward(inp) ? 1 : 0) - (act.back(inp) ? 1 : 0);
   const running = act.run(inp) && fwdIn > 0;
   const injured = p.health < TUNING.health.injuredBelow ? TUNING.health.injuredSpeedFactor : 1;
   const speed = (fwdIn > 0 ? (running ? P.runSpeed : P.walkSpeed) : P.walkSpeed * P.backSpeedFactor) * (running ? injured : 1);
-  const ix = Math.sin(p.facing) * fwdIn, iz = Math.cos(p.facing) * fwdIn;
+  const wantSpeed = speed * fwdIn;
+  p.moveSpeed += THREE.MathUtils.clamp(wantSpeed - p.moveSpeed, -P.acceleration * dt, P.acceleration * dt);
+  // A/D turn rather than adding a second translation axis: W+A cannot increase distance travelled.
+  const ix = Math.sin(p.facing), iz = Math.cos(p.facing);
   const len = Math.abs(fwdIn) + Math.abs(turn) * 0.3; // a little leg movement when turning on the spot
   if (p.grounded) {
     p.vy = P.groundedVy;
     if (act.jump(inp)) p.vy = P.jumpVelocity;
   } else p.vy -= P.gravity * dt;
-  move.set(ix * speed * dt, p.vy * dt, iz * speed * dt);
+  move.set(ix * p.moveSpeed * dt, p.vy * dt, iz * p.moveSpeed * dt);
   if (p.knockT > 0) {
     // thrown by a car: slide away, no control
     p.knockT -= dt;
@@ -231,6 +241,7 @@ function syncMesh(p: PlayerState) {
 export function enterVehicle(w: World, v: Vehicle): void {
   const p = w.player;
   p.vehicle = v;
+  p.moveSpeed = 0;
   v.driven = true;
   v.body.wakeUp(); // parked cars sleep in the physics engine
   p.mesh.visible = false;
@@ -240,6 +251,9 @@ export function enterVehicle(w: World, v: Vehicle): void {
   if (p.lastVehicleId !== v.id) emit(w, { type: 'enterCar', x: t.x, z: t.z, carId: v.id, seen });
   p.lastVehicleId = v.id;
   w.cam.yaw = v.heading + Math.PI;
+  w.cam.lastLookTime = w.time;
+  w.cam.focus.copy(v.mesh.position);
+  w.cam.focus.y += TUNING.camera.heightOffset;
 }
 
 export function exitVehicle(w: World): void {
@@ -253,15 +267,28 @@ export function exitVehicle(w: World): void {
   const side = v.spec.halfExtents[0] + 0.9;
   const lx = Math.cos(v.heading) * side, lz = -Math.sin(v.heading) * side;
   let x = t.x + lx, z = t.z + lz;
-  // if blocked on the left, try the right
-  const R = w.R;
-  const blocked = (px: number, pz: number) =>
-    w.physics.intersectionWithShape({ x: px, y: w.city.heightAt(px, pz) + 1.0, z: pz }, { x: 0, y: 0, z: 0, w: 1 }, new R.Capsule(P.capsuleHalfHeight, P.capsuleRadius), undefined, undefined, v.collider) !== null;
-  if (blocked(x, z)) { x = t.x - lx; z = t.z - lz; }
-  if (blocked(x, z)) { x = t.x; z = t.z; }
-  p.body.setTranslation({ x, y: Math.max(w.city.heightAt(x, z) + 1.0, t.y + 0.4), z }, true);
+  // Try both doors, then the nose/rear, then a nearby pavement. Never put the capsule on the car roof
+  // or inside the body when a facade blocks the driver's door.
+  const R = w.R, shape = new R.Capsule(P.capsuleHalfHeight, P.capsuleRadius);
+  const height = (px: number, pz: number) => w.city.heightAt(px, pz, t.y) + P.capsuleHalfHeight + P.capsuleRadius + P.ccOffset;
+  const blocked = (px: number, pz: number) => w.city.isBlocked(px, pz) ||
+    w.physics.intersectionWithShape({ x: px, y: height(px, pz), z: pz }, { x: 0, y: 0, z: 0, w: 1 }, shape,
+      R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, p.collider) !== null;
+  const end = v.spec.halfExtents[2] + side;
+  const candidates = [[x, z], [t.x - lx, t.z - lz],
+    [t.x + Math.sin(v.heading) * end, t.z + Math.cos(v.heading) * end],
+    [t.x - Math.sin(v.heading) * end, t.z - Math.cos(v.heading) * end]];
+  safeSpotNear(w, t.x, t.z, SAFE);
+  candidates.push([SAFE.x, SAFE.z]);
+  const free = candidates.find(([px, pz]) => !blocked(px, pz));
+  if (free) [x, z] = free;
+  else { x = SAFE.x; z = SAFE.z; }
+  p.body.setTranslation({ x, y: height(x, z), z }, true);
   p.collider.setEnabled(true);
   p.mesh.visible = true;
   p.facing = v.heading;
+  w.cam.yaw = p.facing + Math.PI;
+  w.cam.lastLookTime = w.time;
+  p.moveSpeed = 0;
   p.vy = 0;
 }

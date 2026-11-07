@@ -1,0 +1,114 @@
+{
+  "quality": "medium",
+  "renderer": "Chromium SwiftShader software GL",
+  "size": "480x270",
+  "seed": 123,
+  "map": "georgetown",
+  "frames": 120,
+  "readyMs": 63042,
+  "boot": {
+    "mapMs": 16015,
+    "firstFrameMs": 23604
+  },
+  "bake": {
+    "bakeMs": 1981,
+    "bytes": 76895573,
+    "res": 512
+  },
+  "calls": 262,
+  "triangles": 1887807,
+  "geometries": 267,
+  "textures": 18,
+  "programs": 47,
+  "cpuMedian": 6.8,
+  "cpuP90": 36.3,
+  "cpuWorst": 4414.5,
+  "framesOver33": 13,
+  "slowest": [
+    {
+      "cpu": 4414.5,
+      "top": "render 4410.8 · physics 1.5 · traffic 0.9 · sync 0.4"
+    },
+    {
+      "cpu": 3972.5,
+      "top": "render 3969.6 · physics 1.3 · traffic 0.4 · player 0.3"
+    },
+    {
+      "cpu": 50,
+      "top": "vehicles 36.4 · render 7.8 · sync 2.8 · physics 1.9"
+    },
+    {
+      "cpu": 47.9,
+      "top": "physics 29.9 · render 14.0 · sync 2.4 · player 0.3"
+    },
+    {
+      "cpu": 45.4,
+      "top": "traffic 35.6 · render 7.6 · physics 1.2 · player 0.2"
+    },
+    {
+      "cpu": 41.9,
+      "top": "render 38.5 · physics 2.1 · traffic 0.4 · player 0.2"
+    },
+    {
+      "cpu": 41.9,
+      "top": "physics 37.7 · render 2.9 · sync 0.3 · minimap 0.3"
+    },
+    {
+      "cpu": 41.5,
+      "top": "render 39.3 · physics 1.4 · player 0.1 · traffic 0.1"
+    }
+  ],
+  "heapMB": 269,
+  "allocatedKBPerFrame": 261,
+  "allocationTop": [
+    [
+      "fn warmup-CWWpSYqy.js:4119",
+      2977640
+    ],
+    [
+      "_ warmup-CWWpSYqy.js:4170",
+      2343656
+    ],
+    [
+      "is main-vIMT3fIz.js:7",
+      1912600
+    ],
+    [
+      "gn warmup-CWWpSYqy.js:4119",
+      1554876
+    ],
+    [
+      "fromBuffer warmup-CWWpSYqy.js:4221",
+      1541940
+    ],
+    [
+      "$r main-vIMT3fIz.js:2",
+      1340872
+    ],
+    [
+      "ai main-vIMT3fIz.js:2",
+      1029096
+    ],
+    [
+      "cn warmup-CWWpSYqy.js:4119",
+      987972
+    ],
+    [
+      "mi main-vIMT3fIz.js:2",
+      957764
+    ],
+    [
+      "rotation warmup-CWWpSYqy.js:4221",
+      791408
+    ],
+    [
+      "Fo main-vIMT3fIz.js:7",
+      718160
+    ],
+    [
+      "Mu main-vIMT3fIz.js:8",
+      704520
+    ]
+  ],
+  "errors": []
+}

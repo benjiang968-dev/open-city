@@ -20,6 +20,8 @@ export interface InputState {
 }
 
 export function createInput(canvas: HTMLCanvasElement): InputState {
+  canvas.tabIndex = 0;
+  let lookDragging = false;
   const s: InputState = {
     keys: new Set(),
     pressed: new Set(),
@@ -35,18 +37,26 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
     mouse0: false,
     lockUnavailable: false,
   };
+  const release = () => {
+    s.keys.clear(); s.pressed.clear(); s.mouse0 = false; s.mouseDX = 0; s.mouseDY = 0; s.wheel = 0; lookDragging = false;
+  };
+  const editable = (target: EventTarget | null) => target instanceof HTMLElement &&
+    (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(target.tagName));
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('mouseup', (e) => {
+    if (e.button === 2) lookDragging = false;
     if (e.button === 0) s.mouse0 = false;
   });
   document.addEventListener('pointerlockerror', () => {
     s.lockUnavailable = true;
   });
   window.addEventListener('wheel', (e) => {
-    if (!s.blocked && e.deltaY !== 0) s.wheel += Math.sign(e.deltaY);
+    if (!s.blocked && (e.target === canvas || s.pointerLocked) && e.deltaY !== 0) s.wheel += Math.sign(e.deltaY);
   }, { passive: true });
   window.addEventListener('keydown', (e) => {
     s.anyKeyPressed = true;
-    if (s.blocked) return;
+    if (s.blocked || editable(e.target)) return;
+    if (e.repeat && !s.keys.has(e.code)) return; // a held key after focus loss needs a fresh press
     if (!s.keys.has(e.code)) s.pressed.add(e.code);
     s.keys.add(e.code);
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'F3', 'F4', 'Tab'].includes(e.code)) e.preventDefault();
@@ -54,9 +64,12 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
   window.addEventListener('keyup', (e) => {
     s.keys.delete(e.code);
   });
-  window.addEventListener('blur', () => { s.keys.clear(); s.mouse0 = false; });
+  window.addEventListener('blur', release);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) release(); });
   window.addEventListener('mousedown', (e) => {
     s.anyKeyPressed = true;
+    if (e.target !== canvas && !s.pointerLocked) release();
+    if (e.target === canvas) { canvas.focus({ preventScroll: true }); if (e.button === 2 && !s.blocked) lookDragging = true; }
     if (e.button === 0 && !s.blocked && (s.pointerLocked || s.lockUnavailable) && e.target === canvas) s.mouse0 = true;
   });
   canvas.addEventListener('click', () => {
@@ -69,13 +82,14 @@ export function createInput(canvas: HTMLCanvasElement): InputState {
   document.addEventListener('pointerlockchange', () => {
     const locked = document.pointerLockElement === canvas;
     if (s.pointerLocked && !locked) {
+      release();
       if (s.expectUnlock) s.expectUnlock = false;
       else s.lockLost = true;
     }
     s.pointerLocked = locked;
   });
   window.addEventListener('mousemove', (e) => {
-    if (!s.pointerLocked || s.blocked) return;
+    if ((!s.pointerLocked && !lookDragging) || s.blocked) return;
     s.mouseDX += e.movementX;
     s.mouseDY += e.movementY;
     s.mouseMovedAt = performance.now() / 1000;

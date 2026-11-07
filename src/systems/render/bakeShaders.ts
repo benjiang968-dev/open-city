@@ -86,11 +86,12 @@ Mat asphalt(vec2 uv) {
   vec4 w2 = worley(uv, cyc(0.009), 3, 0.9);
   float grit = smoothstep(0.42, 0.25, w2.x) * step(0.55, w2.z);
   float fine = gnoise(uv, cyc(0.004), 4);
-  vec3 binder = srgb(vec3(0.21, 0.21, 0.215));
-  vec3 stoneCol = mix(srgb(vec3(0.36, 0.35, 0.34)), srgb(vec3(0.60, 0.58, 0.55)), w.z);
+  // Low-contrast fine aggregate: the former 0.60 stones read as coloured gravel in daylight.
+  vec3 binder = srgb(vec3(0.26, 0.265, 0.27));
+  vec3 stoneCol = mix(srgb(vec3(0.29, 0.29, 0.285)), srgb(vec3(0.38, 0.375, 0.37)), w.z);
   vec3 alb = mix(binder, stoneCol, stone * (0.45 + 0.55 * w.z));
-  alb = mix(alb, srgb(vec3(0.5, 0.49, 0.47)), grit * 0.5);
-  alb *= (0.82 + 0.36 * base) * (0.9 + 0.2 * fine);
+  alb = mix(alb, srgb(vec3(0.35, 0.35, 0.34)), grit * 0.3);
+  alb *= (0.94 + 0.12 * base) * (0.97 + 0.06 * fine);
   // crack networks (warped cell borders) only in places, and tar-sealed cracks elsewhere
   vec2 warp = vec2(gnoise(uv, cyc(0.5), 5), gnoise(uv, cyc(0.5), 6)) - 0.5;
   vec4 c = worley(uv + warp * 0.06, cyc(1.3), 7, 0.9);
@@ -101,9 +102,9 @@ Mat asphalt(vec2 uv) {
   float seal = (1.0 - smoothstep(0.02, 0.07, edge)) * sealZone;
   alb = mix(alb, srgb(vec3(0.12, 0.12, 0.125)), seal * 0.7);
   alb = mix(alb, srgb(vec3(0.08, 0.08, 0.08)), crack);
-  float h = stone * 0.0025 * (0.4 + w.z) + grit * 0.0008 + fine * 0.0006 - crack * 0.004 + seal * 0.0005;
-  float rough = mix(0.93, 0.8, stone);
-  rough = mix(rough, 0.5, seal);
+  float h = stone * 0.0012 * (0.4 + w.z) + grit * 0.0004 + fine * 0.0003 - crack * 0.004 + seal * 0.0005;
+  float rough = mix(0.96, 0.9, stone);
+  rough = mix(rough, 0.78, seal);
   return Mat(alb, 1.0, h, rough, 1.0 - crack * 0.7 - (1.0 - stone) * 0.12);
 }
 

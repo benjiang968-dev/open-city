@@ -340,7 +340,7 @@ export function anyLane(w: World): number {
 export function spawnTraffic(w: World): void {
   const rng = w.rng.fork(55);
   const paints = ['#e63946', '#f1faee', '#a8dadc', '#457b9d', '#1d3557', '#2a9d8f', '#e9c46a', '#f4a261', '#8d99ae', '#ffffff', '#3d405b', '#81b29a'];
-  const types: CarTypeName[] = ['hatchback', 'sedan', 'sedan', 'pickup'];
+  const types: CarTypeName[] = ['hatchback', 'sedan', 'sedan', 'pickup', 'suv', 'van', 'sports'];
   const first = anyLane(w);
   const max = Math.max(TT.countByQuality.low, TT.countByQuality.medium, TT.countByQuality.high);
   w.trafficSim = { pool: [], all: [], stats: createTrafficStats(max), measure: false };

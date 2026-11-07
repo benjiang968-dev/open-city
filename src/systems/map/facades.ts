@@ -12,6 +12,7 @@ import { B, K, type GeoRaster } from './terrain';
 import { TILE } from './facadeTex';
 import { POI_NAMES, poiName } from '../../data/poiNames';
 import { TUNING } from '../../tuning';
+import { makeEntranceValidator } from './placement';
 import { facadeColour } from '../render/palette';
 
 // ----------------------------------------------------------------------------------------- art constants
@@ -64,7 +65,8 @@ export function rasterizeBuildings(doc: GeoDoc, ras: GeoRaster, skip: Set<string
   const band = ras.band, k = ras.k;
   for (const b of doc.buildings) {
     if (skip.has(b.id)) continue;
-    ras.fillRing(b.pts, (o) => {
+    ras.fillRing(b.pts, (o, x, z) => {
+      if (b.holes?.some(h => pointInPoly(x, z, h))) return;
       k[o] |= K.BUILDING;
       if (band[o] === B.NONE) band[o] = B.BUILDING;
     });
@@ -79,6 +81,7 @@ interface Wall {
 }
 
 export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGrid: SegGrid, chunks: RenderChunks, phys: PhysChunks, seed: number, root: THREE.Group, skip: Set<string>) {
+  const entranceClear = makeEntranceValidator(doc, net, skip);
   // ---- landmark matching
   const special = new Map<string, string>();
   const used = new Set<string>();
@@ -130,14 +133,15 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     const det = chunks.buf('detail', cx, cz);
     // walls with outward normals; party walls; street-facing walls; the front (nearest road)
     const walls: Wall[] = [];
-    for (let i = 0; i < n; i++) {
-      const p = P[i], q = P[(i + 1) % n];
+    for (const [ringIndex, ring] of [P, ...(b.holes ?? [])].entries()) for (let i = 0; i < ring.length; i++) {
+      const p = ring[i], q = ring[(i + 1) % ring.length];
       const len = Math.hypot(q[0] - p[0], q[1] - p[1]);
       if (len < 0.3) continue;
       const ux = (q[0] - p[0]) / len, uz = (q[1] - p[1]) / len;
-      let nx = -uz, nz = ux;
+      // Ring winding, rather than a centroid test, also gives correct normals at concave corners and courtyards.
+      const orientation = Math.sign(signedArea(ring)) * (ringIndex ? -1 : 1);
+      const nx = uz * orientation, nz = -ux * orientation;
       const mx = (p[0] + q[0]) / 2, mz = (p[1] + q[1]) / 2;
-      if ((mx - cx) * nx + (mz - cz) * nz < 0) { nx = -nx; nz = -nz; }
       // a party wall has a neighbour along most of its length (a small annex or tower doesn't count)
       let touching = 0;
       for (const f of [0.2, 0.5, 0.8]) if (ras.kindAt(p[0] + (q[0] - p[0]) * f + nx * 0.8, p[1] + (q[1] - p[1]) * f + nz * 0.8) & K.BUILDING) touching++;
@@ -149,7 +153,9 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     if (!walls.length) return;
     let front = walls[0], fd = Infinity;
     for (const w of walls) {
-      if (w.party) continue;
+      if (w.party || w.len < 1.6) continue;
+      const doorX = (w.ax + w.bx) / 2, doorZ = (w.az + w.bz) / 2;
+      if (!entranceClear(b.id, extension(w, doorX, doorZ, 0.75, 0.05, 1))) continue;
       let d = Infinity;
       const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
       edgeGrid.query(mx + w.nx * 4, mz + w.nz * 4, (_s, id, dd) => { const e = net.edges[id]; if (!e.deck) d = Math.min(d, dd - e.hw); });
@@ -159,12 +165,19 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     // ground levels
     let yMin = Infinity;
     for (const p of P) yMin = Math.min(yMin, ras.heightAt(p[0] + (cx - p[0]) * 0.05, p[1] + (cz - p[1]) * 0.05));
+    // Terrain can dip between footprint corners on a long or newly clipped wall. Sink the foundation below the
+    // lowest sampled exterior edge without flattening the hillside or moving the street profile.
+    for (const w of walls) for (let s = 0; s <= w.len; s += 2) yMin = Math.min(yMin, ras.heightAt(w.ax + w.ux * s + w.nx * 0.1, w.az + w.uz * s + w.nz * 0.1));
     const fmx = (front.ax + front.bx) / 2, fmz = (front.az + front.bz) / 2;
     const ySide = ras.heightAt(fmx + front.nx * 1.6, fmz + front.nz * 1.6);
     yMin = Math.min(yMin, ySide) - 0.6;
     const t = b.type;
     const westEnd = cx > WEST_END_X;
-    const stoop = (t === 'terrace' || t === 'house') && !westEnd ? 0.45 + rnd() * 0.6 : 0.05;
+    let stoop = (t === 'terrace' || t === 'house') && !westEnd ? 0.45 + rnd() * 0.6 : 0.05;
+    // Where the real setback cannot accommodate steps, use a ground-level threshold rather than blocking the
+    // pavement with stairs or leaving an inaccessible raised entrance. Preserve the random draw above.
+    const stairReach = 1.1 + Math.max(1, Math.round(stoop / 0.19) - 1) * 0.3;
+    if (stoop > 0.2 && !entranceClear(b.id, extension(front, fmx, fmz, Math.max(0.8, front.len / 2 - 0.1), 0.03, stairReach))) stoop = 0.05;
     const y0 = ySide + stoop;
     const levels = Math.max(1, b.levels);
     const ground = t === 'retail' || t === 'warehouse' || (t === 'commercial' && !westEnd) ? 4.2 : t === 'church' ? 0 : STOREY + 0.1;
@@ -263,7 +276,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
         const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
         const cc = t === 'terrace' || t === 'house' || t === 'retail' ? lin(0xf2efe6) : shade(col, 0.82);
         chunks.tag('overhead');
-        grd.obox(mx + w.nx * 0.18, yTop + PARAPET - 0.05, mz + w.nz * 0.18, w.len / 2 + 0.08, 0.3, yTop + PARAPET + 0.38, w.ux, w.uz, cc, shade(cc, 0.9), true);
+        grd.obox(mx + w.nx * 0.18, yTop + PARAPET - 0.05, mz + w.nz * 0.18, Math.max(0.05, w.len / 2 - 0.1), 0.3, yTop + PARAPET + 0.38, w.ux, w.uz, cc, shade(cc, 0.9), true);
         grd.obox(mx + w.nx * 0.08, yTop - 0.1, mz + w.nz * 0.08, w.len / 2, 0.14, yTop + 0.12, w.ux, w.uz, cc, shade(cc, 0.9), true);
       }
       // near detail: window sills on street walls, stoops at the door
@@ -295,7 +308,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
           steps = Math.max(2, Math.round(rise / 0.19));
           const stoop = rise; // shadows the building's nominal stoop height below
           const stepH = stoop / steps;
-          if (rise >= 0.2 && rise <= 2.4) {
+          if (rise >= 0.2 && rise <= 2.4 && entranceClear(b.id, extension(w, px, pz, 0.8, 0.03, 1.1 + (steps - 1) * 0.3 + 0.05))) {
           const sc = lin(0xb8b1a4);
           chunks.tag('stoop');
           det.obox(px + w.nx * 0.55, y0 - 0.25, pz + w.nz * 0.55, 0.75, 0.55, y0, w.ux, w.uz, sc, shade(sc, 0.9));
@@ -329,7 +342,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     const roofCol = roof === 'flat' ? hx(ROOF_FLAT[hashStr(b.id + 'r') % ROOF_FLAT.length]) : hx(ROOF_PITCH[hashStr(b.id + 'r') % ROOF_PITCH.length]);
     if (roof === 'flat') {
       const yr = yTop + PARAPET - 0.25;
-      for (let i = 1; i + 1 < n; i++) froof(fac, P[0], P[i], P[i + 1], yr, roofCol, seedByte);
+      for (const tri of footprintTriangles(P, b.holes)) froof(fac, tri[0], tri[1], tri[2], yr, roofCol, seedByte);
       // rooftop clutter: chimneys on rowhouses, plant on bigger roofs
       const r2 = rand(hashStr(b.id + 'c'));
       chunks.tag('roof');
@@ -346,7 +359,9 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       }
     } else {
       chunks.tag('roof');
-      pitchedRoof(fac, grd, walls, P, yTop, roof, roofCol, col, plainTile, seedByte, key);
+      if (b.holes?.length) {
+        for (const tri of footprintTriangles(P, b.holes)) froof(fac, tri[0], tri[1], tri[2], yTop, roofCol, seedByte);
+      } else pitchedRoof(fac, grd, walls, P, yTop, roof, roofCol, col, plainTile, seedByte, key);
     }
     chunks.tag('roof'); // landmark extras stand on the roofs (arcade and portico tag their own parts)
     // ---- landmark extras
@@ -361,7 +376,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
     if (key === 'harbour') harbourTiers(walls, P, cx, cz, yTop, col, seedByte);
     if (key === 'curvedblock') balconyBands(walls, y0 + ground, yTop, levels);
     if (key === 'library' || key === 'mansion') cupola(cx, cz, yTop + (roof === 'flat' ? PARAPET : 3), key === 'mansion');
-    if (key === 'mansion') portico(front, y0, yTop);
+    if (key === 'mansion' && entranceClear(b.id, extension(front, fmx, fmz, 4.7, 0.03, 3))) portico(front, y0, yTop);
     if (key === 'oldstone') {
       for (const w of walls.filter((q) => q.len < 10)) {
         const mx = (w.ax + w.bx) / 2, mz = (w.az + w.bz) / 2;
@@ -402,13 +417,14 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
       hv = Math.max(hv, Math.abs((p[0] - cx) * w0.nx + (p[1] - cz) * w0.nz));
     }
     const top = yTop + (roof === 'flat' ? PARAPET : 2);
-    if (4 * hu * hv <= footArea(P) * 1.015 + 2) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
+    if (!b.holes?.length && 4 * hu * hv <= footArea(P) + 0.0001) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
     else {
       // a prism is a convex hull: over an L- or U-shaped footprint (a third of the real buildings) it filled the notch,
       // an invisible wall across courtyards, driveways and pavements. Concave footprints are cut into convex pieces.
       let made = 0;
-      for (const piece of convexPieces(P)) if (phys.prism(piece.flat(), yMin, top, 'building')) made++;
-      if (!made) phys.box(cx, (yMin + top) / 2, cz, hu, (top - yMin) / 2, hv, w0.ux, w0.uz, 'building');
+      for (const piece of (b.holes?.length ? footprintTriangles(P, b.holes) : footprintConvexPieces(P))) if (phys.prism(piece.flat(), yMin, top, 'building')) made++;
+      // Never fall back to a hull: a hull fills the very street / courtyard notch placement cut out.
+      if (!made) throw new Error(`Invalid building triangulation: ${b.id}`);
     }
   }
 
@@ -473,7 +489,7 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
   }
   function pitchedRoof(fac: MeshBuf, grd: MeshBuf, walls: Wall[], P: Pt[], yTop: number, kind: string, roofCol: number, col: number, plainTile: number, seedByte: number, key: string) {
     if (P.length !== 4) {
-      for (let i = 1; i + 1 < P.length; i++) froof(fac, P[0], P[i], P[i + 1], yTop, roofCol, seedByte);
+      for (const tri of footprintTriangles(P)) froof(fac, tri[0], tri[1], tri[2], yTop, roofCol, seedByte);
       return;
     }
     // long axis
@@ -724,32 +740,30 @@ export function buildBuildings(doc: GeoDoc, ras: GeoRaster, net: RoadNet, edgeGr
 
 // ======================================================================================================
 /**
- * A footprint as convex pieces: itself when convex (within a few cm), else its triangulation with neighbouring
- * triangles merged while the union stays convex (Hertel-Mehlhorn). A footprint the triangulation cannot cover (self-
- * intersecting data) stays whole (its hull, as before).
+ * A footprint as convex pieces: itself when convex, else its triangulation with neighbouring
+ * triangles merged while the union stays convex (Hertel-Mehlhorn). Never fill notches with a convex hull.
  */
-function convexPieces(P: Pt[]): Pt[][] {
+export function footprintConvexPieces(P: Pt[]): Pt[][] {
   const n = P.length;
   const cross = (a: Pt, b: Pt, c: Pt) => (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
   const area2 = (idx: number[]) => { let a = 0; for (let i = 0; i < idx.length; i++) { const p = P[idx[i]], q = P[idx[(i + 1) % idx.length]]; a += p[0] * q[1] - q[0] * p[1]; } return a; };
   const all = Array.from({ length: n }, (_, i) => i);
   const sgn = Math.sign(area2(all)) || 1;
-  // convex enough: no vertex more than TUNING.geo.footprintNotchTol inside the line past it (a bay window or a shallow jog is
-  // filled, as the hull did; a courtyard, a driveway notch or an L's inner corner is not)
+  // Exact convexity: even a shallow notch may be the protected strip beside a pavement.
   const convex = (idx: number[]) => {
     for (let i = 0; i < idx.length; i++) {
       const a = P[idx[(i + idx.length - 1) % idx.length]], b = P[idx[i]], c = P[idx[(i + 1) % idx.length]];
       const L = Math.hypot(c[0] - a[0], c[1] - a[1]) || 1;
-      if ((cross(a, b, c) * sgn) / L < -TUNING.geo.footprintNotchTol) return false;
+      if ((cross(a, b, c) * sgn) / L < -0.000001) return false;
     }
     return true;
   };
   if (convex(all)) return [P];
-  if (n > 400) return [P];
+  if (n > 400) return footprintTriangles(P);
   const tris = THREE.ShapeUtils.triangulateShape(P.map((p) => new THREE.Vector2(p[0], p[1])), []);
   let polys = tris.map((t) => (Math.sign(area2(t)) === sgn ? [...t] : [t[0], t[2], t[1]]));
   const total = polys.reduce((s, q) => s + Math.abs(area2(q)), 0);
-  if (!polys.length || Math.abs(total - Math.abs(area2(all))) > Math.abs(area2(all)) * 0.02 + 1) return [P];
+  if (!polys.length || Math.abs(total - Math.abs(area2(all))) > Math.abs(area2(all)) * 0.00001 + 0.0001) return footprintTriangles(P);
   for (let merged = true; merged;) {
     merged = false;
     for (let i = 0; i < polys.length && !merged; i++) {
@@ -863,3 +877,17 @@ class SignBuf {
   }
 }
 export { POI_NAMES, mixc };
+
+/** Shared triangulation for roofs and collision: neither is allowed to cover concave notches or courtyard holes. */
+export function footprintTriangles(P: Pt[], holes: Pt[][] = []): Pt[][] {
+  const all = P.concat(...holes);
+  return THREE.ShapeUtils.triangulateShape(P.map(p => new THREE.Vector2(...p)), holes.map(h => h.map(p => new THREE.Vector2(...p)))).map(t => t.map(i => all[i]));
+}
+function signedArea(P: Pt[]): number {
+  let sum = 0;
+  for (let i = 0; i < P.length; i++) { const a = P[i], b = P[(i + 1) % P.length]; sum += a[0] * b[1] - b[0] * a[1]; }
+  return sum / 2;
+}
+function extension(w: Wall, x: number, z: number, half: number, start: number, end: number): Pt[] {
+  return [[x - w.ux * half + w.nx * start, z - w.uz * half + w.nz * start], [x + w.ux * half + w.nx * start, z + w.uz * half + w.nz * start], [x + w.ux * half + w.nx * end, z + w.uz * half + w.nz * end], [x - w.ux * half + w.nx * end, z - w.uz * half + w.nz * end]];
+}

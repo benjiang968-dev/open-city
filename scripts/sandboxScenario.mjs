@@ -39,7 +39,7 @@ export async function runSandboxFlow(page) {
     for (const kind of ['warehouse', 'cleaning', 'repair', 'delivery']) {
       const startKind = kind === 'cleaning' ? 'shop' : kind === 'repair' ? 'office' : 'warehouse';
       const start = enter(startKind);
-      assert(api.startJob(kind), `Could not start ${kind}`);
+      assert(api.startJob(kind), `Could not start ${kind}: ${w.hud.toast.textContent}; pool ${JSON.stringify(w.sandbox.save.pool)}; count ${w.itemsState.items.length}; active ${JSON.stringify(w.sandbox.save.active)}`);
       const active = w.sandbox.save.active;
       const cash = w.cash;
       for (const id of active.items) {

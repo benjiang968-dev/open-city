@@ -142,6 +142,8 @@ function buildRoom(w: World, e: InteriorEntry) {
   const dc = w.physics.createCollider(w.R.ColliderDesc.cuboid(I.doorWidth / 2, I.doorHeight / 2, 0.04).setCollisionGroups(GROUPS.static));
   w.city.solidTags.set(dc.handle, 'door'); e.colliders.push(dc);
   e.door = { pivot, collider: dc, open: true, angle: -Math.PI / 2 }; updateDoor(e, 0);
+  const thresholdBackdrop = new THREE.Mesh(new THREE.PlaneGeometry(I.doorWidth + 0.2, I.doorHeight + 0.1), new THREE.MeshBasicMaterial({ color: 0x162d30, side: THREE.DoubleSide }));
+  thresholdBackdrop.position.set(0, I.doorHeight / 2, I.halfDepth + 0.25); room.add(thresholdBackdrop);
   const exit = label('EXIT\nE  LEAVE', 1.2, 0.42); exit.position.set(0, 2.68, I.halfDepth - 0.13); exit.rotation.y = Math.PI; room.add(exit);
   for (const x of [-4.2, 4.2]) box(x, 0.11, 0, 0.08, 0.18, 11.8, 0xf1e9db, null);
 

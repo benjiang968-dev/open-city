@@ -1171,3 +1171,20 @@ Format: date · what changed · what to test · known issues.
   - Synthesized street trees on M St and Wisconsin Ave are not moved to the kerb strip on real data: 136 trees and 60 posts stand within a person's reach of a walk link (none blocks a walkway).
   - The taxi can name a destination's street as "Georgetown" when the place has none.
   - Boot is 3-4 times slower than main (texture bake, bigger real map, three times the colliders); Stage 1 costs more draw calls, triangles, heap and frame time than main; real-GPU numbers are still unmeasured.
+
+
+## 2026-11-07 — Owner improvement request
+
+Implemented exact footprint placement against carriageways, pavement corner meshes, walking corridors and neighbouring polygons; exact concave roofs and collider decomposition; safe stoop extension validation. Full source audit: 4,713 → 4,620 retained (1,972 clipped, 93 omitted), zero intersections and roof/collider area errors. Decimal predicates handle near-coincident source boundaries.
+
+R recovery now anchors to the supporting ground, searches a clear rotated chassis pose, clears velocities/forces and wheel controls, and has a cooldown. Walking is 5.8 m/s with a separate faster sprint and acceleration, fixed-step movement and no diagonal translation boost. Camera heading/mouse clocks/focus are consistent; V switches foot/car views and cabin driver positions are model-specific. Indoor camera stays in the room. Vehicle exits test both sides and nearby clear poses. Street traffic no longer injures an interior player on another vertical level.
+
+Reduced asphalt aggregate contrast/normal strength, increased roughness and reduced wet-surface mirror sheen. Split plain and instance-coloured crowd/parked-car materials to avoid per-draw program churn. Isolated software-GL comparison sampled allocation 335→261 KB/frame, CPU median 18→6.8 ms; long software render stalls remain (docs/verification). Added hatch/saloon/SUV/van/sports/pickup silhouettes, detailed cabin openings, seats, dashboards and steering wheels, round wheel LOD, live rotation/steer.
+
+Six marked furnished physical rooms stream through E door transitions; office/apartment have tested stairs and upper floors. O operates collision-matched doors. I inspects/uses/drops/saves items, U drinks sealed stock, G/Q drops. Stable IDs and single locations prevent clones. Versioned IndexedDB saves item/world/container transforms, money, player, time, changed vehicles, NPC relationships and activity/property state; unsupported saves are retained. Autosave 10 seconds, manual save in inventory, no account sync.
+
+J exposes four repeatable spatial shifts plus apartment lease/purchase/storage and shop payment. Supplies use reserved item capacity so ambient litter cannot block work. Payouts are idempotent; apartment leases are prepaid $90/7 game days with no automatic renewal, purchase $1,800. Unpaid merchandise on exit and warned warehouse trespass cause police reports; existing crime/traffic/taxi systems retained.
+
+Verification: npm build; real Rapier inventory/vehicle/interior tests; actual IndexedDB reload fixture; full placement audit; production Georgetown controls (flat/slope/building recovery, views, heading and blur); four job payouts and duplicate guards; rent/storage identity; shop theft/pursuit resolution; production save/reload. See docs/IMPLEMENTATION-CHECKLIST.md for exact scopes and limits. Existing outdoor stair, road smoothness and traffic audit defects are not claimed universally resolved.
+
+Published owner-private via Sites at https://open-city-play-benjiang.benjiang968.chatgpt.site (deployment succeeded). GitHub Pages enablement returned integration 403; no custom domain or paid hosting purchased. Final Low software profile and full combined browser reload pass are recorded in docs/verification and screenshots.

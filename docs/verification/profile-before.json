@@ -1,0 +1,116 @@
+{
+  "quality": "medium",
+  "renderer": "Chromium SwiftShader software GL",
+  "size": "480x270",
+  "seed": 123,
+  "map": "georgetown",
+  "frames": 120,
+  "readyMs": 57811,
+  "boot": {
+    "mapMs": 26180,
+    "firstFrameMs": 31995
+  },
+  "bake": {
+    "bakeMs": 1088,
+    "bytes": 76895573,
+    "res": 512
+  },
+  "calls": 260,
+  "triangles": 1887559,
+  "geometries": 267,
+  "textures": 18,
+  "programs": 47,
+  "cpuMedian": 18,
+  "cpuP90": 58.4,
+  "cpuWorst": 10576.7,
+  "framesOver33": 32,
+  "slowest": [
+    {
+      "cpu": 10576.7,
+      "top": "render 10536.3 · physics 38.2 · traffic 0.5 · player 0.3"
+    },
+    {
+      "cpu": 6407.5,
+      "top": "render 6405.0 · physics 1.2 · player 0.3 · traffic 0.2"
+    },
+    {
+      "cpu": 89.8,
+      "top": "physics 64.8 · traffic-ctl 12.4 · minimap 6.2 · render 4.7"
+    },
+    {
+      "cpu": 71.2,
+      "top": "render 49.9 · player 7.0 · peds 6.8 · physics 5.6"
+    },
+    {
+      "cpu": 70.1,
+      "top": "render 57.3 · traffic 9.0 · physics 2.2 · player 0.4"
+    },
+    {
+      "cpu": 67.9,
+      "top": "render 52.6 · traffic 12.7 · physics 1.4 · player 0.2"
+    },
+    {
+      "cpu": 63.4,
+      "top": "render 50.9 · city 5.8 · physics 3.7 · hud 0.5"
+    },
+    {
+      "cpu": 60.5,
+      "top": "traffic 40.8 · render 16.0 · physics 1.7 · minimap 0.5"
+    }
+  ],
+  "heapMB": 270,
+  "allocatedKBPerFrame": 335,
+  "allocationTop": [
+    [
+      "_ warmup-CoPyzHmE.js:4170",
+      5790228
+    ],
+    [
+      "Qr main-CVOLePLI.js:2",
+      3827612
+    ],
+    [
+      "fn warmup-CoPyzHmE.js:4119",
+      3055192
+    ],
+    [
+      "rs main-CVOLePLI.js:7",
+      2134860
+    ],
+    [
+      "fromBuffer warmup-CoPyzHmE.js:4221",
+      1498440
+    ],
+    [
+      "gn warmup-CoPyzHmE.js:4119",
+      1478880
+    ],
+    [
+      "ii main-CVOLePLI.js:2",
+      1316628
+    ],
+    [
+      "cn warmup-CoPyzHmE.js:4119",
+      1135872
+    ],
+    [
+      "join :0",
+      1003944
+    ],
+    [
+      "y warmup-CoPyzHmE.js:4170",
+      892824
+    ],
+    [
+      "Po main-CVOLePLI.js:7",
+      793188
+    ],
+    [
+      "ku main-CVOLePLI.js:8",
+      784632
+    ]
+  ],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 404 (Not Found)"
+  ]
+}

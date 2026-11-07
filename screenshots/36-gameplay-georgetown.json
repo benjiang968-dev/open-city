@@ -1,0 +1,109 @@
+{
+  "initial": {
+    "entries": [
+      {
+        "id": "interior-shop-1569",
+        "kind": "shop",
+        "at": {
+          "x": -652.5306519080281,
+          "y": 21.335383754137904,
+          "z": 148.7975765141025,
+          "heading": -3.1347900374350277
+        }
+      },
+      {
+        "id": "interior-office-133",
+        "kind": "office",
+        "at": {
+          "x": -584.3115100452319,
+          "y": 22.041616857994015,
+          "z": 182.41046802406333,
+          "heading": 1.595653084663441
+        }
+      },
+      {
+        "id": "interior-warehouse-1075",
+        "kind": "warehouse",
+        "at": {
+          "x": -642.8794635925151,
+          "y": 22.41169050126536,
+          "z": 148.73192082480406,
+          "heading": -3.1332917132979357
+        }
+      },
+      {
+        "id": "interior-workshop-5",
+        "kind": "workshop",
+        "at": {
+          "x": -492.97614769840277,
+          "y": 22.053083482917522,
+          "z": 144.53699658563895,
+          "heading": -3.038198279559772
+        }
+      },
+      {
+        "id": "interior-apartment-446",
+        "kind": "apartment",
+        "at": {
+          "x": -700.9566813642656,
+          "y": 33.15887451171875,
+          "z": 21.912327488087055,
+          "heading": -1.6045200962096395
+        }
+      },
+      {
+        "id": "interior-cafe-749",
+        "kind": "cafe",
+        "at": {
+          "x": -600.1683711210704,
+          "y": 23.76696352928374,
+          "z": 141.47678148962257,
+          "heading": -1.4959364790841274
+        }
+      }
+    ],
+    "cash": 150
+  },
+  "jobs": {
+    "jobs": {
+      "warehouse": {
+        "pay": 50,
+        "completed": true
+      },
+      "cleaning": {
+        "pay": 40,
+        "completed": true
+      },
+      "repair": {
+        "pay": 65,
+        "completed": true
+      },
+      "delivery": {
+        "pay": 55,
+        "completed": true
+      }
+    },
+    "apartment": {
+      "rented": true,
+      "duplicatePaymentRejected": true,
+      "storageSameInstance": true
+    }
+  },
+  "before": {
+    "itemId": 9,
+    "cash": 270,
+    "apartment": "interior-apartment-446",
+    "completed": 4,
+    "theftHeat": 18,
+    "pursuitResolved": true,
+    "active": "interior-apartment-446"
+  },
+  "after": {
+    "cash": 270,
+    "completed": 4,
+    "sameInstance": true,
+    "active": "interior-apartment-446",
+    "health": 100
+  },
+  "errors": []
+}

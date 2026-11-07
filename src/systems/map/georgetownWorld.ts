@@ -17,6 +17,7 @@ import { buildNetMeshes, drapeRibbon, isDeckNode, rasterizeNet, sections } from 
 import { buildPlazaAndPiers, buildWater, makeWaterModel, rasterizePlaza, rasterizeWater, type WaterModel } from './waterworks';
 import { buildBridges, buildStairs, fitStairEnds, joinStairEnds, rasterizeStairs, stairHoles } from './bridges';
 import { buildBuildings, rasterizeBuildings } from './facades';
+import { validateBuildingPlacement } from './placement';
 import { buildMonuments } from './monuments';
 import { buildLots, conformToLots, planLots, rasterizeLots, type GeoLot } from './lots';
 import { buildProps } from './props';
@@ -206,9 +207,9 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   phase('roads');
 
   // ---------------------------------------------------------------- bands into the raster, then blend
-  const clipped = clipBuildingsToStreets(doc, net);
+  const clipped = validateBuildingPlacement(doc, net, baseAt);
   phase('clip');
-  const dropped = buildingsUnderDecks(doc, net, ras);
+  const dropped = new Set<string>();
   for (const id of clipped.drop) dropped.add(id);
   rasterizeBuildings(doc, ras, dropped);
   const lotPlans = planLots(doc, ras, net);
@@ -479,140 +480,6 @@ function riverNorthZ(river: Pt[], x: number): number {
     if (z < best) best = z;
   }
   return best === Infinity ? 1e9 : best;
-}
-
-/**
- * Footprints that reach into a carriageway or the sidewalk beside it (the knowledge-based data is 20-80 m off in
- * places, so some corners sit on junctions and sidewalks) are cut back to the back of the sidewalk, parallel to the
- * street; a footprint left with too little area is dropped. Edits doc.buildings in place (everything downstream sees
- * the clipped footprint). Returns the ids clipped and dropped.
- */
-function clipBuildingsToStreets(doc: GeoDoc, net: RoadNet): { clipped: string[]; drop: string[] } {
-  const SEGS = 1024;
-  const grid = new SegGrid(32);
-  for (const e of net.edges) {
-    // (real data: a driveway or alley never cuts a building; the importer ends it at the facade)
-    if (e.deck || (!doc.meta.synthetic && (e.cls === 'service' || e.road.service))) continue;
-    for (let k = 1; k < e.pts.length; k++) grid.add(e.pts[k - 1][0], e.pts[k - 1][1], e.pts[k][0], e.pts[k][1], e.id * SEGS + k, e.hw + G.sidewalkWidth + 2);
-  }
-  const MARGIN = 0.3; // m left between the back of the sidewalk and the cut facade
-  const out = { clipped: [] as string[], drop: [] as string[] };
-  // junction outlines with their bounding boxes (x0, z0, x1, z1)
-  const jn = net.nodes.filter((n) => n.outline.length >= 6).map((n) => {
-    let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
-    for (let i = 0; i < n.outline.length; i += 2) { x0 = Math.min(x0, n.outline[i]); x1 = Math.max(x1, n.outline[i]); z0 = Math.min(z0, n.outline[i + 1]); z1 = Math.max(z1, n.outline[i + 1]); }
-    return { n, x0, z0, x1, z1 };
-  });
-  for (const b of doc.buildings) {
-    const area0 = Math.abs(polyArea(b.pts));
-    let P: Pt[] = b.pts;
-    for (let pass = 0; pass < 3; pass++) {
-      let depth = 0.15, cx = 0, cz = 0, nx = 0, nz = 0;
-      // sample the outline (corners and wall midpoints)
-      const probe: Pt[] = [];
-      for (let i = 0; i < P.length; i++) {
-        const a = P[i], c = P[(i + 1) % P.length];
-        probe.push(a, [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2]);
-      }
-      for (const p of probe) {
-        grid.query(p[0], p[1], (seg, payload, d, t) => {
-          const e = net.edges[Math.floor(payload / SEGS)], k = payload % SEGS;
-          if ((k === 1 && t <= 0) || (k === e.pts.length - 1 && t >= 1)) return; // beyond the street's ends
-          const S = grid.segs, o = seg * 5;
-          const ax = S[o], az = S[o + 1], dx = S[o + 2] - ax, dz = S[o + 3] - az, L = Math.hypot(dx, dz) || 1;
-          const side = (p[0] - ax) * -dz + (p[1] - az) * dx > 0 ? 1 : -1; // + right of travel
-          const lim = e.hw + ((side > 0 ? e.swR : e.swL) ? G.sidewalkWidth : 0) + MARGIN;
-          if (lim - d <= depth) return;
-          depth = lim - d;
-          nx = (-dz / L) * side; nz = (dx / L) * side;
-          const qx = ax + dx * t, qz = az + dz * t;
-          cx = qx + nx * lim; cz = qz + nz * lim;
-        });
-      }
-      if (depth <= 0.15) {
-        // a corner on a junction surface (beyond the arms' bands): cut along the nearest outline segment, a sidewalk
-        // width out
-        let bx0 = Infinity, bz0 = Infinity, bx1 = -Infinity, bz1 = -Infinity;
-        for (const p of P) { bx0 = Math.min(bx0, p[0]); bx1 = Math.max(bx1, p[0]); bz0 = Math.min(bz0, p[1]); bz1 = Math.max(bz1, p[1]); }
-        let found = false;
-        for (const J of jn) {
-          if (found || J.x1 < bx0 || J.x0 > bx1 || J.z1 < bz0 || J.z0 > bz1) continue;
-          const n = J.n, O = n.outline;
-          const inside = probe.find((p) => pointInFlat(p[0], p[1], O));
-          if (!inside) continue;
-          let bd = Infinity;
-          for (let i = 0; i < O.length / 2; i++) {
-            const j = (i + 1) % (O.length / 2);
-            const ax = O[i * 2], az = O[i * 2 + 1], dx = O[j * 2] - ax, dz = O[j * 2 + 1] - az, L2 = dx * dx + dz * dz || 1;
-            const t = clamp(((inside[0] - ax) * dx + (inside[1] - az) * dz) / L2, 0, 1);
-            const qx = ax + dx * t, qz = az + dz * t, d = Math.hypot(qx - inside[0], qz - inside[1]);
-            if (d >= bd) continue;
-            bd = d;
-            const L = Math.sqrt(L2);
-            nx = -dz / L; nz = dx / L;
-            if ((qx - n.x) * nx + (qz - n.z) * nz < 0) { nx = -nx; nz = -nz; }
-            cx = qx + nx * (G.sidewalkWidth + MARGIN); cz = qz + nz * (G.sidewalkWidth + MARGIN);
-          }
-          found = true;
-        }
-        if (!found) break;
-      }
-      P = clipHalfPlane(P, cx, cz, nx, nz);
-      if (P.length < 3) break;
-    }
-    if (P === b.pts) continue;
-    if (P.length < 3 || Math.abs(polyArea(P)) < Math.max(12, area0 * 0.3)) out.drop.push(b.id);
-    else { b.pts = P; out.clipped.push(b.id); }
-  }
-  return out;
-}
-
-function pointInFlat(x: number, z: number, O: ArrayLike<number>): boolean {
-  let ins = false;
-  for (let i = 0, j = O.length / 2 - 1; i < O.length / 2; j = i++) {
-    const xi = O[i * 2], zi = O[i * 2 + 1], xj = O[j * 2], zj = O[j * 2 + 1];
-    if (zi > z !== zj > z && x < ((xj - xi) * (z - zi)) / (zj - zi) + xi) ins = !ins;
-  }
-  return ins;
-}
-
-/** Part of a convex polygon on the side (p - c) . n >= 0 of a line. */
-function clipHalfPlane(P: Pt[], cx: number, cz: number, nx: number, nz: number): Pt[] {
-  const out: Pt[] = [];
-  const f = (p: Pt) => (p[0] - cx) * nx + (p[1] - cz) * nz;
-  for (let i = 0; i < P.length; i++) {
-    const a = P[i], b = P[(i + 1) % P.length], fa = f(a), fb = f(b);
-    if (fa >= 0) out.push(a);
-    if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]); }
-  }
-  // drop near-duplicate vertices (a cut through a corner)
-  return out.filter((p, i) => { const q = out[(i + 1) % out.length]; return Math.hypot(p[0] - q[0], p[1] - q[1]) > 0.05; });
-}
-
-/**
- * Buildings a deck runs through (its underside lower than their roofs): the data placed buildings clear of the
- * original freeway line, but its last stretch is moved beside the K St bridge here, so the few in the way go.
- */
-function buildingsUnderDecks(doc: GeoDoc, net: RoadNet, ras: GeoRaster): Set<string> {
-  const grid = new SegGrid(32);
-  for (const e of net.edges) if (e.deck) grid.addLine(e.pts, e.id, e.hw + G.sidewalkWidth + 3);
-  const out = new Set<string>();
-  for (const b of doc.buildings) {
-    const top = ras.baseAt(b.pts[0][0], b.pts[0][1]) + b.levels * 3.2 + 2;
-    const probe = [...b.pts, [(b.pts[0][0] + b.pts[2][0]) / 2, (b.pts[0][1] + b.pts[2][1]) / 2]];
-    let hit = false;
-    for (const p of probe) {
-      grid.query(p[0], p[1], (_s, id, d) => {
-        const e = net.edges[id];
-        if (hit || d > e.hw + (e.swL || e.swR ? G.sidewalkWidth : 0) + 1.2) return;
-        const pr = net.project(e, p[0], p[1]);
-        if (net.profAt(e, pr.s) - G.deckThickness - 0.5 < top) hit = true;
-      });
-      if (hit) break;
-    }
-    if (hit) out.add(b.id);
-  }
-  return out;
 }
 
 /** Required deck heights for bridge profiles: what passes beneath + clearance. */

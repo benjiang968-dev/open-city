@@ -30,6 +30,8 @@ import type { PedDensityState } from './systems/pedDensity';
 import type { ParkedState } from './systems/parkedCars';
 import type { HurtFxState } from './systems/hurtFx';
 import type { PhysDebugState } from './systems/physicsDebug';
+import type { InteriorsState } from './systems/interiors';
+import type { SandboxState } from './systems/sandbox';
 import type { Look } from './systems/render/look';
 
 /** Things that happen in the world. NPC memory, police heat and jobs all listen to these. */
@@ -52,6 +54,8 @@ export type GameEvent =
    * and is coming after you; alarm: its alarm is sounding; forced: you smashed the window to get in.
    */
   | { type: 'carTheft'; x: number; z: number; carId: number; ownerId: number; ownerSaw: boolean; alarm: boolean; forced: boolean }
+  | { type: 'shopTheft'; x: number; z: number; itemId: number; itemName: string }
+  | { type: 'trespass'; x: number; z: number }
   | { type: 'policeCalled'; x: number; z: number; byPed: number };
 
 export interface World {
@@ -72,6 +76,8 @@ export interface World {
   settings: SettingsState;
   itemsState: ItemsState;
   inventory: InventoryState;
+  interiors: InteriorsState;
+  sandbox: SandboxState;
   combat: CombatState;
   crowd: CrowdRender;
   hurtFx: HurtFxState;
