@@ -7,6 +7,7 @@
 // A uniform grid of CELL-metre buckets lists the triangles whose footprint box overlaps each bucket. A query tests
 // the bucket's triangles (2D edge functions) and evaluates the plane of each one containing the point. No allocation
 // per query; built once at boot from the triangle soups PhysChunks hands over before it builds the trimeshes.
+import { TUNING } from '../../tuning';
 
 /** Bucket size (m): about 6 triangle references per bucket on Georgetown, a dozen on busy junctions. */
 const CELL = 4;
@@ -17,6 +18,7 @@ const TS = 9;
 const MIN_AREA2 = 1e-4;
 /** Tolerance (m) of the inside test, so a point on the edge shared by two triangles is in at least one. */
 const EDGE_EPS = 1e-4;
+const MAX_WALK_SLOPE = Math.tan(TUNING.player.maxSlopeDeg * Math.PI / 180);
 
 /**
  * The triangles of `soups` whose footprint box comes within `r` of any of the points (x, z pairs): a small soup for a
@@ -133,4 +135,29 @@ export class SurfaceIndex {
     }
     return best > -Infinity ? best : above < Infinity ? above : NaN;
   }
+  /** Closest physical surface to a known landing height, for build-time stair fitting across bridge layers.
+   * A covering floor only displaces it when the capsule would have insufficient headroom underneath that floor. */
+  closest(x: number, z: number, height: number, maxDelta: number, clearance = 0): number {
+    const i = Math.floor((x - this.x0) / CELL), j = Math.floor((z - this.z0) / CELL);
+    if (i < 0 || j < 0 || i >= this.nx || j >= this.nz) return NaN;
+    const b = j * this.nx + i, T = this.tri;
+    let best = NaN, distance = maxDelta;
+    const floors: number[] | null = clearance > 0 ? [] : null;
+    for (let k = this.start[b], e = this.start[b + 1]; k < e; k++) {
+      const o = this.refs[k] * TS;
+      if (clearance > 0 && Math.hypot(T[o + 6], T[o + 7]) > MAX_WALK_SLOPE) continue;
+      const ax = T[o], az = T[o + 1], bx = T[o + 2], bz = T[o + 3], cx = T[o + 4], cz = T[o + 5];
+      if ((bx - ax) * (z - az) - (bz - az) * (x - ax) < -EDGE_EPS ||
+          (cx - bx) * (z - bz) - (cz - bz) * (x - bx) < -EDGE_EPS ||
+          (ax - cx) * (z - cz) - (az - cz) * (x - cx) < -EDGE_EPS) continue;
+      const y = T[o + 8] + T[o + 6] * (x - ax) + T[o + 7] * (z - az), delta = Math.abs(y - height);
+      if (delta <= maxDelta) floors?.push(y);
+      if (delta <= distance) { best = y; distance = delta; }
+    }
+    // Overlapping terrain/sidewalk triangles can leave a lower plane closer to the old raster height, buried
+    // beneath the real landing. Keep genuine bridge layers separate wherever the full capsule fits below them.
+    if (floors) for (const y of floors.sort((a, b) => a - b)) if (y > best && y - best < clearance) best = y;
+    return best;
+  }
+
 }

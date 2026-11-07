@@ -247,7 +247,7 @@ export function buildBridges(net: RoadNet, doc: GeoDoc, ras: GeoRaster, W: Water
  * sink or float at most half a riser), capped at the flight's top; the half-riser lip at the foot of each flight is
  * under the character's autostep.
  */
-function stairProfile(L: number, ha: number, hb: number, big: boolean): { h: (s: number) => number; flights: [number, number][] } {
+export function stairProfile(L: number, ha: number, hb: number, big: boolean, landings: [number, number][] = []): { h: (s: number) => number; flights: [number, number][] } {
   const nFlights = big ? 3 : 1;
   const landing = big ? 2.4 : 0;
   const lowFirst = ha <= hb;
@@ -257,13 +257,29 @@ function stairProfile(L: number, ha: number, hb: number, big: boolean): { h: (s:
   const run = Math.max(0.2, rise / slope);
   const total = Math.min(L - 1, run + landing * (nFlights - 1));
   const startS = big ? 0.6 : Math.max(0.3, (L - total) / 2);
-  const flights: [number, number][] = [];
+  let flights: [number, number][] = [];
   let s = startS;
   for (let k = 0; k < nFlights; k++) {
     const fr = Math.min(run / nFlights, L - s);
     flights.push([s, s + fr]);
     s += fr + landing;
   }
+  if (landings.length) {
+    // At a bent stair the two oriented ramp rectangles overlap. Continuing their slopes through that overlap
+    // puts the next segment up to a metre above the approach. A shared flat landing removes that vertical lip.
+    // Spread the rise over the available straight runs rather than steepening a short centred flight.
+    flights = [[Math.min(0.3, L * 0.1), Math.max(L * 0.9, L - 0.3)]];
+    for (const [start, end] of landings) {
+      const lo = lowFirst ? start : L - end, hi = lowFirst ? end : L - start;
+      const keep: [number, number][] = [];
+      for (const [a, b] of flights) {
+        if (hi <= a || lo >= b) keep.push([a, b]);
+        else { if (lo - a > 0.02) keep.push([a, lo]); if (b - hi > 0.02) keep.push([hi, b]); }
+      }
+      flights = keep;
+    }
+  }
+  if (!flights.length) flights = [[0, L]]; // tiny degenerate source bends still keep both end heights
   const slopeK = rise / Math.max(0.01, flights.reduce((t, q) => t + q[1] - q[0], 0));
   const lip = Math.min(STAIR_RISER / 2, rise / 2);
   const hLow = (u: number) => {
@@ -287,19 +303,24 @@ function stairProfile(L: number, ha: number, hb: number, big: boolean): { h: (s:
  * towpath) and re-plan its flights. The plan comes from the 1 m raster before the terrain is blended and meshed; with
  * real map data most stairs end in yards, parks and campus paths, where the meshed ground sat up to 2 m off the plan's
  * ends (the stair's own flat run-in also pulls the blend down round its foot): a ledge nobody could step up. An end at
- * a building (steps up to a door) or over water keeps its planned height. `groundAt(x, z, ceil)` is the highest ground
- * triangle at most `ceil` there (NaN where there is none).
+ * a building (steps up to a door) keeps its planned height. The callback selects the physical surface nearest the
+ * intended height within the fit tolerance (NaN where there is none), including real decks over water.
  */
 export function fitStairEnds(st: StairPlan, groundAt: (x: number, z: number, ceil: number) => number, ras: GeoRaster) {
   const P = st.pts, n = P.length;
   const endY = (p: Pt, q: Pt, y: number) => {
     const dx = p[0] - q[0], dz = p[1] - q[1], l = Math.hypot(dx, dz) || 1, ux = dx / l, uz = dz / l;
     const v: number[] = [];
-    for (const o of [-0.3, 0, 0.3]) {
+    for (const o of [0, -0.3, 0.3]) {
       const x = p[0] + ux * G.stairEndProbe - uz * o * st.w, z = p[1] + uz * G.stairEndProbe + ux * o * st.w;
-      if (ras.kindAt(x, z) & (K.BUILDING | K.WATER)) continue;
+      if (ras.kindAt(x, z) & K.BUILDING) continue; // a real bridge deck over water is a valid landing
       const g = groundAt(x, z, y + G.stairEndFit);
-      if (g === g && Math.abs(g - y) <= G.stairEndFit) v.push(g);
+      if (g === g && Math.abs(g - y) <= G.stairEndFit) {
+        // Side probes can fall on a different level beside a narrow path. The walking line's real support sets
+        // its landing; the shoulders are fallback data only when that centre lies in a building or outside a mesh.
+        if (o === 0) return g;
+        v.push(g);
+      }
     }
     if (!v.length) return y;
     v.sort((a, b) => a - b);
@@ -307,7 +328,7 @@ export function fitStairEnds(st: StairPlan, groundAt: (x: number, z: number, cei
   };
   const ha = endY(P[0], P[1], st.ha), hb = endY(P[n - 1], P[n - 2], st.hb);
   if (Math.abs(ha - st.ha) < 0.02 && Math.abs(hb - st.hb) < 0.02) return;
-  const prof = stairProfile(st.L, ha, hb, !!st.name);
+  const prof = stairProfile(st.L, ha, hb, !!st.name, stairJointLandings(st.pts, st.cum, st.w));
   st.h = prof.h;
   st.flights = prof.flights;
   st.ha = ha;
@@ -351,7 +372,7 @@ export function joinStairEnds(plans: StairPlan[]) {
       changed = true;
     }
     if (!changed) continue;
-    const prof = stairProfile(st.L, st.ha, st.hb, !!st.name);
+    const prof = stairProfile(st.L, st.ha, st.hb, !!st.name, stairJointLandings(st.pts, st.cum, st.w));
     st.h = prof.h;
     st.flights = prof.flights;
   }
@@ -400,7 +421,7 @@ export function rasterizeStairs(doc: GeoDoc, ras: GeoRaster, streetY: (x: number
     }
     // what is left of a stair cut back out of the carriageways can be a single step: then it is just a path
     if (Math.abs(hb - ha) < G.stairMinRise) continue;
-    const prof = stairProfile(L, ha, hb, big);
+    const prof = stairProfile(L, ha, hb, big, stairJointLandings(pts, cum, big ? 3.6 : 2.2));
     const plan: StairPlan = { pts, w: big ? 3.6 : 2.2, cum, L, h: prof.h, flights: prof.flights, name: f.name, ha, hb };
     plans.push(plan);
     // raster
@@ -450,7 +471,22 @@ function jointExt(pts: Pt[], j: number, hw: number): number {
   const la = Math.hypot(ax, az), lb = Math.hypot(bx, bz);
   if (la < 1e-6 || lb < 1e-6) return 0.05;
   const turn = Math.acos(clamp((ax * bx + az * bz) / (la * lb), -1, 1));
-  return 0.05 + hw * Math.tan(Math.min(turn, 1.2) / 2);
+  return 0.05 + hw * Math.tan(Math.min(turn, 2.5) / 2);
+}
+
+/** Flat turn platforms cover the actual rectangle overlap and a capsule's clearance around a sharp bend. */
+export function stairJointLandings(pts: Pt[], cum: number[], width: number): [number, number][] {
+  const zones: [number, number][] = [];
+  for (let j = 1; j < pts.length - 1; j++) {
+    const ax = pts[j][0] - pts[j - 1][0], az = pts[j][1] - pts[j - 1][1];
+    const bx = pts[j + 1][0] - pts[j][0], bz = pts[j + 1][1] - pts[j][1];
+    const l = Math.hypot(ax, az) * Math.hypot(bx, bz);
+    if (l < 1e-6 || (ax * bx + az * bz) / l > Math.cos(0.25)) continue;
+    const half = jointExt(pts, j, width / 2 * STAIR_INNER) + TUNING.player.capsuleRadius + 0.1;
+    const lo = Math.max(0.3, cum[j] - half), hi = Math.min(cum[cum.length - 1] - 0.3, cum[j] + half);
+    if (hi > lo) zones.push([lo, hi]);
+  }
+  return zones;
 }
 
 export function buildStairs(plans: StairPlan[], chunks: RenderChunks, phys: PhysChunks, ras: GeoRaster) {

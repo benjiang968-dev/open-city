@@ -250,7 +250,7 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
   drawPaths(doc, ras, chunks);
   phase('roadMesh');
   chunks.tag('ground');
-  const water = buildWater(doc, W, ras, chunks, phys, root, holes);
+  const water = buildWater(doc, W, ras, chunks, phys, root, holes, stairs);
   chunks.tag('ground');
   upgradeWater(water.meshes, look);
   const pierDecks = buildPlazaAndPiers(doc, ras, chunks, phys, plazaH, W);
@@ -263,10 +263,12 @@ export function buildGeorgetownWorld(scene: THREE.Scene, R: typeof RAPIER, physi
     // every stair's ends meet the ground as built (terrain mesh, sidewalks, lots, towpath): fitStairEnds
     const ends: number[] = [];
     for (const st of stairs) ends.push(st.pts[0][0], st.pts[0][1], st.pts[st.pts.length - 1][0], st.pts[st.pts.length - 1][1]);
-    const near = new SurfaceIndex([trianglesNear(phys.soupsOf('ground'), ends, 4)]);
-    for (const st of stairs) fitStairEnds(st, (x, z, ceil) => near.at(x, z, ceil), ras);
+    const near = new SurfaceIndex([trianglesNear([...phys.soupsOf('ground'), ...phys.soupsOf('deck')], ends, 4)]);
+    const capsuleClearance = 2 * (TUNING.player.capsuleHalfHeight + TUNING.player.capsuleRadius) + TUNING.player.ccOffset;
+    for (const st of stairs) fitStairEnds(st, (x, z, ceil) => near.closest(x, z, ceil - G.stairEndFit, G.stairEndFit, capsuleClearance), ras);
     joinStairEnds(stairs);
   }
+  water.finishBridgeRails(); // stair landings now share the deck height; guard openings use that fitted geometry
   buildStairs(stairs, chunks, phys, ras);
   phase('bridges');
   const litWindowMat = new THREE.MeshBasicMaterial({ color: 0x8899aa });
