@@ -16,6 +16,8 @@ export type ItemLocation = 'world' | 'inventory' | 'storage' | 'consumed';
 export interface WorldItem {
   id: number;
   type: ItemId;
+  /** Stable optional authored placement key; ambient legacy objects keep numeric IDs only. */
+  authoredKey: string | null;
   /** Persistent single owner/container; moving an item never creates another instance. */
   location: ItemLocation;
   owner: string | null;
@@ -82,8 +84,9 @@ export function createItems(w: World): ItemsState {
  */
 export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: number, lift?: number, near?: number): WorldItem | null {
   const S = w.itemsState;
-  const im = S.meshes[type];
-  if (im.count >= (S.scattering ? 160 : CAPACITY)) return null;
+  let im = S.meshes[type];
+  if (S.scattering && im.count >= 160) return null;
+  if (im.count >= im.instanceMatrix.count) { growItemInstances(w, type); im = S.meshes[type]; }
   const R = w.R;
   const a = S.art[type];
   const def = IT.defs[type];
@@ -100,7 +103,7 @@ export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: num
   const cd = a.collider.kind === 'box' ? R.ColliderDesc.cuboid(a.collider.hx, a.collider.hy, a.collider.hz) : R.ColliderDesc.cylinder(a.collider.hh, a.collider.r);
   const collider = w.physics.createCollider(cd.setMass(def.mass).setFriction(0.75).setRestitution(0.2).setCollisionGroups(GROUPS.item), body);
   const item: WorldItem = {
-    id: S.items.length, type, body, collider, inWorld: true, location: 'world', owner: null, price: 0, sealed: false, reportedTheft: false, inst: im.count, px: x, py: y + a.restY, pz: z,
+    id: S.items.length, type, authoredKey: null, body, collider, inWorld: true, location: 'world', owner: null, price: 0, sealed: false, reportedTheft: false, inst: im.count, px: x, py: y + a.restY, pz: z,
     thrown: false, thrownAt: -10, speed: 0, stolen: false, illegal: false,
   };
   im.count++;
@@ -108,6 +111,23 @@ export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: num
   S.byCollider.set(collider.handle, item);
   writeItemMatrix(S, item);
   return item;
+}
+
+/** Grow only when authored content is registered, never in the per-frame update. */
+function growItemInstances(w: World, type: ItemId): void {
+  const S = w.itemsState, old = S.meshes[type];
+  const next = new THREE.InstancedMesh(S.art[type].geo, S.material, Math.max(CAPACITY, old.instanceMatrix.count * 2));
+  (next.instanceMatrix.array as Float32Array).set(old.instanceMatrix.array as Float32Array);
+  next.count = old.count; next.castShadow = old.castShadow; next.frustumCulled = false;
+  w.scene.remove(old); old.dispose(); w.scene.add(next); S.meshes[type] = next;
+}
+
+/** Save migration may rebuild IDs after an imported map changes ambient placement. */
+export function resetItemRegistry(w: World): void {
+  const S = w.itemsState;
+  for (const item of S.items) w.physics.removeRigidBody(item.body);
+  S.items.length = 0; S.byCollider.clear(); S.target = null; S.marker.visible = false; S.eventQueue.clear();
+  for (const type of ITEM_IDS) S.meshes[type].count = 0;
 }
 
 export function writeItemMatrix(S: ItemsState, it: WorldItem) {
@@ -175,7 +195,7 @@ export function updateWorldItems(w: World, dt: number): void {
     for (const it of S.items) {
       if (!it.inWorld || it.thrown) continue;
       const dx = it.px - pp.x, dz = it.pz - pp.z;
-      if (Math.abs(dx) > IT.pickupRange || Math.abs(dz) > IT.pickupRange || (it.py > pp.y + 1.6 || it.py < pp.y - 0.3)) continue;
+      if (Math.abs(dx) > IT.pickupRange || Math.abs(dz) > IT.pickupRange || (it.py > pp.y + IT.pickupMaxHeight || it.py < pp.y - 0.3)) continue;
       const d = Math.hypot(dx, dz);
       if (d > IT.pickupRange) continue;
       const dot = d > 0.01 ? (dx * fx + dz * fz) / d : 1;

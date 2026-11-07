@@ -4,8 +4,10 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { World } from '../../src/world';
 import { TUNING } from '../../src/tuning';
-import { createItems, spawnItem, removeFromWorld, placeInWorld } from '../../src/systems/worldItems';
+import { createItems, spawnItem, removeFromWorld, placeInWorld, resetItemRegistry } from '../../src/systems/worldItems';
 import { pickUp, takeSelected, transferToInventory, useSelected, carriedMass } from '../../src/systems/inventory';
+import { ITEM_IDS } from '../../src/art/items';
+import { seedInteriorCollectibles } from '../../src/systems/interiorCollectibles';
 import { captureSave, restoreSave, validSave } from '../../src/systems/persistence';
 await RAPIER.init();
 const physics = new RAPIER.World({ x: 0, y: -22, z: 0 });
@@ -51,5 +53,35 @@ for (let i = 0; i < 5; i++) {
  assert.equal(pickUp(w, brick), i < 4);
 }
 assert.equal(carriedMass(w), 10);
+// Shared catalogue gives every hand-sized authored prop the same pickup/drop/use path.
+w.inventory.slots.fill(null);
+assert.deepEqual(ITEM_IDS.slice(0, 8), ['bottle','can','bag','box','cone','brick','wrench','bat']);
+for (const type of ITEM_IDS) assert.ok(w.itemsState.art[type].geo.getAttribute('position').array.every(Number.isFinite));
+const apple = spawnItem(w, 'apple', 0, 0, 0)!; apple.owner = 'corner-shop'; apple.price = 3;
+w.player.health = 40; assert.equal(pickUp(w, apple), true); assert.equal(useSelected(w), true);
+assert.equal(w.player.health, 48); assert.equal(apple.location, 'consumed'); assert.equal(useSelected(w), false);
+assert.equal(pickUp(w, apple), false); assert.equal(apple.reportedTheft, true);
+assert.equal(w.events.filter(e => e.type === 'shopTheft' && e.itemId === apple.id).length, 1);
+const sandwich = spawnItem(w, 'sandwich', 0, 0, 0)!; assert.equal(pickUp(w, sandwich), true); assert.equal(useSelected(w), true); assert.equal(w.player.health, 64);
+const book = spawnItem(w, 'book', 0, 0, 0)!; assert.equal(pickUp(w, book), true); assert.equal(useSelected(w), true); assert.equal(book.location, 'inventory');
+w.inventory.slots.fill(null);
+const phone = spawnItem(w, 'phone', 0, 0, 0)!; assert.equal(pickUp(w, phone), true); assert.equal(useSelected(w), true); assert.match(w.hud.toast.innerHTML, /Phone.*Day 2/);
+w.interiors = { entries: [{ id: 'workshop-fixture', kind: 'workshop', origin: {x:50,y:300,z:50} }], active: null } as unknown as World['interiors'];
+const oldCount = w.itemsState.items.length; seedInteriorCollectibles(w); const seededCount = w.itemsState.items.length;
+assert.ok(seededCount > oldCount); seedInteriorCollectibles(w); assert.equal(w.itemsState.items.length, seededCount);
+assert.ok(w.itemsState.items.slice(oldCount).every(it => !!it.authoredKey && it.py > 300));
+// A legacy v1 save with no authored keys survives a different current map's scatter ordering.
+const legacy = structuredClone(snapshot); legacy.items.forEach(it => { delete it.authoredKey; });
+resetItemRegistry(w); spawnItem(w, 'brick', 0, 0, 0);
+const newPhone = spawnItem(w, 'phone', 5, 6, 0)!; newPhone.authoredKey = 'new-room/phone';
+restoreSave(w, legacy);
+assert.equal(w.itemsState.items[0].type, 'can'); assert.equal(w.inventory.slots[0]?.id, 0); assert.equal(w.cash, 500);
+assert.equal(w.itemsState.items.filter(it => it.authoredKey === 'new-room/phone').length, 1);
+restoreSave(w, legacy); assert.equal(w.itemsState.items.filter(it => it.authoredKey === 'new-room/phone').length, 1);
+const migrated = structuredClone(captureSave(w)); assert.equal(validSave(migrated, 'grid:123'), true);
+restoreSave(w, migrated); assert.equal(w.itemsState.items.filter(it => it.authoredKey === 'new-room/phone').length, 1);
+// Authored content grows on registration, not through an invisible fixed cap or per-frame rebuilding.
+for (let n = 0; n < 300; n++) assert.ok(spawnItem(w, 'mug', n, 0, 0));
+assert.ok(w.itemsState.meshes.mug.instanceMatrix.count >= 300); assert.equal(w.itemsState.meshes.mug.count, 300);
 physics.free();
-console.log('PASS inventory identity, theft-once, consume-once, storage retrieval, weight limits, snapshot validation and restore');
+console.log('PASS item catalogue, physical eligibility, food/read/phone use, unpaid-use reports, same-ID inventory/storage, legacy v1 changed-scatter migration, stable authored seeding and draw capacity growth');

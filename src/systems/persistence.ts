@@ -5,7 +5,7 @@ import { TUNING, type CarTypeName } from '../tuning';
 import type { World } from '../world';
 import type { ItemId } from '../art/items';
 import { ITEM_IDS } from '../art/items';
-import { removeFromWorld, spawnItem, writeItemMatrix, type ItemLocation, type WorldItem } from './worldItems';
+import { removeFromWorld, spawnItem, writeItemMatrix, resetItemRegistry, type ItemLocation, type WorldItem } from './worldItems';
 import { spawnVehicle, syncVehicleMesh } from './vehicles';
 import { repaintVehicle } from './vehicles';
 
@@ -20,7 +20,7 @@ export interface PersistenceHooks {
   restore?: (data: unknown) => void;
 }
 interface ItemSave {
-  id: number; type: ItemId; location: ItemLocation;
+  id: number; type: ItemId; location: ItemLocation; authoredKey?: string | null;
   position: [number, number, number]; rotation: [number, number, number, number];
   stolen: boolean; illegal: boolean; owner: string | null; price: number; sealed: boolean; reportedTheft: boolean;
 }
@@ -84,7 +84,7 @@ export function captureSave(w: World): SaveRecord {
     player: { position: [pos.x + (p.vehicle ? 2 : 0), py, pos.z], facing: p.facing, health: p.health },
     items: w.itemsState.items.map((it) => {
       const t = it.body.translation(), r = it.body.rotation();
-      return { id: it.id, type: it.type, location: it.inWorld ? 'world' : it.location, position: [t.x, t.y, t.z], rotation: [r.x, r.y, r.z, r.w], stolen: it.stolen, illegal: it.illegal, owner: it.owner, price: it.price, sealed: it.sealed, reportedTheft: it.reportedTheft };
+      return { id: it.id, type: it.type, authoredKey: it.authoredKey, location: it.inWorld ? 'world' : it.location, position: [t.x, t.y, t.z], rotation: [r.x, r.y, r.z, r.w], stolen: it.stolen, illegal: it.illegal, owner: it.owner, price: it.price, sealed: it.sealed, reportedTheft: it.reportedTheft };
     }),
     inventory: w.inventory.slots.map((it) => it?.id ?? null), selected: w.inventory.selected,
     // Pristine pooled stand-ins are reconstructed by the map; preserve every changed or owned parked vehicle.
@@ -127,9 +127,13 @@ export function validSave(data: unknown, expectedKey: string): data is SaveRecor
   if (s.version !== VERSION || s.key !== expectedKey || !Number.isFinite(s.cash) || s.cash < 0 || !Number.isFinite(s.hour) || !Number.isFinite(s.day) || !Number.isFinite(s.time)) return false;
   if (!s.player || !finiteTuple(s.player.position, 3) || !Number.isFinite(s.player.health) || !Number.isFinite(s.player.facing)) return false;
   if (!Array.isArray(s.items) || !Array.isArray(s.inventory) || !Array.isArray(s.vehicles) || !Array.isArray(s.npcs)) return false;
-  const ids = new Set<number>();
+  const ids = new Set<number>(), authoredKeys = new Set<string>();
   for (const it of s.items) {
     if (!Number.isInteger(it.id) || it.id < 0 || ids.has(it.id) || !ITEM_IDS.includes(it.type) || !['world', 'inventory', 'storage', 'consumed'].includes(it.location) || !finiteTuple(it.position, 3) || !finiteTuple(it.rotation, 4)) return false;
+    if (it.authoredKey != null) {
+      if (typeof it.authoredKey !== 'string' || !it.authoredKey || it.authoredKey.length > 256 || authoredKeys.has(it.authoredKey)) return false;
+      authoredKeys.add(it.authoredKey);
+    }
     ids.add(it.id);
   }
   if (s.items.length > 10000 || s.items.some((_, i) => !ids.has(i))) return false;
@@ -161,12 +165,37 @@ export async function loadGame(w: World): Promise<boolean> {
   } catch (error) { fail(w, state, error); return false; }
 }
 
+function restoreItem(w: World, it: WorldItem, record: ItemSave): void {
+  removeFromWorld(w, it);
+  it.authoredKey = record.authoredKey ?? null;
+  it.location = record.location; it.inWorld = record.location === 'world';
+  it.owner = record.owner ?? null; it.price = Math.max(0, record.price || 0);
+  it.sealed = !!record.sealed; it.reportedTheft = !!record.reportedTheft;
+  it.stolen = !!record.stolen; it.illegal = !!record.illegal;
+  const [x, y, z] = record.position, [rx, ry, rz, rw] = record.rotation;
+  it.body.setTranslation({ x, y, z }, false); it.body.setRotation({ x: rx, y: ry, z: rz, w: rw }, false);
+  it.body.setLinvel({ x: 0, y: 0, z: 0 }, false); it.body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+  it.body.setEnabled(it.inWorld); if (it.inWorld) it.body.sleep();
+  it.px = x; it.py = y; it.pz = z; writeItemMatrix(w.itemsState, it);
+}
+
 export function restoreSave(w: World, s: SaveRecord): void {
   if (!validSave(s, key(w))) throw new Error('Invalid save snapshot');
-  // Preflight registry compatibility before changing money or any live container.
-  for (const record of s.items) {
+  // A source/map update may change which ambient spots fit. Save IDs are authoritative: never reinterpret
+  // an old can as the new boot's box at that numeric index. Retain new authored goods by stable semantic key.
+  const authoredAtBoot = w.itemsState.items.filter(it => it.authoredKey).map(it => {
+    const p = it.body.translation(), q = it.body.rotation();
+    return { id: it.id, type: it.type, authoredKey: it.authoredKey, location: it.inWorld ? 'world' : it.location,
+      position: [p.x, p.y, p.z], rotation: [q.x, q.y, q.z, q.w], owner: it.owner, price: it.price,
+      stolen: it.stolen, illegal: it.illegal, sealed: it.sealed, reportedTheft: it.reportedTheft } as ItemSave;
+  });
+  const mismatchedRegistry = s.items.some(record => {
     const existing = w.itemsState.items[record.id];
-    if (existing && existing.type !== record.type) throw new Error(`Saved item ${record.id} changed type; existing save kept`);
+    return existing && (existing.type !== record.type || (record.authoredKey != null && existing.authoredKey !== record.authoredKey));
+  });
+  if (mismatchedRegistry) {
+    w.inventory.slots.fill(null);
+    resetItemRegistry(w);
   }
   const state = states.get(w);
   w.cash = s.cash; w.time = Math.max(0, s.time);
@@ -181,16 +210,14 @@ export function restoreSave(w: World, s: SaveRecord): void {
   for (const record of s.items) {
     const it = w.itemsState.items[record.id];
     if (!it || it.type !== record.type) throw new Error(`Saved item ${record.id} changed type`);
-    removeFromWorld(w, it);
-    it.location = record.location; it.inWorld = record.location === 'world';
-    it.owner = record.owner ?? null; it.price = Math.max(0, record.price || 0);
-    it.sealed = !!record.sealed; it.reportedTheft = !!record.reportedTheft;
-    it.stolen = !!record.stolen; it.illegal = !!record.illegal;
-    const [x, y, z] = record.position, [rx, ry, rz, rw] = record.rotation;
-    it.body.setTranslation({ x, y, z }, false); it.body.setRotation({ x: rx, y: ry, z: rz, w: rw }, false);
-    it.body.setLinvel({ x: 0, y: 0, z: 0 }, false); it.body.setAngvel({ x: 0, y: 0, z: 0 }, false);
-    it.body.setEnabled(it.inWorld); if (it.inWorld) it.body.sleep();
-    it.px = x; it.py = y; it.pz = z; writeItemMatrix(w.itemsState, it);
+    restoreItem(w, it, record);
+  }
+  // Old version-1 saves have no authoredKey. They retain every old object and gain only newly authored content.
+  const present = new Set(w.itemsState.items.map(it => it.authoredKey).filter(Boolean));
+  for (const record of authoredAtBoot) if (record.authoredKey && !present.has(record.authoredKey)) {
+    const it = spawnItem(w, record.type, w.city.spawn.x, w.city.spawn.z, 0);
+    if (!it) throw new Error('Cannot append new room object to saved world');
+    restoreItem(w, it, record); present.add(record.authoredKey);
   }
   w.inventory.slots.fill(null);
   s.inventory.forEach((id, i) => { if (id !== null) w.inventory.slots[i] = w.itemsState.items[id]; });

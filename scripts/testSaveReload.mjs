@@ -34,10 +34,17 @@ try {
   assert.equal(await page.evaluate(() => window.__saveTest.moveAndSave()), true);
   await page.reload(); await ready(); s = await page.evaluate(() => window.__saveTest.state());
   assert.equal(s.ids.filter(id => id !== null).length, 0); assert.equal(s.item.location, 'world'); assert.equal(s.item.x, 4); assert.equal(s.item.enabled, true);
+  // Published version-1 saves had no authored keys. A changed imported scatter order must not lose progress.
+  await page.evaluate(() => window.__saveTest.legacy());
+  await page.goto(`http://127.0.0.1:${server.address().port}/?changed=1`); await ready(); s = await page.evaluate(() => window.__saveTest.state());
+  assert.equal(await page.evaluate(() => window.__saveTest.loaded), true); assert.equal(s.type, 'can'); assert.equal(s.cash, 170); assert.equal(s.item.x, 4); assert.equal(s.extra.apartment, 'home-1'); assert.equal(s.authoredPhones, 1);
+  assert.equal(await page.evaluate(() => window.__saveTest.saveCurrent()), true);
+  await page.reload(); await ready(); s = await page.evaluate(() => window.__saveTest.state());
+  assert.equal(s.type, 'can'); assert.equal(s.authoredPhones, 1); assert.equal(s.cash, 170);
   // Unknown future schema must remain untouched: no autosave can replace it.
   await page.evaluate(() => window.__saveTest.corrupt());
   await page.reload(); await ready(); s = await page.evaluate(() => window.__saveTest.state());
   assert.equal(s.status.ready, false); assert.equal(await page.evaluate(() => window.__saveTest.transact()), false);
   assert.deepEqual(errors, []);
-  console.log('PASS browser IndexedDB atomic transaction, reload inventory/world identity, property extra data, and unsupported-save protection; console clean');
+  console.log('PASS browser IndexedDB reload, same-ID items/property, legacy v1 changed-scatter migration, authored append-once content and unsupported-save protection; console clean');
 } finally { await browser?.close(); server?.close(); await rm(folder, { recursive: true, force: true }); }

@@ -15,16 +15,27 @@ const w = {
   hud: { toast: { style: {}, innerHTML: '' }, toastUntil: 0 }, audio: {}, events: [], vehicles: [], peds: [], parked: { cars: [], dirty: false },
 } as unknown as World;
 w.itemsState = createItems(w);
-const it = spawnItem(w, 'can', 1, 2, 0)!;
-it.sealed = true;
+const changed = new URLSearchParams(location.search).has('changed');
+spawnItem(w, changed ? 'brick' : 'can', 1, 2, 0)!.sealed = true;
+if (changed) spawnItem(w, 'phone', 8, 9, 0)!.authoredKey = 'fixture-shelf/phone';
+const primary = () => w.itemsState.items[0];
 let extra: { apartment: string | null; storage: number[] } = { apartment: null, storage: [] };
 createPersistence(w, { capture: () => structuredClone(extra), restore: (data) => { if (data) extra = data as typeof extra; } });
 const loaded = await loadGame(w);
 const api = {
   loaded,
-  state: () => ({ cash: w.cash, ids: w.inventory.slots.map((i) => i?.id ?? null), item: { inWorld: it.inWorld, enabled: it.body.isEnabled(), location: it.location, sealed: it.sealed, x: it.px }, extra, status: persistenceStatus(w) }),
-  transact: async () => { w.cash -= 80; extra.apartment = 'home-1'; pickUp(w, it); return await saveGame(w); },
-  moveAndSave: async () => { w.inventory.slots.fill(null); placeInWorld(w, it, 4, 0.5, 5, 0, 0, 0, 0); return await saveGame(w); },
+  state: () => { const it = primary(); return ({ type: it.type, authoredPhones: w.itemsState.items.filter(i => i.authoredKey === 'fixture-shelf/phone').length, cash: w.cash, ids: w.inventory.slots.map((i) => i?.id ?? null), item: { inWorld: it.inWorld, enabled: it.body.isEnabled(), location: it.location, sealed: it.sealed, x: it.px }, extra, status: persistenceStatus(w) }); },
+  transact: async () => { w.cash -= 80; extra.apartment = 'home-1'; pickUp(w, primary()); return await saveGame(w); },
+  moveAndSave: async () => { w.inventory.slots.fill(null); placeInWorld(w, primary(), 4, 0.5, 5, 0, 0, 0, 0); return await saveGame(w); },
+  saveCurrent: () => saveGame(w),
+  legacy: async () => {
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open('open-city-saves', 1);
+      req.onsuccess = () => { const tx = req.result.transaction('worlds', 'readwrite'); const store = tx.objectStore('worlds'); const get = store.get('grid:987654');
+        get.onsuccess = () => { const data = get.result; data.items.forEach((item: {authoredKey?: string}) => { delete item.authoredKey; }); store.put(data); };
+        tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error); };
+    });
+  },
   corrupt: async () => {
     await new Promise<void>((resolve, reject) => {
       const req = indexedDB.open('open-city-saves', 1);

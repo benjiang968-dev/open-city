@@ -213,18 +213,43 @@ export function pickupEligible(w: World, it: WorldItem): boolean {
   return size <= IT.handMaxSize && carriedMass(w) + IT.defs[it.type].mass <= IT.carryMaxKg;
 }
 
+/** Using unpaid goods is itself witnessed by the shopkeeper, even if the empty object is dropped inside. */
+function reportUnpaidUse(w: World, it: WorldItem): void {
+  if (!it.owner || it.price <= 0 || it.reportedTheft) return;
+  it.stolen = true; it.reportedTheft = true;
+  const entry = w.interiors?.entries.find(e => e.id === it.owner);
+  emit(w, { type: 'shopTheft', x: entry?.exterior.x ?? it.px, z: entry?.exterior.z ?? it.pz, itemId: it.id, itemName: IT.defs[it.type].name });
+}
+
 export function useSelected(w: World): boolean {
   const it = selectedItem(w);
-  if (!it) return false;
+  if (!it || it.location !== 'inventory') return false;
+  const def = IT.defs[it.type];
   if ((it.type === 'can' || it.type === 'bottle') && it.sealed) {
+    reportUnpaidUse(w, it);
     // Consumes contents once, retaining the same empty, droppable container.
     it.sealed = false;
     w.player.health = Math.min(100, w.player.health + IT.drinkHeal);
-    toast(w, `Drank ${IT.defs[it.type].name.toLowerCase()} · empty container kept`);
+    toast(w, `Drank ${def.name.toLowerCase()} · empty container kept`);
     void saveGame(w);
     return true;
   }
-  toast(w, it.type === 'wrench' ? 'Use this wrench at a repair job workbench' : it.type === 'box' ? 'A portable box · useful for delivery and warehouse jobs' : 'Inspect this item or drop it with G');
+  if (def.use?.kind === 'food') {
+    reportUnpaidUse(w, it);
+    w.inventory.slots[w.inventory.selected] = null;
+    removeFromWorld(w, it); it.location = 'consumed';
+    w.player.health = Math.min(100, w.player.health + def.use.heal);
+    w.inventory.shownKey = '';
+    toast(w, `Ate ${def.name.toLowerCase()} · +${def.use.heal} health`);
+    void saveGame(w); return true;
+  }
+  if (def.use?.kind === 'read') { toast(w, def.use.text, 8); return true; }
+  if (def.use?.kind === 'clock') {
+    const hour = Math.floor(w.dayNight.hour), minute = Math.floor(w.dayNight.hour % 1 * 60), p = w.player.mesh.position;
+    toast(w, `Phone · Day ${w.dayNight.day}, ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} · position ${Math.round(p.x)}, ${Math.round(p.z)} m`, 6);
+    return true;
+  }
+  toast(w, it.type === 'wrench' ? 'Use the shift wrench at office repair panels' : it.type === 'box' ? 'Labelled shift parcels are used at delivery/loading points' : def.description, 5);
   return false;
 }
 
@@ -249,7 +274,7 @@ export function closeInventory(w: World): void {
 function renderInventoryPanel(w: World): void {
   const inv = w.inventory, it = selectedItem(w);
   const buttons = inv.slots.map((item, i) => `<button data-slot="${i}" style="padding:12px;margin:4px;min-width:110px;background:${i === inv.selected ? '#487080' : '#293e4a'};color:white;border:1px solid #71858f;border-radius:6px">${item ? `<img src="${inv.icons[item.type]}" alt="" width="38" height="38"><br>${IT.defs[item.type].name}` : 'Empty'}<br><small>Slot ${i + 1}</small></button>`).join('');
-  const describe = it ? `${IT.defs[it.type].mass} kg · ${it.sealed ? 'Sealed drink · restores a little health' : it.type === 'bottle' || it.type === 'can' ? 'Empty container' : 'Portable object'}${it.stolen ? ' · unpaid property' : ''}` : 'Select a slot to inspect its item.';
+  const describe = it ? `${IT.defs[it.type].description}<br>${IT.defs[it.type].mass} kg · ${it.sealed && (it.type === 'bottle' || it.type === 'can') ? 'Sealed drink' : it.type === 'bottle' || it.type === 'can' ? 'Empty container' : 'Portable object'}${it.owner ? ` · shop property · $${it.price}` : ''}${it.stolen ? ' · unpaid property' : ''}` : 'Select a slot to inspect its item.';
   inv.panel.innerHTML = `<button data-action="close" style="float:right;padding:8px">Close (I / Esc)</button><h2>Inventory</h2><p>${carriedMass(w).toFixed(1)} / ${IT.carryMaxKg} kg · ${inv.slots.filter(Boolean).length} / ${IT.hotbarSlots} slots</p><div>${buttons}</div><h3>${it ? IT.defs[it.type].name : 'Empty hands'}</h3><p>${describe}</p><button data-action="use" ${it ? '' : 'disabled'}>Use (U)</button> <button data-action="drop" ${it && !w.player.vehicle ? '' : 'disabled'}>Drop (G)</button> <button data-action="save">Save now</button><p style="opacity:.65">Saves stay in this browser on this website. They do not sync between devices.</p>`;
 }
 
