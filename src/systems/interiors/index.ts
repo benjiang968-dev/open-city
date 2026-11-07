@@ -48,8 +48,17 @@ export function createInteriors(w: World): InteriorsState {
   const spawn = w.city.spawn;
   const sorted = [...w.city.pois].sort((a, b) => Math.hypot(a.x - spawn.x, a.z - spawn.z) - Math.hypot(b.x - spawn.x, b.z - spawn.z));
   for (const spec of INTERIOR_SITES) {
-    const valid = (p: (typeof sorted)[number]) => !used.has(p.id) && !w.city.isBlocked(p.x, p.z) && !w.city.isRoad(p.x, p.z) && !w.city.isWater(p.x, p.z)
-      && !entries.some((e) => Math.hypot(e.exterior.x - p.x, e.exterior.z - p.z) < I.interactRange * 2);
+    const valid = (p: (typeof sorted)[number]) => {
+      if (used.has(p.id) || w.city.isBlocked(p.x, p.z) || w.city.isRoad(p.x, p.z) || w.city.isWater(p.x, p.z)
+        || entries.some((e) => Math.hypot(e.exterior.x - p.x, e.exterior.z - p.z) < I.interactRange * 2)) return false;
+      // A clear centre point alone can still spawn half the capsule in a facade, or on a kerb edge.
+      const y = w.city.heightAt(p.x, p.z), clearance = TUNING.player.capsuleRadius + TUNING.player.ccOffset + 0.12;
+      for (let n = 0; n < 8; n++) {
+        const x = p.x + Math.sin(n * Math.PI / 4) * clearance, z = p.z + Math.cos(n * Math.PI / 4) * clearance;
+        if (w.city.isBlocked(x, z) || w.city.isWater(x, z) || Math.abs(w.city.heightAt(x, z) - y) > TUNING.player.autostepHeight) return false;
+      }
+      return true;
+    };
     const poi = sorted.find((p) => valid(p) && spec.matches.some((m) => `${p.kind} ${p.cat ?? ''}`.includes(m))) ?? sorted.find(valid);
     if (!poi) continue;
     used.add(poi.id);
