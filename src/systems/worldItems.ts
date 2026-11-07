@@ -11,9 +11,17 @@ import { GROUPS } from '../physicsGroups';
 
 const IT = TUNING.items;
 
+export type ItemLocation = 'world' | 'inventory' | 'storage' | 'consumed';
+
 export interface WorldItem {
   id: number;
   type: ItemId;
+  /** Persistent single owner/container; moving an item never creates another instance. */
+  location: ItemLocation;
+  owner: string | null;
+  price: number;
+  sealed: boolean;
+  reportedTheft: boolean;
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
   inWorld: boolean; // false while in the inventory
@@ -91,17 +99,17 @@ export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: num
   const cd = a.collider.kind === 'box' ? R.ColliderDesc.cuboid(a.collider.hx, a.collider.hy, a.collider.hz) : R.ColliderDesc.cylinder(a.collider.hh, a.collider.r);
   const collider = w.physics.createCollider(cd.setMass(def.mass).setFriction(0.75).setRestitution(0.2).setCollisionGroups(GROUPS.item), body);
   const item: WorldItem = {
-    id: S.items.length, type, body, collider, inWorld: true, inst: im.count, px: x, py: y + a.restY, pz: z,
+    id: S.items.length, type, body, collider, inWorld: true, location: 'world', owner: null, price: 0, sealed: false, reportedTheft: false, inst: im.count, px: x, py: y + a.restY, pz: z,
     thrown: false, thrownAt: -10, speed: 0, stolen: false, illegal: false,
   };
   im.count++;
   S.items.push(item);
   S.byCollider.set(collider.handle, item);
-  writeMatrix(S, item);
+  writeItemMatrix(S, item);
   return item;
 }
 
-function writeMatrix(S: ItemsState, it: WorldItem) {
+export function writeItemMatrix(S: ItemsState, it: WorldItem) {
   const im = S.meshes[it.type];
   if (!it.inWorld) im.setMatrixAt(it.inst, ZERO);
   else {
@@ -116,14 +124,16 @@ function writeMatrix(S: ItemsState, it: WorldItem) {
 /** Take an item out of the world (picked up). */
 export function removeFromWorld(w: World, it: WorldItem): void {
   it.inWorld = false;
+  it.location = 'storage';
   it.thrown = false;
   it.body.setEnabled(false);
-  writeMatrix(w.itemsState, it);
+  writeItemMatrix(w.itemsState, it);
 }
 
 /** Put an item back into the world at a position with a velocity (dropped or thrown). */
 export function placeInWorld(w: World, it: WorldItem, x: number, y: number, z: number, yaw: number, vx: number, vy: number, vz: number): void {
   it.inWorld = true;
+  it.location = 'world';
   it.body.setEnabled(true);
   q4.setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ'));
   it.body.setTranslation({ x, y, z }, true);
@@ -131,7 +141,7 @@ export function placeInWorld(w: World, it: WorldItem, x: number, y: number, z: n
   it.body.setLinvel({ x: vx, y: vy, z: vz }, true);
   it.body.setAngvel({ x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 }, true);
   it.px = x; it.py = y; it.pz = z;
-  writeMatrix(w.itemsState, it);
+  writeItemMatrix(w.itemsState, it);
 }
 
 /** Per frame: copy moving items into their instances, settle thrown items, pick the look-at target. */
@@ -151,7 +161,7 @@ export function updateWorldItems(w: World, dt: number): void {
       removeFromWorld(w, it);
       continue;
     }
-    writeMatrix(S, it);
+    writeItemMatrix(S, it);
     if (it.thrown && (w.time - it.thrownAt > 4 || it.speed < 0.5)) settle(it);
   }
   // look-at target for E (on foot only)
