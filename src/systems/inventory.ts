@@ -112,11 +112,11 @@ export function pickUp(w: World, it: WorldItem): boolean {
     it.reportedTheft = true;
     emit(w, { type: 'shopTheft', x: it.px, z: it.pz, itemId: it.id, itemName: IT.defs[it.type].name });
   }
-  void saveGame(w);
   // pick into the selected slot when the hands are empty, so the item is ready to use
   if (!inv.slots[inv.selected]) inv.selected = i;
   flashName(w, IT.defs[it.type].name);
   w.audio.pickup?.();
+  void saveGame(w);
   return true;
 }
 
