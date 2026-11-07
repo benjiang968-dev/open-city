@@ -1,13 +1,14 @@
 // Production Georgetown stair traversal: actual character controller, static city geometry and both directions.
-// Usage: node scripts/testOutdoorStairs.mjs; IDS=6,17,24 for selected stairs; FULL=0 for the historic problem areas.
+// Usage: node scripts/testOutdoorStairs.mjs; IDS=6,17,24 for selected stairs; FULL=0 for historic problem areas; SHOT=1 for repaired stair views.
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { createServer } from 'node:http';
+import { existsSync } from 'node:fs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, extname, dirname } from 'node:path';
 const root=process.env.BUILD_ROOT??'dist';
 const server=createServer(async(req,res)=>{const u=new URL(req.url,'http://local');if(u.pathname==='/favicon.ico'){res.writeHead(204);res.end();return;}const p=join(root,u.pathname==='/'?'index.html':u.pathname);try{res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.json':'application/json','.wasm':'application/wasm'})[extname(p)]??'application/octet-stream');res.end(await readFile(p));}catch{res.writeHead(404);res.end();}}).listen(0);
-const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH??'/usr/bin/chromium',args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
+const browser=await chromium.launch({executablePath:process.env.CHROMIUM_PATH??(existsSync('/usr/bin/chromium')?'/usr/bin/chromium':undefined),args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 const page=await browser.newPage({viewport:{width:320,height:180}});page.setDefaultTimeout(240000);
 await page.addInitScript(()=>{const raf=requestAnimationFrame.bind(window);let id;window.requestAnimationFrame=fn=>(id=raf(fn));window.__freezeStairs=()=>{cancelAnimationFrame(id);window.requestAnimationFrame=()=>0;};});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
@@ -74,5 +75,13 @@ try{
  },{full:process.env.FULL!=='0',ids:(process.env.IDS??'').split(',').filter(Boolean).map(Number)});
  const report={scenario:'Production city stairs: static geometry, both directions, direct Rapier character-controller ticks',map:'georgetown',seed:123,speed:3.5,endpointPolicy:'Collision-free source endpoints; maximum inset 1.2m, valid support and capsule clearance required',errors,...result};
  console.log(JSON.stringify(report,null,2));const out=process.env.OUT??'work/outdoor-stairs.json';await mkdir(dirname(out),{recursive:true});await writeFile(out,JSON.stringify(report,null,2));
- assert.deepEqual(errors,[]);assert.equal(result.failed.length,0,'outdoor stairs must be traversable both ways');assert.ok(result.maxPen<=.05,'walking capsule must remain above the physical floor');
+ if(process.env.SHOT==='1'){
+  await mkdir('screenshots',{recursive:true});await page.setViewportSize({width:800,height:500});
+  const views=[{name:'bridge-access',camera:[-342,25,245],target:[-349.1,18,238.5]},{name:'switchback',camera:[-948,49,-40],target:[-946,38,-25]},{name:'ground-landing',camera:[-7,27,96],target:[-8,21,89.5]}];
+  for(const view of views){
+   await page.evaluate(({camera,target})=>{const w=window.__oc;document.querySelectorAll('body > :not(canvas)').forEach(e=>{e.style.visibility='hidden';});w.renderer.setPixelRatio(1);w.renderer.setSize(800,500,false);w.camera.aspect=800/500;w.camera.updateProjectionMatrix();w.camera.position.set(...camera);w.camera.lookAt(...target);w.camera.updateMatrixWorld();w.city.geo.update(w.time,w.camera);w.scene.updateMatrixWorld(true);w.renderer.render(w.scene,w.camera);},view);
+   await page.screenshot({path:`screenshots/38-outdoor-${view.name}.png`,timeout:60000});
+  }
+ }
+ assert.deepEqual(errors,[]);assert.ok(result.tested>0,'at least one stair must be tested');assert.equal(result.failed.length,0,'outdoor stairs must be traversable both ways');assert.ok(result.maxPen<=.05,'walking capsule must remain above the physical floor');
 }finally{await browser.close();server.close();}
