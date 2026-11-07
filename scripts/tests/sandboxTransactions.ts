@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { transactApartment, hasApartmentAccess, updateSandbox, captureSandbox, restoreSandbox } from '../../src/systems/sandbox';
+import type { World } from '../../src/world';
+const entry = {id:'home',kind:'apartment',name:'Test home',origin:{x:0,y:300,z:0},exterior:{x:2,y:0,z:2}};
+const warehouse = {id:'depot',kind:'warehouse',name:'Depot',origin:{x:10,y:320,z:0},exterior:{x:10,y:0,z:0}};
+const w = {cash:2000,time:0,started:true,paused:false,dayNight:{day:1,hour:12},player:{vehicle:null,mesh:{position:{x:0,y:300,z:0}},prompt:''},input:{blocked:false,keys:new Set(),pressed:new Set()},hud:{toast:{innerHTML:'',style:{}},toastUntil:0},interiors:{entries:[entry,warehouse],active:'home'},sandbox:{save:{version:1,serial:0,completed:0,earned:0,active:null,pool:{},properties:{}},markers:new THREE.Group(),markerKey:'',workTime:0,trespassTime:0,trespassReported:false,priorInterior:null},chat:{open:false},itemsState:{items:[],target:null},events:[]} as unknown as World;
+assert.equal(transactApartment(w,'home','buy'),true);assert.equal(w.cash,200);assert.equal(hasApartmentAccess(w,'home'),true);
+assert.equal(transactApartment(w,'home','buy'),false);assert.equal(transactApartment(w,'home','rent'),false);assert.equal(w.cash,200);
+const snapshot=captureSandbox(w);restoreSandbox(w,snapshot);assert.equal(w.sandbox.save.properties.home.mode,'owned');
+delete w.sandbox.save.properties.home;w.cash=200;
+assert.equal(transactApartment(w,'home','rent'),true);assert.equal(w.cash,110);
+w.dayNight.day=10;assert.equal(hasApartmentAccess(w,'home'),false);assert.equal(w.cash,110,'lease must not silently renew');
+assert.equal(transactApartment(w,'home','buy'),false,'insufficient funds must not mutate property');assert.equal(w.cash,110);
+w.interiors.active='depot';w.player.mesh.position.set?.(10,320,0);
+updateSandbox(w,5);assert.equal(w.events.length,0,'warning grace period');updateSandbox(w,6);assert.equal(w.events.filter(e=>e.type==='trespass').length,1);updateSandbox(w,30);assert.equal(w.events.filter(e=>e.type==='trespass').length,1,'one report per visit');
+console.log('PASS apartment buy/rent/expiry/insufficient funds/duplicate protection and one-shot trespass security report');

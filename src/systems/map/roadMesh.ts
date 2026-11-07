@@ -15,7 +15,7 @@ const G = TUNING.geo;
 // ----------------------------------------------------------------------------------------- art constants
 const DH = 0.012; // m decals float above the surface (plus polygon offset)
 const MIN_SECTION = 0.6; // m: shortest gap between cross-sections along a road
-const DEAD_END_CAP = 1.5; // m of carriageway drawn beyond a dead end's last section
+export const DEAD_END_CAP = 1.5; // m of carriageway drawn beyond a dead end's last section
 /** m of extra paving from the back of the sidewalk to the building line (the data sets buildings 1 m back). */
 export const FRONTAGE = 1.0;
 const SKIRT = 0.9; // m skirts reach below sidewalk / road edges

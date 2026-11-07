@@ -25,9 +25,10 @@ function box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: num
 }
 
 export function createCrowd(w: World, capacity: number): CrowdRender {
-  const mat = makePersonMaterial(); // cloth with a soft sheen (render/vehicleMaterials.ts)
+  const mat = makePersonMaterial();
+  const plainMat = makePersonMaterial(); // stable program for props without instanceColor
   const make = (g: THREE.BufferGeometry, cap: number, colored: boolean, shadow: boolean): Part => {
-    const mesh = new THREE.InstancedMesh(g, mat, cap);
+    const mesh = new THREE.InstancedMesh(g, colored ? mat : plainMat, cap);
     if (colored) mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
     mesh.count = 0;
     mesh.frustumCulled = false;

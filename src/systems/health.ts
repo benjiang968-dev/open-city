@@ -132,7 +132,8 @@ export function updateHealth(w: World, dt: number): void {
   // ---- hit by a car while on foot ----
   if (!p.vehicle && !p.dead && w.started) {
     const pp = p.mesh.position;
-    const check = (px: number, pz: number, heading: number, speed: number, halfW: number, halfL: number) => {
+    const check = (px: number, py: number, pz: number, heading: number, speed: number, halfW: number, halfL: number) => {
+      if (Math.abs(py - pp.y) > TUNING.map.levelTolerance) return; // other floors / interiors / bridge levels
       if (Math.abs(speed) < H.footHitMinSpeed) return;
       const dx = pp.x - px, dz = pp.z - pz;
       const fx = Math.sin(heading), fz = Math.cos(heading);
@@ -146,8 +147,8 @@ export function updateHealth(w: World, dt: number): void {
       hurtPlayer(w, Math.abs(speed) * H.footHitPerMs, fx * dir, fz * dir);
       w.audio.thud?.(pp.x, pp.z, Math.abs(speed));
     };
-    for (const c of w.traffic) check(c.px, c.pz, c.heading, c.speed, c.halfW, c.halfL);
-    for (const c of w.police.cars) check(c.px, c.pz, c.heading, c.speed, c.halfW, c.halfL);
+    for (const c of w.traffic) check(c.px, c.py, c.pz, c.heading, c.speed, c.halfW, c.halfL);
+    for (const c of w.police.cars) check(c.px, c.py, c.pz, c.heading, c.speed, c.halfW, c.halfL);
   }
   // ---- regen ----
   if (!p.dead && p.health < H.max && w.time - p.lastHurt > H.regenDelay) p.health = Math.min(H.max, p.health + H.regenPerSec * dt);

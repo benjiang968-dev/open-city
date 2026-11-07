@@ -13,15 +13,22 @@
     "import-overture": "node scripts/importOverture.mjs",
     "fetch-overture": "python3 -I scripts/fetchOverture.py",
     "preview-map": "node scripts/previewMap.mjs",
-    "deploy": "npm run build && gh-pages -d dist --dotfiles"
+    "deploy": "npm run build && gh-pages -d dist --dotfiles",
+    "test:systems": "node scripts/testInventory.mjs && node scripts/testCars.mjs && node scripts/testInteriors.mjs && node scripts/testSaveReload.mjs && node scripts/testSandbox.mjs",
+    "test:placement": "node scripts/testPlacement.mjs",
+    "test:controls": "node scripts/test-controls.mjs",
+    "test:gameplay": "node scripts/test-gameplay.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",
+    "polyclip-ts": "^0.16.8",
+    "polygon-clipping": "^0.15.7",
     "three": "^0.187.0"
   },
   "devDependencies": {
     "@types/three": "^0.187.0",
     "gh-pages": "^6.3.0",
+    "playwright": "^1.65.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5"
   }

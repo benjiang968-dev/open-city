@@ -34,7 +34,7 @@ import { ScriptedProvider } from './npc/providers/scripted';
 import { Profiler } from './systems/profiler';
 import { createSettings, applyQuality } from './systems/settings';
 import { createPauseMenu, updatePauseKeys } from './systems/pauseMenu';
-import { createItems, scatterItems, updateWorldItems } from './systems/worldItems';
+import { createItems, scatterItems, updateWorldItems, spawnItem, placeInWorld } from './systems/worldItems';
 import { createInventory, inventoryKeys, updateInventory, showHotbar } from './systems/inventory';
 import { createCombat, updateCombat, thrownItemHitCollider } from './systems/combat';
 import { createBubbles, updateBubbles } from './systems/bubbles';
@@ -47,6 +47,10 @@ import { createHurtFx, updateHurtFx, showHurtFxForWarmup } from './systems/hurtF
 import { createPhysDebug, physDebugKeys, updatePhysDebug } from './systems/physicsDebug';
 import { createLook, bakeLook } from './systems/render/look';
 import { warmDraw } from './systems/render/warmup';
+import { createInteriors, interiorInteraction, updateInteriors, enterInterior, exitInterior } from './systems/interiors';
+import { createSandbox, sandboxKeys, sandboxInteraction, updateSandbox, captureSandbox, restoreSandbox, startSandboxJob, transactApartment, storeApartmentItem, retrieveApartmentItem, payShopItem } from './systems/sandbox';
+import { createPersistence, loadGame, saveGame, updatePersistence, persistenceStatus } from './systems/persistence';
+import { emit } from './world';
 import { separateInstancedDepth } from './systems/render/shadowCasters';
 
 async function boot() {
@@ -128,6 +132,42 @@ async function boot() {
   w.inventory = createInventory(w);
   w.combat = createCombat(w);
   createBubbles();
+  w.interiors = createInteriors(w);
+  // Register all interior goods deterministically before loading IDs from a save. Room physics is streamed on entry.
+  for (const e of w.interiors.entries) {
+    const types = e.kind === 'shop' || e.kind === 'cafe' ? ['bottle', 'can', 'bottle'] as const
+      : e.kind === 'workshop' ? ['wrench', 'brick'] as const : ['can', 'bottle'] as const;
+    types.forEach((type, i) => {
+      const it = spawnItem(w, type, e.origin.x, e.origin.z, 0);
+      if (!it) return;
+      placeInWorld(w, it, e.origin.x - 1.4 + i * 0.8, e.origin.y + w.itemsState.art[type].restY + 0.03, e.origin.z + 0.6, 0, 0, 0, 0);
+      it.body.setAngvel({ x: 0, y: 0, z: 0 }, false); it.body.sleep();
+      if (e.kind === 'shop' || e.kind === 'cafe') { it.owner = e.id; it.price = 5; it.sealed = true; }
+    });
+  }
+  w.sandbox = createSandbox(w);
+  w.interiors.onExit = e => {
+    if (!persistenceStatus(w).ready) return;
+    // Carrying stock is allowed for inspection; leaving without paying triggers the shopkeeper report once.
+    for (const it of w.inventory.slots) if (it?.owner === e.id && !it.reportedTheft) {
+      it.stolen = true; it.reportedTheft = true;
+      emit(w, { type: 'shopTheft', x: e.exterior.x, z: e.exterior.z, itemId: it.id, itemName: TUNING.items.defs[it.type].name });
+    }
+    void saveGame(w);
+  };
+  createPersistence(w, {
+    capture: () => ({ sandbox: captureSandbox(w), interior: w.interiors.active,
+      rooms: w.interiors.entries.filter(e => e.room).map(e => e.id) }),
+    restore: value => {
+      const extra = value as { sandbox?: unknown; interior?: string; rooms?: string[] } | null;
+      // Restore floors before dropped goods or the player can advance a physics tick.
+      for (const id of extra?.rooms ?? []) { if (enterInterior(w, w.interiors, id)) exitInterior(w, w.interiors); }
+      if (extra?.interior) enterInterior(w, w.interiors, extra.interior);
+      restoreSandbox(w, extra?.sandbox);
+    },
+  });
+  await loadGame(w);
+
 
   // the sky light (PMREM environment) exists before anything compiles, so no material recompiles when it arrives
   updateDayNight(w, 0);
@@ -162,6 +202,13 @@ async function boot() {
   (window as unknown as { __ocTheft: unknown }).__ocTheft = theftStats;
   (window as unknown as { __ocMinimap: unknown }).__ocMinimap = minimapStats;
   (window as unknown as { __ocMap: unknown }).__ocMap = { validate: () => validateCityMap(w.city), laneSample, projectOnLane, roadRouter: () => roadRouter(w.city), walkRouter: () => walkRouter(w.city), roadLimits: TUNING.geo.roadLimits };
+  (window as unknown as { __ocSandbox: unknown }).__ocSandbox = {
+    startJob: (kind: Parameters<typeof startSandboxJob>[1]) => startSandboxJob(w, kind),
+    rent: (id: string) => transactApartment(w, id, 'rent'), buy: (id: string) => transactApartment(w, id, 'buy'),
+    store: (id: string) => storeApartmentItem(w, id), retrieve: (id: number) => retrieveApartmentItem(w, id),
+    pay: () => payShopItem(w), enterInterior: (id: string) => enterInterior(w, w.interiors, id),
+    exitInterior: () => exitInterior(w, w.interiors), save: () => saveGame(w), status: () => persistenceStatus(w),
+  };
   // physics audit (tests only, ?physaudit=1): drawn geometry vs colliders, see systems/physicsAudit.ts
   if (physAuditFromUrl()) {
     const { runPhysicsAudit } = await import('./systems/physicsAudit');
@@ -190,7 +237,7 @@ async function boot() {
   /** One fixed physics tick for everything that moves bodies. */
   function simStep(step: number) {
     const P = w.prof;
-    P.begin('player'); updatePlayer(w, step); P.end('player');
+    P.begin('player'); sandboxInteraction(w); interiorInteraction(w, w.interiors); updatePlayer(w, step); P.end('player');
     P.begin('vehicles'); updateVehicles(w, step); P.end('vehicles');
     P.begin('traffic'); updateTraffic(w, step); P.end('traffic');
     P.begin('police-drive'); drivePolice(w, step); P.end('police-drive');
@@ -230,7 +277,7 @@ async function boot() {
     if (act.debug(w.input)) w.debugVisible = !w.debugVisible;
     physDebugKeys(w);
     updatePauseKeys(w);
-    if (!w.paused) inventoryKeys(w);
+    if (!w.paused) { sandboxKeys(w); inventoryKeys(w); }
     if (w.paused) {
       // world frozen behind the menu; keep drawing it
       if (render) renderer.render(scene, camera);
@@ -245,9 +292,9 @@ async function boot() {
     acc += dt;
     let steps = 0;
     P.begin('sim');
-    while (acc >= STEP && steps < 4) {
+    while (acc + 1e-9 >= STEP && steps < 4) {
       simStep(STEP);
-      acc -= STEP;
+      acc = Math.max(0, acc - STEP);
       steps++;
       if (steps === 1) w.input.pressed.clear(); // one-shot keys fire once per frame
     }
@@ -260,6 +307,8 @@ async function boot() {
       P.begin('jobs'); w.jobs.update(w, dt); P.end('jobs');
       P.begin('theft'); updateCarTheft(w, dt); P.end('theft');
     }
+    updateInteriors(w, w.interiors, dt);
+    updateSandbox(w, dt);
     // event consumers run once per frame, then events are cleared
     P.begin('memory'); updateNpcMemory(w); P.end('memory');
     P.begin('police'); updateWitnesses(w, dt); updatePolice(w, dt); updateHealth(w, dt); P.end('police');
@@ -279,6 +328,7 @@ async function boot() {
       P.begin('debug'); updateDebug(w); updatePhysDebug(w); P.end('debug');
       P.begin('render'); renderCrowd(w); renderer.render(scene, camera); P.end('render');
     }
+    updatePersistence(w, dt);
     P.endFrame(realMs, w.time);
     if (steps > 0) endInputFrame(w.input);
     else { w.input.mouseDX = 0; w.input.mouseDY = 0; }

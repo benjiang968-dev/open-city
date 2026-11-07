@@ -1,0 +1,114 @@
+{
+  "quality": "low",
+  "renderer": "Chromium SwiftShader software GL",
+  "size": "480x270",
+  "seed": 123,
+  "map": "georgetown",
+  "frames": 120,
+  "readyMs": 39659,
+  "boot": {
+    "mapMs": 22727,
+    "firstFrameMs": 27577
+  },
+  "bake": {
+    "bakeMs": 1222,
+    "bytes": 20272469,
+    "res": 256
+  },
+  "calls": 120,
+  "triangles": 613847,
+  "geometries": 286,
+  "textures": 22,
+  "programs": 47,
+  "cpuMedian": 6.6,
+  "cpuP90": 33.8,
+  "cpuWorst": 1389.1,
+  "framesOver33": 12,
+  "slowest": [
+    {
+      "cpu": 1389.1,
+      "top": "render 1386.3 · physics 1.2 · vehicles 0.3 · hud 0.3"
+    },
+    {
+      "cpu": 1044.4,
+      "top": "render 1010.2 · traffic 31.1 · physics 1.4 · vehicles 0.4"
+    },
+    {
+      "cpu": 44.3,
+      "top": "peds 33.1 · render 4.9 · physics 3.8 · traffic 0.8"
+    },
+    {
+      "cpu": 41.4,
+      "top": "render 38.4 · parked 1.1 · physics 0.9 · player 0.3"
+    },
+    {
+      "cpu": 40.5,
+      "top": "render 36.5 · traffic 1.6 · physics 1.2 · minimap 0.4"
+    },
+    {
+      "cpu": 40.1,
+      "top": "physics 33.9 · render 4.6 · police 0.3 · sync 0.3"
+    },
+    {
+      "cpu": 39.6,
+      "top": "physics 33.6 · render 4.7 · sync 0.4 · player 0.2"
+    },
+    {
+      "cpu": 39.1,
+      "top": "render 35.9 · physics 1.4 · traffic 0.4 · player 0.3"
+    }
+  ],
+  "heapMB": 338,
+  "allocatedKBPerFrame": 249,
+  "allocationTop": [
+    [
+      "g warmup-DF1vrSCZ.js:4170",
+      2992272
+    ],
+    [
+      "us main-D3mtuK5r.js:7",
+      1723588
+    ],
+    [
+      "fn warmup-DF1vrSCZ.js:4119",
+      1559060
+    ],
+    [
+      "ai main-D3mtuK5r.js:2",
+      1377940
+    ],
+    [
+      "cn warmup-DF1vrSCZ.js:4119",
+      1367976
+    ],
+    [
+      "fromBuffer warmup-DF1vrSCZ.js:4221",
+      1265580
+    ],
+    [
+      "next :0",
+      1171900
+    ],
+    [
+      "di main-D3mtuK5r.js:2",
+      1058012
+    ],
+    [
+      "gn warmup-DF1vrSCZ.js:4119",
+      943320
+    ],
+    [
+      "hd main-D3mtuK5r.js:8",
+      799008
+    ],
+    [
+      "bi main-D3mtuK5r.js:2",
+      794984
+    ],
+    [
+      "Vo main-D3mtuK5r.js:7",
+      752512
+    ]
+  ],
+  "errors": []
+}

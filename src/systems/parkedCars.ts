@@ -14,7 +14,8 @@ import { TUNING, type CarTypeName } from '../tuning';
 import type { World } from '../world';
 import type { CityMap, ParkingSpot } from './map/cityMap';
 import { spawnVehicle, repaintVehicle, rideHeight, syncVehicleMesh, type Vehicle } from './vehicles';
-import { buildCarBody, carMaterial } from '../art/car';
+import { buildCarBody, appendStaticWheels } from '../art/car';
+import { makeCarMaterial } from './render/vehicleMaterials';
 import { Rng } from '../rng';
 
 const V = TUNING.vehicles;
@@ -22,6 +23,10 @@ const TH = TUNING.theft;
 const TYPES = Object.keys(V.types) as CarTypeName[];
 const PAINTS = ['#e63946', '#f1faee', '#457b9d', '#2a9d8f', '#e9c46a', '#264653', '#8d99ae', '#ff8fab', '#606c38', '#bc6c25', '#1d1d1f', '#d9d9d9', '#7f1d1d', '#1e3a8a'];
 const CELL = 32; // metres per cell of the parked-car grid (lookup speed only)
+// Separate materials for the two instancing variants: switching instanceColor on the same material forced
+// three to re-derive program parameters for every parked draw, and also for ordinary traffic car draws.
+const parkedPaintMaterial = makeCarMaterial();
+const parkedDetailMaterial = makeCarMaterial();
 const FAR = 1e7; // where idle pooled cars are said to be (every distance test skips them)
 
 export interface ParkedCar {
@@ -78,14 +83,7 @@ const SENTINEL = new THREE.Color(1, 0, 1); // the builder's paint, found again i
 function splitCarGeometry(type: CarTypeName): { paint: THREE.BufferGeometry; detail: THREE.BufferGeometry } {
   const spec = V.types[type];
   const b = buildCarBody(type, SENTINEL);
-  // static wheels, as on the AI cars
-  const tyre = new THREE.Color('#1d1d1f');
-  const r = spec.wheelRadius, wy = spec.wheelY - spec.suspensionRest;
-  for (const z of [spec.wheelZFront, spec.wheelZRear])
-    for (const s of [-1, 1]) {
-      const x = s * spec.wheelX;
-      b.box(x - 0.13, wy - r, z - r * 0.85, x + 0.13, wy + r, z + r * 0.85, tyre);
-    }
+  appendStaticWheels(b, { r: spec.wheelRadius, x: spec.wheelX, zf: spec.wheelZFront, zr: spec.wheelZRear, y: spec.wheelY - spec.suspensionRest });
   const g = b.build();
   const P = g.getAttribute('position').array as Float32Array, N = g.getAttribute('normal').array as Float32Array, C = g.getAttribute('color').array as Float32Array;
   const pp: number[] = [], pn: number[] = [], pc: number[] = [], dp: number[] = [], dn: number[] = [], dc: number[] = [];
@@ -114,9 +112,9 @@ function splitCarGeometry(type: CarTypeName): { paint: THREE.BufferGeometry; det
 
 function makeMeshes(w: World, type: CarTypeName, cap: number): TypeMeshes {
   const { paint, detail } = splitCarGeometry(type);
-  const pm = new THREE.InstancedMesh(paint, carMaterial, cap);
+  const pm = new THREE.InstancedMesh(paint, parkedPaintMaterial, cap);
   pm.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
-  const dm = new THREE.InstancedMesh(detail, carMaterial, cap);
+  const dm = new THREE.InstancedMesh(detail, parkedDetailMaterial, cap);
   for (const m of [pm, dm]) {
     m.count = 0;
     m.frustumCulled = false; // spread over the streets around you: one bounding sphere would not cull anything

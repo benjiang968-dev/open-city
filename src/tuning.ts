@@ -81,14 +81,20 @@ const RAW = {
     maxPitch: 1.2, // looking down limit
     autoRecenterDelay: 1.6, // seconds after mouse stops before the car camera swings behind
     autoRecenterSpeed: 2.2, // how fast it swings back behind the car
-    footRecenterSpeed: 5, // on foot the camera swings behind the character faster
+    footRecenterSpeed: 5, // reserved for camera transition smoothing
+    eyeHeight: 1.62, // metres from the player's feet in first person
+    collisionRadius: 0.22, // sphere swept between the target and third-person camera
+    collisionGap: 0.08, // metres kept in front of a camera obstruction
+    collisionReturnSpeed: 5, // per second: zoom smoothly back out after a wall
+    firstPersonPitch: 1.25, // symmetric first-person pitch limit in radians
     fov: 62, // base field of view (degrees)
     fovSpeedBoost: 12, // extra FOV degrees at top speed
   },
 
   player: {
-    walkSpeed: 4.2, // m/s
-    runSpeed: 8.5, // m/s with Shift
+    walkSpeed: 5.8, // m/s: quicker normal exploration pace
+    runSpeed: 9.5, // m/s with Shift: remains distinct from walking
+    acceleration: 32, // m/s²: smooth start/stop independent of render frame rate
     jumpVelocity: 6.2, // m/s upward on Space
     gravity: 22, // m/s² for the on-foot controller (snappier than real 9.8)
     turnSpeed: 3.0, // rad/s the character turns with A/D (tank-style controls)
@@ -181,6 +187,108 @@ const RAW = {
         health: 120,
         color: 0x2e6fd8,
       },
+      suv: {
+        label: 'SUV',
+        mass: 1750,
+        halfExtents: [0.99, 0.56, 2.3],
+        comHeight: -0.6,
+        wheelRadius: 0.41,
+        wheelX: 0.91,
+        wheelZFront: 1.45,
+        wheelZRear: -1.4,
+        wheelY: -0.25,
+        suspensionRest: 0.32,
+        suspensionStiffness: 32,
+        suspensionCompression: 3.6,
+        suspensionRelaxation: 4.2,
+        maxSuspensionTravel: 0.3,
+        maxSuspensionForce: 80000,
+        frictionSlipFront: 1.0,
+        frictionSlipRear: 1.08,
+        sideFrictionStiffness: 1.0,
+        handbrakeRearSlip: 0.38,
+        engineForce: 2900,
+        reverseForce: 2400,
+        brakeForce: 3400,
+        handbrakeForce: 4000,
+        maxSpeed: 46,
+        maxSteer: 0.56,
+        steerAtSpeed: 0.15,
+        highSpeedSteerAt: 40,
+        steerRate: 3.2,
+        driveFront: true, // drivetrain differs by body class
+        driveRear: true,
+        health: 150,
+        color: 0x496a58,
+      },
+      van: {
+        label: 'Van',
+        mass: 2100,
+        halfExtents: [1.02, 0.7, 2.55],
+        comHeight: -0.62,
+        wheelRadius: 0.4,
+        wheelX: 0.94,
+        wheelZFront: 1.68,
+        wheelZRear: -1.65,
+        wheelY: -0.28,
+        suspensionRest: 0.32,
+        suspensionStiffness: 32,
+        suspensionCompression: 3.6,
+        suspensionRelaxation: 4.2,
+        maxSuspensionTravel: 0.3,
+        maxSuspensionForce: 80000,
+        frictionSlipFront: 1.0,
+        frictionSlipRear: 1.08,
+        sideFrictionStiffness: 1.0,
+        handbrakeRearSlip: 0.38,
+        engineForce: 4000,
+        reverseForce: 2400,
+        brakeForce: 3400,
+        handbrakeForce: 4000,
+        maxSpeed: 38,
+        maxSteer: 0.56,
+        steerAtSpeed: 0.15,
+        highSpeedSteerAt: 40,
+        steerRate: 2.5,
+        driveFront: false, // drivetrain differs by body class
+        driveRear: true,
+        health: 170,
+        color: 0xdfdfd6,
+      },
+      sports: {
+        label: 'Sports car',
+        mass: 1180,
+        halfExtents: [0.96, 0.36, 2.12],
+        comHeight: -0.52,
+        wheelRadius: 0.34,
+        wheelX: 0.88,
+        wheelZFront: 1.42,
+        wheelZRear: -1.35,
+        wheelY: -0.2,
+        suspensionRest: 0.24,
+        suspensionStiffness: 42,
+        suspensionCompression: 3.6,
+        suspensionRelaxation: 4.2,
+        maxSuspensionTravel: 0.3,
+        maxSuspensionForce: 80000,
+        frictionSlipFront: 1.15,
+        frictionSlipRear: 1.17,
+        sideFrictionStiffness: 1.0,
+        handbrakeRearSlip: 0.38,
+        engineForce: 5700,
+        reverseForce: 2400,
+        brakeForce: 3900,
+        handbrakeForce: 4000,
+        maxSpeed: 62,
+        maxSteer: 0.56,
+        steerAtSpeed: 0.15,
+        highSpeedSteerAt: 40,
+        steerRate: 3.2,
+        driveFront: false, // drivetrain differs by body class
+        driveRear: true,
+        health: 100,
+        color: 0xb32925,
+      },
       pickup: {
         label: 'Pickup',
         mass: 1900,
@@ -227,6 +335,11 @@ const RAW = {
     rollingResistance: 220, // N of brake per wheel when coasting (engine braking)
     crashDamageThreshold: 4.5, // m/s of sudden speed change before damage counts
     crashDamagePerMs: 6, // health lost per m/s of impact above threshold
+    recoveryCooldown: 0.6, // seconds between accepted recovery requests
+    recoveryClearance: 0.08, // metres above ride height when recovering
+    recoverySearchStep: 3, // metres between radial recovery search rings
+    recoverySearchRadius: 24, // metres: refuse recovery if no clear nearby surface exists
+    recoveryMaxGroundDelta: 1.6, // max height variation across an upright car's footprint
     flipRecoverTime: 2.5, // seconds upside down before the car is auto-righted
     playerCarSpawn: [
       // one of each type parked next to the starting taxi rank
@@ -248,10 +361,10 @@ const RAW = {
     lotFill: { grid: 0, georgetown: 0.5 } as Record<string, number>, // by map: share of car park bays with a car in them
     waterfrontLotFill: 0.95, // car parks by the river are full: bays within waterfrontLotRange of the waterfront promenade
     waterfrontLotRange: 150, // metres
-    parkedTypeWeights: { hatchback: 4, sedan: 4, pickup: 2 }, // how common each car type is among parked cars
+    parkedTypeWeights: { hatchback: 4, sedan: 4, pickup: 2, suv: 3, van: 2, sports: 1 }, // how common each car type is among parked cars
     // Near you a parked car is a real drivable car (physics, E to get in), taken from a pool; further away it is only
     // drawn (one instanced mesh per car type), so a street full of parked cars costs a handful of draw calls.
-    parkedPool: { hatchback: 10, sedan: 10, pickup: 8 }, // drivable cars per type kept ready (the pool grows if it must)
+    parkedPool: { hatchback: 6, sedan: 6, pickup: 4, suv: 4, van: 4, sports: 3 }, // drivable cars per type kept ready (the pool grows if it must)
     parkedLiveRadius: 26, // metres: parked cars this close to you are drivable cars
     parkedAheadTime: 1.6, // seconds: ...and those near where your car will be this far ahead
     parkedAheadRadius: 16, // metres around that point ahead
@@ -472,12 +585,12 @@ const RAW = {
       crossStreetRange: 160, // metres: the HUD names the destination's nearest cross street within this ("M St NW at 31st St NW")
     },
     dealership: {
-      prices: { hatchback: 900, sedan: 1600, pickup: 2200 }, // $ per car type at a dealership
+      prices: { hatchback: 900, sedan: 1600, pickup: 2200, suv: 2600, van: 2400, sports: 4200 }, // $ per car type at a dealership
       // what each showroom has on display (2–4 cars, one list per dealership in order)
       stock: [
-        ['hatchback', 'sedan', 'hatchback'],
-        ['pickup', 'sedan', 'pickup', 'hatchback'],
-        ['sedan', 'hatchback', 'pickup', 'sedan'],
+        ['hatchback', 'sedan', 'sports'],
+        ['pickup', 'suv', 'van', 'hatchback'],
+        ['sedan', 'hatchback', 'suv', 'sports'],
       ],
       slotOffsets: [-7.5, 7.5, -15, 15], // metres along the kerb from the dealership's door for each display car
       slotClearance: 6.5, // metres: a display slot must be this far from any other car (and other POIs' taxi stops)
@@ -612,6 +725,9 @@ const RAW = {
 
   items: {
     hotbarSlots: 9, // one-hand items you can carry
+    carryMaxKg: 12, // total mass of loose items in the hotbar
+    handMaxSize: 0.9, // largest collider dimension allowed for one-handed pickup
+    drinkHeal: 5, // small health recovery from a sealed drink; the empty container remains
     pickupRange: 1.8, // metres: how close an item must be to pick it up
     pickupCone: 0.4, // how directly you must face it (dot product; 0.4 ≈ within 66°)
     dropSpeed: 1.4, // m/s an item is tossed forward when dropped with Q
@@ -741,10 +857,10 @@ const RAW = {
   witness: {
     // heat a completed 999 call adds for each kind of crime (40 heat = 1 star). Hurting a dog is taken very
     // personally: 60 heat (2 stars) from one call, more than knocking a person down.
-    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34, dogAttack: 60, carTheft: 30 },
+    heat: { pedHit: 40, assault: 32, harassment: 20, vandalism: 14, menace: 12, ramming: 16, ramPolice: 34, dogAttack: 60, carTheft: 30, shopTheft: 18, trespass: 12 },
     // metres within which people can witness each crime (they also need line of sight).
     // carTheftAlarm: while a car alarm sounds everyone this close turns to look, so they can witness the theft
-    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40, dogAttack: 45, carTheft: 24, carTheftAlarm: 55 },
+    radius: { pedHit: 45, assault: 35, harassment: 22, vandalism: 26, menace: 14, ramming: 32, ramPolice: 40, dogAttack: 45, carTheft: 24, carTheftAlarm: 55, shopTheft: 24, trespass: 22 },
     // bystander reaction weights are multiplied by these when the crime is hurting a dog: far more call or square up
     dogAttackReaction: { call: 2, film: 1, flee: 0.5, confront: 2.5 },
     maxWitnesses: 8, // nearest people considered per crime

@@ -103,7 +103,7 @@ const S = (id: number, layer: BakeLayer | null, size: number | [number, number],
 /** Tile sizes are whole numbers of pattern periods (bricks, slabs, setts) so the tiles join seamlessly. */
 export const SURFACES: SurfaceDef[] = [
   S(SURF.NONE, null, 1, MAP.NONE, 0xffffff, { macro: 0.35, porosity: 0.6 }),
-  S(SURF.ASPHALT, 'asphalt', 4, MAP.TOP, 0x4b4e54, { macro: 0.7, porosity: 1 }),
+  S(SURF.ASPHALT, 'asphalt', 4, MAP.TOP, 0x4b4e54, { macro: 0.35, porosity: 0.85, normal: 0.55 }),
   S(SURF.PAINT, 'paint', 2, MAP.TOP, 0xeeeee6, { macro: 0.25, porosity: 0.7 }),
   S(SURF.CONCRETE_SLAB, 'concreteSlab', 3, MAP.TOP, 0xbcb7ad, { macro: 0.6, porosity: 0.9 }),
   S(SURF.BRICK_PAVER, 'brickPaver', 1.2, MAP.TOP, 0xa86a55, { macro: 0.6, porosity: 1 }),
