@@ -994,6 +994,8 @@ const RAW = {
     skyCloudDensityClear: 0.45, // cloud opacity in clear weather (three's Sky cloudDensity)...
     skyCloudDensityOvercast: 0.85, // ...and at full cloud (an opaque grey deck)
     skyCloudElevation: 0.55, // apparent height of the cloud layer (three's Sky cloudElevation, 0..1)
+    skyCubeSize: 256, // px per face: cached physical visible sky, replacing full-screen cloud/scattering every frame
+    skyRefreshSeconds: 1, // cloud/daylight cache refresh interval; six faces are amortised over six frames
     envCubeSize: 128, // px per face of the sky capture that lights everything (PMREM)
     envRefreshDegrees: 1.5, // recapture the sky when the sun has moved this far...
     envRefreshMinSeconds: 1.5, // ...but at most this often (real seconds)
