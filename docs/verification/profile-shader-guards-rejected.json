@@ -1,0 +1,62 @@
+{
+  "original": {
+    "ms": [
+      1224.1000000014901,
+      1295.6000000014901,
+      1098.5999999940395,
+      1158.2999999970198,
+      1244,
+      1239.7999999970198,
+      1418,
+      1494.8999999985099
+    ],
+    "median": 1244,
+    "calls": 98,
+    "triangles": 770645
+  },
+  "optimized": {
+    "ms": [
+      1271.7000000029802,
+      1320,
+      1186.3999999985099,
+      1152.5,
+      1247.6999999955297,
+      1382.3999999985099,
+      1594.2000000029802,
+      1731.3999999985099
+    ],
+    "median": 1320,
+    "calls": 98,
+    "triangles": 770645
+  },
+  "conditions": [
+    {
+      "label": "clear",
+      "maxDifference": 0,
+      "meanDifference": 0,
+      "differingChannels": 0,
+      "channels": 254016
+    },
+    {
+      "label": "rain",
+      "maxDifference": 1,
+      "meanDifference": 0.000007873519778281684,
+      "differingChannels": 2,
+      "channels": 254016
+    },
+    {
+      "label": "snow night",
+      "maxDifference": 0,
+      "meanDifference": 0,
+      "differingChannels": 0,
+      "channels": 254016
+    }
+  ],
+  "qualityTransitions": [],
+  "boot": {
+    "mapMs": 23352,
+    "firstFrameMs": 28032
+  },
+  "elapsedMs": 68801,
+  "errors": []
+}
