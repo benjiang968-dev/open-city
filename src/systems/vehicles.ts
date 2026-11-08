@@ -152,12 +152,41 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   return v;
 }
 
-/**
- * Spawns the starting cars at the kerb spots nearest the player's spawn (the first `ownedAtStart` are yours; the
- * others belong to locals: carTheft.assignCarOwners). Every other parked car is placed by parkedCars.ts, which keeps
- * clear of the returned spots and of `reserved` ones (dealership showrooms).
- */
+/** A gentle, unobstructed physical departure for a freshly spawned owned car, using current scene queries. */
+export function initialDepartureClear(w: Pick<World, 'city' | 'physics' | 'R'>, spot: ParkingSpot, spec: CarSpec): boolean {
+  const limits = TUNING.geo.roadLimits, [hx, hy, hz] = spec.halfExtents;
+  const sin = Math.sin(spot.heading), cos = Math.cos(spot.heading);
+  const rotation = { x: 0, y: Math.sin(spot.heading / 2), z: 0, w: Math.cos(spot.heading / 2) };
+  const shape = new w.R.Cuboid(hx, hy, hz);
+  const step = 0.5; // same baseline as the road-limit kink audit
+  let previous = NaN, grade = NaN, reference = spot.y;
+  // Two parking spaces give the first owned car a usable departure before it needs a turn. Validate the physical
+  // parking line, including its wheel tracks and chassis, rather than the nearby traffic lane's smoother profile.
+  for (let d = -hz; d <= V.kerbSlotSpacing * 2 + hz; d += step) {
+    const x = spot.x + sin * d, z = spot.z + cos * d;
+    if (!w.city.isRoad(x, z) || w.city.isBlocked(x, z) || w.city.isWater(x, z)) return false;
+    const y = w.city.heightAt(x, z, reference);
+    const left = w.city.heightAt(x + cos * spec.wheelX, z - sin * spec.wheelX, y);
+    const right = w.city.heightAt(x - cos * spec.wheelX, z + sin * spec.wheelX, y);
+    if (![y, left, right].every(Number.isFinite) || Math.abs(left - right) / (2 * spec.wheelX) > limits.maxCrossSlope) return false;
+    if (previous === previous) {
+      const nextGrade = (y - previous) / step;
+      if (Math.abs(nextGrade) > limits.maxGradeMain || (grade === grade && Math.abs(nextGrade - grade) * step > limits.maxStep)) return false;
+      grade = nextGrade;
+    }
+    const at = { x, y: Math.max(y, left, right) + rideHeight(spec) + V.recoveryClearance, z };
+    if (w.physics.intersectionWithShape(at, rotation, shape, w.R.QueryFilterFlags.ONLY_FIXED)) return false;
+    previous = reference = y;
+  }
+  return true;
+}
+
+/** Spawn one of each starting type, preserving ownership/IDs; the owned cars prefer a safe departure near spawn.
+ * Parked-car filling keeps clear of the returned spots and the dealership's reserved spots. */
 export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z: number }[] = []): { x: number; z: number }[] {
+  // Rapier's query tree must include fixed colliders just created by the map, including on the grid fallback.
+  // No vehicles exist yet; this refreshes queries before choosing any of their starting poses.
+  w.physics.step();
   const start = w.city.spawn;
   const taken: { x: number; z: number }[] = [];
   const isFree = (s: { x: number; z: number }) => ![...reserved, ...taken].some((t) => Math.hypot(t.x - s.x, t.z - s.z) < V.kerbSlotSpacing * 0.5);
@@ -165,15 +194,15 @@ export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z
   const spots = w.city.parkingSpots.filter((s) => s.cls !== 'lot').sort(
     (a, b) => (a.x - start.x) ** 2 + (a.z - start.z) ** 2 - ((b.x - start.x) ** 2 + (b.z - start.z) ** 2),
   );
-  let k = 0;
-  for (const s of spots) {
-    if (k >= V.playerCarSpawn.length) break;
-    if (!isFree(s)) continue;
+  for (let k = 0; k < V.playerCarSpawn.length; k++) {
+    const available = spots.filter(isFree);
+    // Existing saves restore their own vehicle transforms later; this only chooses a fresh world's starting pose.
+    const s = (k < V.ownedAtStart ? available.find(s => initialDepartureClear(w, s, V.types[V.playerCarSpawn[k]])) : null) ?? available[0];
+    if (!s) break;
     taken.push(s);
     const v = spawnVehicle(w, V.playerCarSpawn[k], s.x, s.z, s.heading, undefined, s.y);
     v.owned = k < V.ownedAtStart;
     v.spotCls = s.cls;
-    k++;
   }
   return taken;
 }
