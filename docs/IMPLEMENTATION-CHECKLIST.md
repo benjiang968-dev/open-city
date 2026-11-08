@@ -1,72 +1,59 @@
-# Open City improvement checkpoint — 2026-11-07
+# Open City — implementation and verification checkpoint
 
-Source: owner's pasted request. Preserve Three.js/Rapier/Vite, current features, existing browser settings and progress. No paid services.
+Source: the owner's complete pasted request. Three.js/Rapier/Vite are retained. The implemented scope and evidence are recorded below; hardware-GPU performance and comparison with the Claude preview cannot be verified in this environment.
 
-## Inspection and implementation plan
+## Checklist
 
-- Placement: corner/midpoint sampling and concave roof/hull approximations can cross roads and other footprints. Use polygon envelopes, exact clipping and matching colliders; largest risk is preserving usable real-map footprints.
-- Recovery: `max(currentY, groundY) + 1.2` stacks altitude. Anchor recovery to valid ground, clear velocity/forces, require deliberate edge input and cooldown.
-- Movement/camera: raise walking/sprint tuning, couple heading/view, fix inconsistent clock and focus clearing; add V first/third-person views with obstruction handling.
-- Roads/performance: profile a baseline first; inspect asphalt aggregate, colour spaces and shared material program churn. Keep comparable measurements and distinguish software rendering from hardware.
-- Interiors: deterministic marked door transitions to physical furnished rooms with solid floors/walls/stairs. Integrate the existing player and items; do not promise all real-map buildings are enterable.
-- Persistent activities: extend the existing item instances/hotbar, add inspect/use, versioned local saves, repeatable jobs and apartment transactions/storage, with witnessed theft/trespass and existing police pursuits.
-- Delivery: production build/browser smoke tests, GitHub branch/PR and hosted build if available; no hosting purchases.
-
-## Tracking
-
-| # | Item | Implemented | Tested | Blocked / limitations |
+| # | Request | Implemented | Tested | Limits / blocked checks |
 |---|---|---|---|---|
-| 1 | Footprint/road/building overlap rules and existing placements | yes | Full 4,713-footprint audit: zero overlaps, roof/collider errors | Drops 93 unusable fragments/duplicates; terrain/bridge layers retained |
-| 2 | R recovery exploit | yes | 120 rapid taps + hold, real flat/slope/building poses | Rejects recovery if no clear nearby pose |
-| 3 | Faster walking, sprint, fixed-step heading movement | yes | 30/60/120 fps, same 120 physics ticks, 11.0–11.1 m/2s walking vs 17.2 m sprint | Setup teleports settled before measurement |
-| 4 | Camera controls, focus, help | yes | Keyboard/mouse heading, view/vehicle transitions, blur release | Pointer lock fallback is right-button drag |
-| 5 | Day/night asphalt | yes | Day/night vehicle/asphalt screenshots and shader checks | Procedural art; colour-space and roughness kept coherent |
-| 6 | Measured performance fixes | yes, targeted | Isolated comparison: sampled allocation 335→261 KB/frame; CPU median 18→6.8 ms | Software GL stalls remain. Real GPU and chat preview comparison unavailable |
-| 7 | Vehicle classes, detail, wheels, driving interiors | yes | All six classes: finite geometry, driver eye/forward sightlines, moving steering; live car view test | Procedural models, simpler parked/traffic LOD |
-| 8 | Coherent world visual improvement | incremental | Car/asphalt shots, exact building roof geometry, production browser rendering | Existing people/nature remain procedural; not photorealism |
-| 9 | Furnished physical interiors, doors, stairs | six marked sites | Real Rapier floor/wall/door tests in all six; office/apartment stairs up and down; game entry/exit | Door transitions to separate physical rooms, not every imported facade. Old outdoor stair audit has unresolved cases, not claimed fixed |
-| 10 | First/third person walking/driving | yes | Both modes, actual driver eye and indoor chase bounds | Hardware/trackpad device feel still needs user feedback |
-| 11 | Reusable pickups, inspection/use/drop/save | yes | Identity/weight/size/theft/use/duplication tests; actual browser IDB reload and production game pickup | Eight catalogue object types plus owned/sealed stock; fixed decorative furniture is not universally dismantlable |
-| 12 | Several jobs, interior objectives, payouts | four added + taxi retained | Warehouse $50, cleaning $40, repairs $65, delivery $55; exact payouts and repeated E rejects | No new story campaign |
-| 13 | Buy/rent apartments and persistent storage | yes | Rent charged once; same-ID storage deposit/retrieval/reload | $90/7 days prepaid, no recurring debit; buy $1,800. Buy/insufficient funds/expiry/duplicate paths tested in transaction fixture; browser covers rent |
-| 14 | Shop theft/trespass, existing vehicle theft/pursuit | yes | Production shopkeeper report: heat 18; real unseen pursuit countdown resolves to zero; trespass grace/one-shot report fixture passes | Fixed interior staff/security witnesses; exterior NPC witnesses retained |
-| 15 | Production standalone build/deployment | published privately | Production build and standalone Chromium game flows; Sites reports succeeded | GitHub integration cannot enable Pages (403); Sites used instead |
+| 1 | Buildings, roads, pavements and entrances | Exact oriented footprint clipping against roads, corner pavements, paths and neighbours; matching concave roofs/collision; safe stoop rules | All 4,713 source footprints: 4,620 retained, 1,972 clipped, 93 unusable fragments/duplicates omitted; zero remaining overlaps or roof/collider decomposition errors | Numeric tolerance is 0.0001 m²; bridge-height solving preserves valid buildings below decks |
+| 2 | R car flying exploit | Absolute supporting-ground recovery, rotated chassis clearance, motion/force/wheel reset and cooldown | 120 rapid taps plus holding R, flat terrain, a roughly 25% slope and building edge; no cumulative altitude | Recovery is refused if no nearby valid pose exists |
+| 3 | Faster walking | 5.8 m/s walk, separate sprint, acceleration, fixed physics steps; turning adds no diagonal translation | 30/60/120 simulated fps; 120 physics ticks, about 11 m in 2s walking versus 17 m sprint | Discrete collision-controller settling accounts for small fixture variation |
+| 4 | Consistent controls and help | A/D turns view and heading on foot; driving steers independently of mouse look; focus/visibility release; compact HUD and full Esc help | Combined keyboard/mouse heading, blur, V/E entry/exit, steering and view transitions | Physical trackpad/device feel is unverified |
+| 5 | Asphalt appearance | Lower aggregate contrast/normal strength, coherent linear colours, matte dry asphalt and restrained wet gloss | Day/night visual fixtures and shader tests | Procedural materials remain |
+| 6 | Profile and improve lag | Separate material variants reduce churn; cached physical sky, amortized captures, truthful FPS measurement and loading stages | Comparable allocation 335→261 KB/frame; isolated sky pass 5.8→2.7 ms; 18-view sky parity ≤1/255. Slower shader experiments rejected | Full-city SwiftShader rendering remains slow. No whole-game FPS improvement or hardware 60 FPS claim; actual device GPU and Claude preview comparison blocked |
+| 7 | Distinct vehicles and cabins | Hatchback, saloon, SUV, van, sports car and pickup; wheels/steering, mirrors/lights/body details, seats/dashboards/driver eyes and differing handling | All six finite models and driver sightlines; actual first/third-person driving and steering | Parked/traffic LOD is simpler. Fresh starting sedan drives 25m with 120/120 health |
+| 8 | Coherent world visuals | Shaped human faces/hands/shoes/clothing and connected vegetation, improved vehicles/asphalt and exact building roofs | 1.78m people, 1,584 triangles/person, five player draw calls, 60 people/nine instanced body batches; near trees ≤414 triangles; inspected screenshots | Original procedural art is stylized, not photorealism or imported Google imagery |
+| 9 | Furnished enterable buildings | Fourteen marked shops, offices, warehouses, workshops, cafés and apartments; physical furniture, hinged doors, floors and stairs; rooms persist after exit | All 14 room variants' collision; 272 goods rest on actual support surfaces; all 85 outdoor stairs up/down (170 traversals), zero measured penetration and console errors | Marked entrances use explicit room transitions; unmarked imported facades remain scenery |
+| 10 | Both camera views | V switches foot/car views; real eye/driver positions, smooth follow, collision, indoor bounds and close-body hiding with hysteresis | Outdoor and indoor first/third-person transitions; near-camera body hiding and return to third-person visibility | Camera remains within active room bounds even at an open portal |
+| 11 | Reusable inventory and pickups | Fifteen catalogue types, 272 physical room goods plus street objects; names/descriptions/icons; size/mass eligibility, inspect/use/drop/store; stable IDs and authored keys | Identity, limits, food/drink once, book/phone use, unpaid-use report, no duplicate seeding, real IDB reload/migration | Nine slots / 12kg; fixed structures are not loose portable items |
+| 12 | More jobs | Four spatial shifts (delivery, cleaning, repairs, warehouse) plus existing taxi; objectives, supplies, progress and payouts | All four complete in production at exact pay ($55/$40/$65/$50), repeated E guards; a repeated warehouse shift at a second workplace reuses IDs and pays once; cancellation pays nothing | Work is optional sandbox activity |
+| 13 | Buy/rent apartments | Four separately priced furnished homes, purchase/prepaid lease, independent persistent storage | Full browser rent/store/reload/retrieve, second home and book persistence, buy/funds/expiry/duplicate transaction fixtures | Leases $81–$117 for 7 game days, no automatic renewal; buy $1,620–$2,340. Original home remains $90/$1,800; 18 storage slots/home |
+| 14 | Fictional crime and consequences | Existing vehicle theft, unpaid shop goods/food, warned warehouse trespass, staff/NPC reports, wanted level and pursuits | Production shop report raises heat18; real unseen countdown resolves pursuit; paid food causes no report; trespass grace and one-shot reporting tested | Interior staff/security reports use the real exterior entrance location |
+| 15 | Standalone website and saves | Static production build, versioned browser-local IndexedDB, upgrade preservation | Production build, complete game reloads and actual published-v1 → new build → second reload; cash, NPC relationship, lease, item450 and first20 parked IDs/types/positions retained; new goods appended once | Updated publication pending final packaging; hosted access remains owner-private. No account/device/origin save sync |
 
-## Required full-flow checks
+## Full flows verified
 
-- [x] Walk → enter → collect → exit → save/reload.
-- [x] Enter car → switch view → drive → hold/repeat R → exit (flat/slope/building).
-- [x] Job start → all objectives → one correct payout → repeat.
-- [x] Apartment rent/buy → store → leave/reload → retrieve.
-- [x] Crime → wanted/pursuit → resolve.
-- [x] Several city areas: buildings, roads, stairs; browser errors; before/after profile.
+- Walk/interact → enter → collect/use → exit → save/reload.
+- Enter car → both views → steer/drive → rapid/held R → exit, with flat/slope/building recovery.
+- Four jobs → physical objectives → exact single payouts; repeat work in a second building without cloned supplies.
+- Lease → store → leave/reload → retrieve the same item; second home storage remains separate.
+- Paid food → consume once without crime; unpaid merchandise → wanted/pursuit → resolve.
+- Published v1 save → upgraded game → save/reload: $710, NPC relationship24, apartment and stored can450 remain; 463 old objects become735 including272 authored objects exactly once. Old parking layout remains stable.
 
+## Reproduction
 
-## Reproduction and evidence
+```bash
+npm run build
+npm run test:systems
+npm run test:placement
+MAP=georgetown npm run test:controls
+npm run test:stairs
+npm run test:sky
+npm run test:gameplay
+OLD_BUILD=/path/to/published-v1/dist npm run test:upgrade
+```
 
-Run `npm run build`, `npm run test:systems`, `npm run test:placement`, `MAP=georgetown npm run test:controls`, `npm run test:gameplay`.
-The controlled distance platform isolates physics from live street contacts; recovery tests use real map roads/terrain/buildings.
-Production gameplay setup teleports locations, then exercises the real E/item/objective/transaction/police paths. The reload preserves $270,
-four completed jobs, the apartment lease and the same stored collectible ID, with 100 health and a clean console.
-See `docs/verification/` for raw before/after profiles and `screenshots/` for browser JSON/screenshots.
+Tests use setup teleports to arrange scenarios, then real E/U/G actions, physics, guarded transactions and browser storage. `test:upgrade` serves both production builds at one browser origin. Scene fixtures and full reports live in `screenshots/`; raw profiles and methodology are in `docs/verification/`.
 
-### Remaining verification limits
+## Remaining limits
 
-- No hardware GPU or access to Claude's preview process: cannot promise 60 FPS or compare wrappers.
-- The broad outdoor stair/road-smoothness/traffic audits from the prior integration remain imperfect; this change validates footprint placement,
-  new interior stairs, ground recovery and the listed game flows. It does not claim every outdoor terrain defect is resolved.
-- Full map art is still procedural. Six marked interior sites are supported, not all 4,713 imported buildings.
-- Browser-local saves belong to each site origin, map and seed; moving the website does not migrate IndexedDB automatically.
+- There is no hardware GPU or connected Claude preview process here. Software GL is slow; real-device performance remains unverified. Measurements distinguish CPU submission, allocation and GPU-drained timing.
+- The city uses original procedural assets. Fourteen marked locations are enterable, rather than every imported facade.
+- Broad whole-city road-smoothing/traffic audits are not a claim of perfection. The steep 35th St approach remains; fresh starter selection avoids it. Existing saves preserve their original layout and vehicle poses.
+- Saves belong to this browser, website origin, map and seed. Unsupported snapshots are protected from overwrite. Clearing site data removes local progress.
 
+## Publication
 
-## Published checkpoint
-
-Playable private Site: https://open-city-play-benjiang.benjiang968.chatgpt.site . Sign in as the owner.
-Sites saved/published source commit `b58a513fc629b66bb7aebed822adf1da391bbc9c`, deployment
-`appgdep_6aef225a51d481919d10acd293e7e0bf`, returned `succeeded` on 2026-11-07.
-Native deployment success verifies publication; automated game flows were tested against the identical local static production output,
-not against an authenticated hosted browser session. GitHub review branch carries the code plus final verification notes.
-
-Final integrated Low production profile (software GL, 480×270, seed123, 120 frames): CPU median6.6ms,
-p90 33.8ms, sampled allocations249KB/frame,120 calls/614K triangles,338MB JS heap; worst software render stall1.39s.
-Startup39.7s, map build22.7s. This final Low sample is not comparable to the isolated Medium comparison above.
+Owner-private playable URL: https://open-city-play-benjiang.benjiang968.chatgpt.site .
+The first publication was source b58a513fc629b66bb7aebed822adf1da391bbc9c. The updated verified release will reuse this URL and access policy; no domain or paid hosting is required.

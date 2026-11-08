@@ -19,13 +19,14 @@ export interface CameraState {
   mode: 'third' | 'first';
   viewBlend: number;
   obstructionDistance: number;
+  playerObscured: boolean;
   lastLookTime: number; // simulation clock, never compared with performance.now()
   override: { px: number; py: number; pz: number; lx: number; ly: number; lz: number } | null;
 }
 
 export function createCamera(): CameraState {
   return { yaw: Math.PI, pitch: 0.32, dist: T.distanceOnFoot, focus: new THREE.Vector3(), titleAngle: 0,
-    mode: 'third', viewBlend: 0, obstructionDistance: T.distanceOnFoot, lastLookTime: -100, override: null };
+    mode: 'third', viewBlend: 0, obstructionDistance: T.distanceOnFoot, playerObscured: false, lastLookTime: -100, override: null };
 }
 
 /** Called before movement and again before drawing. Deltas/actions are consumed exactly once even with
@@ -84,7 +85,8 @@ export function updateCamera(w: World, dt: number): void {
   }
   // No delayed recenter on foot: turning the character must never leave the camera pointing elsewhere.
   if (!veh) c.yaw = w.player.facing + Math.PI;
-  const wantDist = veh ? T.distanceInCar + (veh.spec.halfExtents[2] - 2) * 2 : T.distanceOnFoot;
+  const indoor = !!w.interiors?.active;
+  const wantDist = veh ? T.distanceInCar + (veh.spec.halfExtents[2] - 2) * 2 : indoor ? T.indoorDistance : T.distanceOnFoot;
   c.dist += (wantDist - c.dist) * (1 - Math.exp(-dt * 3));
   desired.set(target.x, target.y + T.heightOffset, target.z);
   if (c.focus.distanceToSquared(desired) > 400) c.focus.copy(desired);
@@ -121,7 +123,9 @@ export function updateCamera(w: World, dt: number): void {
   cam.position.lerp(eye, c.viewBlend);
   look.copy(eye).addScaledVector(direction, -10).lerp(c.focus, 1 - c.viewBlend);
   cam.lookAt(look);
-  w.player.mesh.visible = !veh && c.mode === 'third';
+  const eyeDistance = cam.position.distanceTo(eye);
+  c.playerObscured = eyeDistance < T.hidePlayerDistance + (c.playerObscured ? T.playerVisibilityHysteresis : 0);
+  w.player.mesh.visible = !veh && c.mode === 'third' && !c.playerObscured;
   const sway = injurySway(w);
   if (sway) cam.rotateZ(sway);
   const fov = T.fov + T.fovSpeedBoost * Math.min(1, speed / (veh?.spec.maxSpeed ?? 1));

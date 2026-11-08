@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createServer } from 'vite';
-const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
 try {
   const { validateBuildingPlacement, roadPlacementObstacles, overlapArea, footprintArea, makeEntranceValidator } = await server.ssrLoadModule('/src/systems/map/placement.ts');
   const { footprintTriangles, footprintConvexPieces } = await server.ssrLoadModule('/src/systems/map/facades.ts');

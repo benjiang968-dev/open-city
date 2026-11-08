@@ -20,3 +20,22 @@ Placement regression audits every shipped footprint against real oriented road/p
 System tests use real Rapier (item identity, container consistency, doors, floors, walls and stair ascents/descents). The game browser scenarios use setup teleports, then normal input/guarded transactions. A production game browser reload checks the combined save. Test reports/screenshots are in `screenshots/`.
 
 The final integrated Low run is recorded separately in `profile-final-low.json`: 6.6 ms CPU median, 33.8 ms p90, 249 KB sampled allocation/frame, 120 calls, 614K triangles. Heap is 338 MB and startup is 39.7 seconds under software GL. It is not an apples-to-apples Medium comparison; geometry validation and larger authored activity registries add startup/heap cost.
+
+
+## Follow-up verification
+
+The expanded production game passes four exact payouts, repeat-input guards, paid food, readable books, four apartment choices,
+independent second-home storage, theft/pursuit and reload with $163/four completed shifts intact. A separate actual published-v1
+upgrade retains $710, NPC relationship24, the lease, stored can450 and the first20 parked-car identities/positions;272 new physical
+objects are appended exactly once across a second reload. See screenshots/36-gameplay-georgetown.json and37-upgrade.json.
+
+All85 exterior staircases traverse both ways (170 traversals), with zero measured floor penetration and no browser errors.
+The test finds a collision-free source endpoint where a raw endpoint touches a facade (maximum inset0.4m), without raising reachability
+or floor tolerances. All14 interior variants and272 item support surfaces also pass real-Rapier checks.
+
+A fresh starter car now uses an existing M Street slot with a gentle/clear departure, passing25m at120/120health. Legacy saves keep
+the previous reservation layout so parked-car IDs/types are not reshuffled. See screenshots/39-initial-drive*.json.
+
+The cached physical sky has an accepted isolated improvement; see sky-performance.md. Full-city readback remains slow in SwiftShader.
+Shader guards and compile-time Low specialization were rejected after fixed-sort interleaved comparisons. They are not shipped;
+see shader-investigation.md. FPS display now uses wall time, while physics catch-up remains capped separately.

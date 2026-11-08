@@ -5,6 +5,8 @@ import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, extname } from 'node:path';
 import { existsSync } from 'node:fs';
+import { runInitialCarProbe } from './initialCarScenario.mjs';
+import { runExtendedFlow } from './extendedScenario.mjs';
 import { runSandboxFlow } from './sandboxScenario.mjs';
 const root = process.env.BUILD_ROOT ?? 'dist';
 const types = {'.html':'text/html','.js':'text/javascript','.json':'application/json','.wasm':'application/wasm'};
@@ -19,11 +21,14 @@ const url=process.env.GAME_URL??`http://localhost:${server.address().port}/?map=
 const ready=async()=>{await page.waitForFunction(()=>window.__ocSandbox);await page.keyboard.press('Enter');await page.waitForFunction(()=>window.__oc.started);await page.evaluate(()=>{window.__freeze();const w=window.__oc;w.started=true;w.paused=false;w.input.blocked=false;});};
 try{
  await page.goto(url);await ready();
+ const initialCar=await runInitialCarProbe(page);assert.equal(initialCar.firstDamage,null,'Fresh starter must have a safe25m departure');assert.equal(initialCar.stop,'25m');console.log('initialCar',JSON.stringify(initialCar));await writeFile('work/initial-car-report.json',JSON.stringify(initialCar,null,2));
  const initial=await page.evaluate(()=>({entries:window.__oc.interiors.entries.map(e=>({id:e.id,kind:e.kind,at:e.exterior})),cash:window.__oc.cash}));console.log('initial',JSON.stringify(initial));
  const jobs=await runSandboxFlow(page);console.log('jobs',JSON.stringify(jobs));
+ const extended=await runExtendedFlow(page);console.log('extended',JSON.stringify(extended));
  const before=await page.evaluate(async()=>{
   const w=window.__oc,api=window.__ocSandbox,run=window.__ocRun;
   const apartment=w.interiors.entries.find(e=>e.kind==='apartment');
+  if (w.interiors.active !== apartment.id) { api.exitInterior(); api.enterInterior(apartment.id); run(.2,60); }
   const it=w.inventory.slots.find(it=>it && !it.owner);if(!it)throw Error('No stored collectible');
   w.inventory.selected=w.inventory.slots.indexOf(it);if(!api.store(apartment.id))throw Error('Storage deposit for reload failed');
   const id=it.id;api.exitInterior();run(1,60);
@@ -44,18 +49,19 @@ try{
  });console.log('saved',JSON.stringify(before));
  await mkdir('screenshots',{recursive:true});await page.screenshot({path:`screenshots/36-gameplay-${map}-interior.png`,timeout:60000});
  await page.reload();await ready();
- const after=await page.evaluate(({itemId,apartment})=>{
+ const after=await page.evaluate(({itemId,apartment,secondApartment,storedBook})=>{
   const w=window.__oc,api=window.__ocSandbox,run=window.__ocRun;
   if(w.interiors.active!==apartment)throw Error('Active interior was not restored');
   if(!w.interiors.entries.find(e=>e.id===apartment).room)throw Error('Restored interior has no floor');
   if(!w.sandbox.save.properties[apartment]?.stored.includes(itemId))throw Error('Storage lost on reload');
+  if(!w.sandbox.save.properties[secondApartment]?.stored.includes(storedBook))throw Error('Second apartment book lost on reload');
   if(!api.retrieve(itemId))throw Error('Retrieve after reload failed');
   if(api.retrieve(itemId))throw Error('Duplicate retrieval accepted');
   const same=w.inventory.slots.filter(it=>it?.id===itemId).length===1;
   run(1,60);window.__ocFrames(2,true);
   return{cash:w.cash,completed:w.sandbox.save.completed,sameInstance:same,active:w.interiors.active,health:w.player.health};
- },before);console.log('reloaded',JSON.stringify(after));
+ },{...before,...extended});console.log('reloaded',JSON.stringify(after));
  assert.equal(after.cash,before.cash);assert.equal(after.completed,4);assert.equal(after.sameInstance,true);assert.ok(after.health>0);assert.deepEqual(errors,[]);
- await writeFile(`screenshots/36-gameplay-${map}.json`,JSON.stringify({initial,jobs,before,after,errors},null,2));
+ await writeFile(`screenshots/36-gameplay-${map}.json`,JSON.stringify({initial,initialCar,jobs,extended,before,after,errors},null,2));
  console.log('Production gameplay integration PASS; console clean.');
 }finally{await browser.close();server.close();}

@@ -1,6 +1,8 @@
 // Every gameplay number lives here. Units: metres, seconds, kilograms, Newtons, radians unless noted.
 // When feedback arrives as a measurement, change the named value here and nothing else.
 
+import { ITEM_DEFINITIONS } from './data/itemCatalogue';
+
 const RAW = {
   world: {
     defaultSeed: 1337, // used when the URL has no ?seed=
@@ -72,6 +74,9 @@ const RAW = {
   },
 
   camera: {
+    hidePlayerDistance: 1.3, // m from the eye: avoid a blocked chase camera rendering inside the head/body
+    playerVisibilityHysteresis: 0.15, // m: prevent flicker at the close-camera boundary
+    indoorDistance: 3.4, // metres: comfortable indoor chase distance before obstruction checks
     distanceOnFoot: 5.5, // orbit distance when walking
     distanceInCar: 9.0, // orbit distance when driving
     heightOffset: 1.6, // look-at point above the target origin
@@ -728,6 +733,7 @@ const RAW = {
     carryMaxKg: 12, // total mass of loose items in the hotbar
     handMaxSize: 0.9, // largest collider dimension allowed for one-handed pickup
     drinkHeal: 5, // small health recovery from a sealed drink; the empty container remains
+    pickupMaxHeight: 2.1, // one-hand reach above the feet; permits stock on upper shelves without reaching another floor
     pickupRange: 1.8, // metres: how close an item must be to pick it up
     pickupCone: 0.4, // how directly you must face it (dot product; 0.4 ≈ within 66°)
     dropSpeed: 1.4, // m/s an item is tossed forward when dropped with Q
@@ -750,16 +756,7 @@ const RAW = {
     wallProbe: 0.2, // metres: an item this close to a wall (or the map edge) on any side would stick into it: left out
     // per item: mass (kg), throwable with left click, heavy = hitting someone with it is assault,
     // hitDamage = NPC damage from a full-speed throw, melee = left click swings it instead
-    defs: {
-      bottle: { name: 'Glass bottle', mass: 0.4, throwable: true, heavy: false, hitDamage: 8 },
-      can: { name: 'Drink can', mass: 0.3, throwable: true, heavy: false, hitDamage: 4 },
-      bag: { name: 'Rubbish bag', mass: 1.5, throwable: true, heavy: false, hitDamage: 2 },
-      box: { name: 'Cardboard box', mass: 0.8, throwable: true, heavy: false, hitDamage: 3 },
-      cone: { name: 'Traffic cone', mass: 1.2, throwable: true, heavy: false, hitDamage: 5 },
-      brick: { name: 'Brick', mass: 2.5, throwable: true, heavy: true, hitDamage: 34 },
-      wrench: { name: 'Wrench', mass: 1.0, throwable: false, heavy: true, hitDamage: 20, melee: { damage: 24, reach: 1.5, cooldown: 0.55, dent: 0.1 } },
-      bat: { name: 'Baseball bat', mass: 0.9, throwable: false, heavy: true, hitDamage: 18, melee: { damage: 32, reach: 1.9, cooldown: 0.7, dent: 0.16 } },
-    },
+    defs: ITEM_DEFINITIONS,
   },
 
   combat: {

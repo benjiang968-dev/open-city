@@ -8,7 +8,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { World } from '../../world';
 import { GROUPS } from '../../physicsGroups';
 import { TUNING } from '../../tuning';
-import { INTERIOR as I, INTERIOR_SITES, type InteriorKind } from '../../data/interiorDefs';
+import { INTERIOR as I, INTERIOR_SITES, EXTRA_INTERIOR_SITES, LEGACY_GEORGETOWN_INTERIOR_POIS, type InteriorKind } from '../../data/interiorDefs';
 import type { SolidKind } from '../objects/solidKinds';
 import { toast } from '../hud';
 
@@ -47,7 +47,7 @@ export function createInteriors(w: World): InteriorsState {
   const used = new Set<number>();
   const spawn = w.city.spawn;
   const sorted = [...w.city.pois].sort((a, b) => Math.hypot(a.x - spawn.x, a.z - spawn.z) - Math.hypot(b.x - spawn.x, b.z - spawn.z));
-  for (const spec of INTERIOR_SITES) {
+  for (const [siteIndex, spec] of [...INTERIOR_SITES, ...EXTRA_INTERIOR_SITES].entries()) {
     const valid = (p: (typeof sorted)[number]) => {
       if (used.has(p.id) || w.city.isBlocked(p.x, p.z) || w.city.isRoad(p.x, p.z) || w.city.isWater(p.x, p.z)
         || entries.some((e) => Math.hypot(e.exterior.x - p.x, e.exterior.z - p.z) < I.interactRange * 2)) return false;
@@ -59,7 +59,22 @@ export function createInteriors(w: World): InteriorsState {
       }
       return true;
     };
-    const poi = sorted.find((p) => valid(p) && spec.matches.some((m) => `${p.kind} ${p.cat ?? ''}`.includes(m))) ?? sorted.find(valid);
+    const pinnedId = w.city.id === 'georgetown' ? LEGACY_GEORGETOWN_INTERIOR_POIS[siteIndex] : undefined;
+    const pinned = pinnedId === undefined ? undefined : sorted.find(p => p.id === pinnedId);
+    let recovered = pinned && valid(pinned) ? pinned : undefined;
+    if (pinned && !recovered) {
+      // Preserve the published property identity while repairing an entrance made unsafe by a map correction.
+      for (const radius of [0.75, 1.5, 3, 4.5, 6]) {
+        for (let n = 0; n < 16 && !recovered; n++) {
+          const candidate = { ...pinned, x: pinned.x + Math.sin(n * Math.PI / 8) * radius, z: pinned.z + Math.cos(n * Math.PI / 8) * radius };
+          if (valid(candidate)) recovered = candidate;
+        }
+        if (recovered) break;
+      }
+    }
+    const fallback = () => sorted.find((p) => valid(p) && spec.matches.some((m) => `${p.kind} ${p.cat ?? ''}`.includes(m))) ?? sorted.find(valid);
+    const candidate = recovered ?? fallback();
+    const poi = candidate && pinned && !recovered ? { ...candidate, id: pinned.id } : candidate;
     if (!poi) continue;
     used.add(poi.id);
     const y = w.city.heightAt(poi.x, poi.z);
@@ -162,7 +177,7 @@ function buildRoom(w: World, e: InteriorEntry) {
     box(x + width / 2, y + 0.9, z, 0.1, 1.8, 0.45, 0x75624b);
     for (const h of [0.15, 0.8, 1.45]) {
       box(x, y + h, z, width, 0.09, 0.45, 0xa88964);
-      for (let n = 0; n < 4; n++) box(x - width / 2 + 0.28 + n * (width - 0.4) / 4, y + h + 0.18, z, 0.19, 0.28, 0.25, [0x9f6655, 0xd7bb6a, 0x4d6e79, 0x6d8062][n], null);
+      // Loose products are real persistent item instances seeded by interiorCollectibles.ts.
     }
   };
   const cabinet = (x: number, z: number, width: number, y = 0) => {
@@ -176,9 +191,10 @@ function buildRoom(w: World, e: InteriorEntry) {
       box(-2.9, 0.95, -0.4, 2.8, 0.7, 0.18, 0x68716e);
       table(-2.7, 1.7, 1.6, 0.75); cabinet(-2.8, -4.9, 3.4); shelf(-3, -2.8, 2.4);
       table(0.5, -2, 1.2, 1.2); chair(0.5, -3.0); chair(0.5, -1);
-      box(-2.4, I.upperFloor + 0.35, -2.4, 2, 0.55, 2.7, 0xb0aaa1);
-      box(-2.4, I.upperFloor + 0.69, -3.25, 1.65, 0.18, 0.6, 0xe7e2d8);
-      cabinet(-3.5, 1, 1.8, I.upperFloor);
+      const bedFloor = e.upstairs ? I.upperFloor : 0, bedX = e.upstairs ? -2.4 : 3, bedZ = e.upstairs ? -2.4 : -3.3;
+      box(bedX, bedFloor + 0.35, bedZ, 2, 0.55, 2.7, 0xb0aaa1);
+      box(bedX, bedFloor + 0.69, bedZ - 0.85, 1.65, 0.18, 0.6, 0xe7e2d8);
+      cabinet(-3.5, e.upstairs ? 1 : 3.6, 1.8, bedFloor);
       break;
     }
     case 'shop':

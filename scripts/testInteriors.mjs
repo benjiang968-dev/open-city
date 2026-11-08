@@ -21,14 +21,15 @@ try {
   cc.setMinSlopeSlideAngle(P.minSlopeSlideDeg * Math.PI / 180);
   const w = {
     R: RAPIER, physics, scene: new THREE.Scene(), started: true, paused: false, time: 10,
-    city: { spawn: { x: 0, z: 0 }, pois: ['shop', 'office', 'warehouse', 'garage', 'home', 'cafe'].map((kind, id) => ({ id, kind, name: kind, x: id * 25, z: 0, door: { x: id * 25, z: 1 } })),
+    city: { spawn: { x: 0, z: 0 }, pois: ['shop', 'office', 'warehouse', 'garage', 'home', 'cafe', 'home', 'home', 'home', 'shop', 'office', 'garage', 'cafe', 'warehouse'].map((kind, id) => ({ id, kind, name: kind, x: id * 25, z: 0, door: { x: id * 25, z: 1 } })),
       isBlocked: () => false, isRoad: () => false, isWater: () => false, heightAt: () => 0, solidTags: new SolidTags() },
     player: { body, collider, mesh: new THREE.Group(), vehicle: null, dead: false, vy: 0 },
     cam: { focus: new THREE.Vector3(), yaw: 0 }, input: { keys: new Set(), pressed: new Set(), blocked: false },
     hud: { toast: { style: {} }, toastUntil: 0 },
   };
   const S = mod.createInteriors(w);
-  assert.equal(S.entries.length, 6);
+  assert.equal(S.entries.length, 14);
+  assert.deepEqual(S.entries.slice(0,6).map(e=>e.poiId),[0,1,2,3,4,5],'published six-entry prefix must remain stable');
   const motion = (x, z, ticks = 120) => {
     for (let n = 0; n < ticks; n++) {
       const p = body.translation();

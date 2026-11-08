@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 import * as THREE from 'three';
-const server = await createServer({server:{middlewareMode:true},appType:'custom'});
+const server = await createServer({server:{middlewareMode:true,hmr:false},appType:'custom'});
 try {
  const {buildCarParts,driverSeat,makeCarInterior,carMaterial,makeWheel}=await server.ssrLoadModule('/src/art/car.ts');
  const {TUNING}=await server.ssrLoadModule('/src/tuning.ts');

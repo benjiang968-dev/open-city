@@ -14,10 +14,13 @@
     "fetch-overture": "python3 -I scripts/fetchOverture.py",
     "preview-map": "node scripts/previewMap.mjs",
     "deploy": "npm run build && gh-pages -d dist --dotfiles",
-    "test:systems": "node scripts/testInventory.mjs && node scripts/testCars.mjs && node scripts/testInteriors.mjs && node scripts/testSaveReload.mjs && node scripts/testSandbox.mjs",
+    "test:systems": "node scripts/testInventory.mjs && node scripts/testCars.mjs && node scripts/testInteriors.mjs && node scripts/testSaveReload.mjs && node scripts/testSandbox.mjs && node scripts/testInteriorContents.mjs && node scripts/testWorldVisuals.mjs && node scripts/testStairGeometry.mjs && node scripts/testInitialSpawn.mjs && node scripts/testSandboxJobs.mjs",
     "test:placement": "node scripts/testPlacement.mjs",
     "test:controls": "node scripts/test-controls.mjs",
-    "test:gameplay": "node scripts/test-gameplay.mjs"
+    "test:gameplay": "node scripts/test-gameplay.mjs",
+    "test:stairs": "FULL=1 node scripts/testOutdoorStairs.mjs",
+    "test:sky": "node scripts/testSky.mjs",
+    "test:upgrade": "node scripts/test-upgrade.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.21.0",

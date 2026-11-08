@@ -60,6 +60,8 @@ export type GameEvent =
 
 export interface World {
   seed: number;
+  /** Parking generation is kept stable for saves created before safe starter selection. */
+  startingLayout: 'legacy' | 'safe';
   rng: Rng;
   R: typeof RAPIER;
   physics: RAPIER.World;

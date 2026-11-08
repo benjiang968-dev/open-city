@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { transactApartment, hasApartmentAccess, updateSandbox, captureSandbox, restoreSandbox } from '../../src/systems/sandbox';
+import { transactApartment, apartmentPrices, hasApartmentAccess, updateSandbox, captureSandbox, restoreSandbox } from '../../src/systems/sandbox';
 import type { World } from '../../src/world';
 const entry = {id:'home',kind:'apartment',name:'Test home',origin:{x:0,y:300,z:0},exterior:{x:2,y:0,z:2}};
 const warehouse = {id:'depot',kind:'warehouse',name:'Depot',origin:{x:10,y:320,z:0},exterior:{x:10,y:0,z:0}};
@@ -14,4 +14,10 @@ w.dayNight.day=10;assert.equal(hasApartmentAccess(w,'home'),false);assert.equal(
 assert.equal(transactApartment(w,'home','buy'),false,'insufficient funds must not mutate property');assert.equal(w.cash,110);
 w.interiors.active='depot';w.player.mesh.position.set?.(10,320,0);
 updateSandbox(w,5);assert.equal(w.events.length,0,'warning grace period');updateSandbox(w,6);assert.equal(w.events.filter(e=>e.type==='trespass').length,1);updateSandbox(w,30);assert.equal(w.events.filter(e=>e.type==='trespass').length,1,'one report per visit');
+const second = { ...entry, id: 'loft', poiId: 19 };
+w.interiors.entries.push(second as never); w.interiors.active='loft'; w.cash=3000;
+assert.deepEqual(apartmentPrices(w,'loft'),{buy:2070,rent:104},'currency quotes use integer percentages without half-unit rounding drift');
+assert.equal(transactApartment(w,'loft','buy'),true);assert.equal(w.cash,930,'second apartment location price');
+assert.equal(w.sandbox.save.properties.loft.mode,'owned');assert.equal(w.sandbox.save.properties.home.mode,'lease');
+assert.equal(transactApartment(w,'loft','buy'),false);
 console.log('PASS apartment buy/rent/expiry/insufficient funds/duplicate protection and one-shot trespass security report');

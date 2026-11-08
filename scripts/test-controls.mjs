@@ -113,8 +113,16 @@ try {
     w.input.pressed.add('KeyV'); run(.2, 60); const thirdCar = w.cam.mode === 'third';
     v.speed = 0; v.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     w.input.pressed.add('KeyE'); step(1); run(.3, 60); const exited = !w.player.vehicle;
+    const room = w.interiors.entries.find(e => e.kind === 'apartment');
+    const roomEntered = window.__ocSandbox.enterInterior(room.id); run(.5,60);
+    const closeCameraHidesBody = !w.player.mesh.visible && w.cam.playerObscured;
+    w.player.body.setTranslation({x:room.origin.x,y:room.origin.y+1,z:room.origin.z},true);w.player.vy=0;run(.8,60);
+    const indoorThirdVisible = w.player.mesh.visible && !w.cam.playerObscured;
+    const cameraInside = Math.abs(w.camera.position.x-room.origin.x)<5 && Math.abs(w.camera.position.z-room.origin.z)<6;
+    w.input.pressed.add('KeyV');run(.6,60);const indoorFirst = w.cam.mode==='first' && !w.player.mesh.visible;
+    w.input.pressed.add('KeyV');run(.8,60);const indoorThird = w.cam.mode==='third' && w.player.mesh.visible;
     return { distances, sprint, turningPath: path, turnError, mouseError, combinedError, firstFoot, eyeHeight, thirdFoot,
-      focusCleared, entered, firstCar, steering, steeringCameraChange, flat, slope, grade, wall, thirdCar, exited };
+      focusCleared, entered, firstCar, steering, steeringCameraChange, flat, slope, grade, wall, thirdCar, exited, roomEntered, closeCameraHidesBody, indoorThirdVisible, cameraInside, indoorFirst, indoorThird };
   });
   console.log(JSON.stringify({ map, ...result }, null, 2));
   assert.ok(result.distances.every(d => d.distance > 9.5), 'walking should cover over 9.5m in 2s');
@@ -129,6 +137,7 @@ try {
     if (!r) continue;
     assert.ok(r.maxAltitude < 3 && r.finalAltitude < 2 && r.clear, `${label}: car recovery must stay on clear ground`);
   }
+  assert.ok(result.roomEntered && result.closeCameraHidesBody && result.indoorThirdVisible && result.cameraInside && result.indoorFirst && result.indoorThird, 'indoor camera obstruction or view transitions');
   assert.deepEqual(errors, [], 'browser console errors');
   await mkdir('screenshots', { recursive: true });
   await writeFile(`screenshots/controls-${map}.json`, JSON.stringify({ map, ...result, consoleErrors: errors }, null, 2));

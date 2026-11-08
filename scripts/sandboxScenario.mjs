@@ -59,6 +59,11 @@ export async function runSandboxFlow(page) {
       const expected = { warehouse: 50, cleaning: 40, repair: 65, delivery: 55 }[kind];
       assert(w.cash === cash + expected, `${kind} paid ${w.cash - cash}, expected ${expected}`);
       use(); assert(w.cash === cash + expected, `${kind} paid twice`);
+      // A repeated E near the disposal point can legitimately pick up nearby shelf merchandise after the shift.
+      // Return it with the normal drop action before leaving so later paid-food checks start without an unrelated theft.
+      for (let slot=0;slot<w.inventory.slots.length;slot++) if(w.inventory.slots[slot]?.owner) {
+        w.inventory.selected=slot;w.input.pressed.add('KeyG');run(1/60,60);
+      }
       objectives[kind] = { pay: expected, completed: true };
     }
     const apartment = enter('apartment');

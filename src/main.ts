@@ -49,11 +49,14 @@ import { createLook, bakeLook } from './systems/render/look';
 import { warmDraw } from './systems/render/warmup';
 import { createInteriors, interiorInteraction, updateInteriors, enterInterior, exitInterior } from './systems/interiors';
 import { createSandbox, sandboxKeys, sandboxInteraction, updateSandbox, captureSandbox, restoreSandbox, startSandboxJob, transactApartment, storeApartmentItem, retrieveApartmentItem, payShopItem } from './systems/sandbox';
-import { createPersistence, loadGame, saveGame, updatePersistence, persistenceStatus } from './systems/persistence';
+import { seedInteriorCollectibles } from './systems/interiorCollectibles';
+import { createPersistence, loadGame, readStartingLayout, saveGame, updatePersistence, persistenceStatus } from './systems/persistence';
 import { emit } from './world';
 import { separateInstancedDepth } from './systems/render/shadowCasters';
 
 async function boot() {
+  const loading = (message: string) => { document.getElementById('title')!.textContent = message; };
+  loading('Loading physics…');
   await RAPIER.init();
   const canvas = document.getElementById('game') as HTMLCanvasElement;
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
@@ -88,15 +91,19 @@ async function boot() {
   } as unknown as World;
   w.dayNight = createDayNight(scene);
   // procedural PBR surface maps, baked on the GPU before any world material is built (render/texBake.ts)
+  loading('Preparing materials…');
   w.look = createLook(w.settings.quality);
   bakeLook(w.look, renderer, w.settings.quality);
   applyQuality(w, w.settings.quality, true);
+  loading('Building city…');
   const tMap = performance.now();
   w.city = await loadMap(scene, RAPIER, physics, seed, w.settings.quality, w.look); // ?map= picks the map; the seed never does
   w.city.setQuality?.(w.settings.quality);
   attachLampLights(w, TUNING.quality[w.settings.quality].lampLights);
   const mapMs = performance.now() - tMap;
+  loading('Preparing city life…');
   w.weather = createWeather(w);
+  w.startingLayout = await readStartingLayout(w.city.id, w.seed);
   const spawn = w.city.spawn;
   w.player = createPlayer(w, spawn.x, spawn.z);
   w.player.facing = spawn.heading;
@@ -134,7 +141,7 @@ async function boot() {
   createBubbles();
   w.interiors = createInteriors(w);
   // Register all interior goods deterministically before loading IDs from a save. Room physics is streamed on entry.
-  for (const e of w.interiors.entries) {
+  for (const e of w.interiors.entries.slice(0, 6)) {
     const types = e.kind === 'shop' || e.kind === 'cafe' ? ['bottle', 'can', 'bottle'] as const
       : e.kind === 'workshop' ? ['wrench', 'brick'] as const : ['can', 'bottle'] as const;
     types.forEach((type, i) => {
@@ -146,6 +153,7 @@ async function boot() {
     });
   }
   w.sandbox = createSandbox(w);
+  seedInteriorCollectibles(w);
   w.interiors.onExit = e => {
     if (!persistenceStatus(w).ready) return;
     // Carrying stock is allowed for inspection; leaving without paying triggers the shopkeeper report once.
@@ -173,6 +181,7 @@ async function boot() {
   updateDayNight(w, 0);
   updateWeather(w, 0);
   updateSky(w, true);
+  loading('Preparing graphics…');
   // GPU warm-up: compile every shader now (police cars and the wreck look included) so a crash never
   // triggers a first-time shader compile mid-game
   {
@@ -196,6 +205,7 @@ async function boot() {
     for (const c of pool) c.mesh.visible = false;
   }
 
+  loading('press any key');
   // expose read-only state for automated tests (scripts/*.mjs)
   (window as unknown as { __oc: World }).__oc = w;
   (window as unknown as { __ocWitness: unknown }).__ocWitness = witnessStats;
@@ -358,12 +368,13 @@ async function boot() {
     if (!boot.firstFrameMs) boot.firstFrameMs = Math.round(performance.now());
     // never negative: after a long boot the first rAF timestamp can be older than `last`, which would wind the
     // fixed-step accumulator back and freeze the simulation for as long as the boot took
-    const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
+    const elapsed = Math.max(0, (now - last) / 1000);
+    const dt = Math.min(0.1, elapsed); // cap simulation catch-up, not the measured display frame rate
     last = now;
-    fpsAcc += dt;
+    fpsAcc += elapsed;
     fpsFrames++;
     if (fpsAcc > 0.5) { w.fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; }
-    tick(dt, true, now - last0);
+    tick(dt, true, Math.max(0, now - last0));
     last0 = now;
   }
   requestAnimationFrame(frame);

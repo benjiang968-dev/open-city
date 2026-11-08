@@ -33,6 +33,7 @@ interface VehicleSave {
 }
 export interface SaveRecord {
   version: number; key: string; savedAt: number; seed: number; map: string;
+  startingLayout?: 'legacy' | 'safe';
   cash: number; hour: number; day: number; time: number;
   player: { position: [number, number, number]; facing: number; health: number };
   items: ItemSave[]; inventory: (number | null)[]; selected: number;
@@ -53,6 +54,20 @@ function database(): Promise<IDBDatabase> {
     request.onerror = () => reject(request.error ?? new Error('IndexedDB unavailable'));
   });
 }
+/** Read only the generation contract before procedural parked IDs are created. Old v1 saves used nearest-slot starts. */
+export async function readStartingLayout(map: string, seed: number): Promise<'legacy' | 'safe'> {
+  let db: IDBDatabase | undefined;
+  try {
+    db = await database();
+    const record = await new Promise<SaveRecord | undefined>((resolve, reject) => {
+      const request = db!.transaction(STORE, 'readonly').objectStore(STORE).get(`${map}:${seed}`);
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error);
+    });
+    return record ? (record.startingLayout === 'safe' ? 'safe' : 'legacy') : 'safe';
+  } catch { return 'safe'; } // loadGame reports storage failure and protects unsupported snapshots separately.
+  finally { db?.close(); }
+}
+
 function fail(w: World, state: PersistenceState, error: unknown): false {
   state.lastError = String(error);
   if (w.hud) {
@@ -80,6 +95,7 @@ export function captureSave(w: World): SaveRecord {
   const py = p.vehicle ? w.city.heightAt(pos.x + 2, pos.z, pos.y) + TUNING.player.capsuleHalfHeight + TUNING.player.capsuleRadius + 0.08 : pos.y;
   return {
     version: VERSION, key: key(w), savedAt: Date.now(), seed: w.seed, map: w.city.id,
+    startingLayout: w.startingLayout ?? 'legacy',
     cash: w.cash, hour: w.dayNight.hour, day: w.dayNight.day, time: w.time,
     player: { position: [pos.x + (p.vehicle ? 2 : 0), py, pos.z], facing: p.facing, health: p.health },
     items: w.itemsState.items.map((it) => {
@@ -125,6 +141,7 @@ export function validSave(data: unknown, expectedKey: string): data is SaveRecor
   if (!data || typeof data !== 'object') return false;
   const s = data as SaveRecord;
   if (s.version !== VERSION || s.key !== expectedKey || !Number.isFinite(s.cash) || s.cash < 0 || !Number.isFinite(s.hour) || !Number.isFinite(s.day) || !Number.isFinite(s.time)) return false;
+  if (s.startingLayout !== undefined && !['legacy', 'safe'].includes(s.startingLayout)) return false;
   if (!s.player || !finiteTuple(s.player.position, 3) || !Number.isFinite(s.player.health) || !Number.isFinite(s.player.facing)) return false;
   if (!Array.isArray(s.items) || !Array.isArray(s.inventory) || !Array.isArray(s.vehicles) || !Array.isArray(s.npcs)) return false;
   const ids = new Set<number>(), authoredKeys = new Set<string>();
@@ -198,6 +215,7 @@ export function restoreSave(w: World, s: SaveRecord): void {
     resetItemRegistry(w);
   }
   const state = states.get(w);
+  w.startingLayout = s.startingLayout ?? 'legacy';
   w.cash = s.cash; w.time = Math.max(0, s.time);
   w.dayNight.hour = ((s.hour % 24) + 24) % 24; w.dayNight.day = Math.max(1, Math.floor(s.day));
   // Save-only instances (e.g. a delivery spawned after boot) retain their original registry index.

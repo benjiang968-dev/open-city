@@ -16,6 +16,7 @@ interface Property { mode: 'owned' | 'lease'; expiresDay: number; stored: number
 interface ActiveWork {
   kind: SandboxJobId;
   run: number;
+  startEntryId?: string; // optional for compatibility with existing active shifts
   items: number[];
   delivered: number[];
   repairDone: number[];
@@ -42,16 +43,30 @@ export interface SandboxState {
   priorInterior: string | null;
   markers: THREE.Group;
   markerKey: string;
+  waypoint: string | null;
 }
 const emptySave = (): SandboxSave => ({ version: 1, serial: 0, completed: 0, earned: 0, active: null, pool: {}, properties: {} });
 const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 const pos = (w: World) => w.player.mesh.position;
 const entryKind = (w: World, kind: string): Entry | undefined => w.interiors.entries.find(e => e.kind === kind);
+const jobStartEntry = (w: World, kind: string): Entry | undefined => {
+  const options = w.interiors.entries.filter(e => e.kind === kind);
+  return options.find(e => e.id === w.interiors.active) ?? options.sort((a, b) =>
+    Math.hypot(pos(w).x - a.exterior.x, pos(w).z - a.exterior.z) - Math.hypot(pos(w).x - b.exterior.x, pos(w).z - b.exterior.z))[0];
+};
+const workStart = (w: World, a: ActiveWork): Entry | undefined => w.interiors.entries.find(e => e.id === a.startEntryId) ?? entryKind(w, S.jobs[a.kind].startKind);
 const activeEntry = (w: World): Entry | undefined => w.interiors.entries.find(e => e.id === w.interiors.active);
 const local = (e: Entry, x: number, z: number) => ({ x: e.origin.x + x, y: e.origin.y, z: e.origin.z + z });
 const near = (w: World, p: { x: number; y: number; z: number }, r: number = S.objectiveRange) => Math.hypot(pos(w).x - p.x, pos(w).z - p.z) <= r && Math.abs(pos(w).y - p.y) < 2;
 const atBoard = (w: World, e: Entry) => w.interiors.active === e.id || (!w.interiors.active && near(w, e.exterior, S.boardRange));
 const totalDay = (w: World) => w.dayNight.day + w.dayNight.hour / 24;
+
+export function apartmentPrices(w: World, id: string): { buy: number; rent: number } {
+  const index = w.interiors.entries.filter(e => e.kind === 'apartment').findIndex(e => e.id === id);
+  const percent = S.apartmentPricePercentages[index] ?? 100;
+  return { buy: Math.round(S.apartmentBuyPrice * percent / 100), rent: Math.round(S.apartmentLeasePrice * percent / 100) };
+}
+
 export function hasApartmentAccess(w: World, id: string): boolean {
   const p = w.sandbox.save.properties[id];
   return !!p && (p.mode === 'owned' || p.expiresDay > totalDay(w));
@@ -66,12 +81,14 @@ export function createSandbox(w: World): SandboxState {
   document.getElementById('ui')!.appendChild(panel);
   const markers = new THREE.Group();
   w.scene.add(markers);
-  const state: SandboxState = { save: emptySave(), panel, open: false, prompt: '', workTime: 0, lastRepair: -1, trespassTime: 0, trespassReported: false, priorInterior: null, markers, markerKey: '' };
+  const state: SandboxState = { save: emptySave(), panel, open: false, prompt: '', workTime: 0, lastRepair: -1, trespassTime: 0, trespassReported: false, priorInterior: null, markers, markerKey: '', waypoint: null };
   panel.addEventListener('click', (event) => {
     const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-action]');
     if (!button) return;
     const action = button.dataset.action!, id = button.dataset.id ?? '';
     if (action === 'close') closeSandbox(w);
+    else if (action === 'locate') { state.waypoint = id; closeSandbox(w); toast(w, 'Entrance marked on your minimap · E to enter', 4); }
+    else if (action === 'clear-waypoint') { state.waypoint = null; renderPanel(w); }
     else if (action === 'start') { if (startSandboxJob(w, id as SandboxJobId)) closeSandbox(w); }
     else if (action === 'cancel') { cancelSandboxJob(w); renderPanel(w); }
     else if (action === 'rent' || action === 'buy') { transactApartment(w, id, action); renderPanel(w); }
@@ -123,20 +140,23 @@ function renderPanel(w: World): void {
   const current = s.save.active;
   let html = `<div style="display:flex;justify-content:space-between"><h2>Neighbourhood work & homes</h2>${button('close', '', 'Close · J / Esc')}</div><p>Jobs start at marked building doors. Enter with E, then follow the work points inside. The same physical item must reach its destination. Saves stay in this browser.</p>`;
   if (current) html += `<p><b>${esc(S.jobs[current.kind].name)}</b> · ${esc(jobStatus(w))}</p>${button('cancel', '', 'Cancel current shift (no pay)')}`;
+  if (s.waypoint) html += button('clear-waypoint', '', 'Clear map destination');
   html += '<h3>Repeatable work</h3>';
   for (const [id, job] of Object.entries(S.jobs)) {
-    const e = entryKind(w, job.startKind);
+    const e = jobStartEntry(w, job.startKind);
     const distance = e ? Math.round(Math.hypot(pos(w).x - e.exterior.x, pos(w).z - e.exterior.z)) : 0;
-    html += `<div style="border-top:1px solid #ffffff25;padding:10px 0"><b>${esc(job.name)} · $${job.pay}</b><br>${esc(job.description)}<br>${e ? `${esc(e.name)} · ${distance} m${atBoard(w, e) ? ' · at start point' : ' · visit the door to start'}` : 'No suitable building in this map'}<br>${button('start', id, `Start ${job.name}`, !!current || !e || !atBoard(w, e))}</div>`;
+    html += `<div style="border-top:1px solid #ffffff25;padding:10px 0"><b>${esc(job.name)} · $${job.pay}</b><br>${esc(job.description)}<br>${e ? `${esc(e.name)} · ${distance} m${atBoard(w, e) ? ' · at start point' : ' · visit the door to start'}` : 'No suitable building in this map'}<br>${button('start', id, `Start ${job.name}`, !!current || !e || !atBoard(w, e))}${e ? button('locate', e.id, 'Show entrance on map') : ''}</div>`;
   }
-  const apartment = entryKind(w, 'apartment');
-  if (apartment) {
+  for (const apartment of w.interiors.entries.filter(e => e.kind === 'apartment')) {
+    const price = apartmentPrices(w, apartment.id);
+    const distance = Math.round(Math.hypot(pos(w).x - apartment.exterior.x, pos(w).z - apartment.exterior.z));
     const p = s.save.properties[apartment.id];
     const at = w.interiors.active === apartment.id;
-    html += `<h3>${esc(apartment.name)}</h3><p>View the furnished apartment free. Buy for $${S.apartmentBuyPrice}, or prepay $${S.apartmentLeasePrice} for ${S.apartmentLeaseDays} game days. <b>No automatic renewal or recurring charges.</b> Storage holds ${S.storageSlots} items. After a lease expires you can retrieve stored items, but cannot deposit more.</p>`;
+    html += `<h3>${esc(apartment.name)}</h3><p>View the furnished apartment free. View at ${esc(w.city.pois.find(p => p.id === apartment.poiId)?.street ?? 'Georgetown')} · ${distance} m. Buy for $${price.buy}, or prepay $${price.rent} for ${S.apartmentLeaseDays} game days. <b>No automatic renewal or recurring charges.</b> Storage holds ${S.storageSlots} items. After a lease expires you can retrieve stored items, but cannot deposit more.</p>`;
     html += `<p>${p ? p.mode === 'owned' ? 'You own this apartment.' : `Lease ${hasApartmentAccess(w, apartment.id) ? `has ${(p.expiresDay - totalDay(w)).toFixed(1)} game days left` : 'expired'}.` : 'Available to view, buy or lease.'} Visit the apartment inside to transact.</p>`;
-    html += button('rent', apartment.id, `Prepay ${S.apartmentLeaseDays} days · $${S.apartmentLeasePrice}`, !at || p?.mode === 'owned' || (!!p && hasApartmentAccess(w, apartment.id)));
-    html += button('buy', apartment.id, `Buy · $${S.apartmentBuyPrice}`, !at || p?.mode === 'owned');
+    html += button('locate', apartment.id, 'Show apartment on map');
+    html += button('rent', apartment.id, `Prepay ${S.apartmentLeaseDays} days · $${price.rent}`, !at || p?.mode === 'owned' || (!!p && hasApartmentAccess(w, apartment.id)));
+    html += button('buy', apartment.id, `Buy · $${price.buy}`, !at || p?.mode === 'owned');
     if (p) {
       html += '<p>Storage: ' + p.stored.length + '/' + S.storageSlots + '</p>';
       html += button('store', apartment.id, 'Store selected inventory item', !at || !hasApartmentAccess(w, apartment.id));
@@ -175,11 +195,11 @@ function taskItems(w: World, kind: SandboxJobId, count: number, type: ItemId, e:
 }
 export function startSandboxJob(w: World, kind: SandboxJobId): boolean {
   if (!(kind in S.jobs) || w.sandbox.save.active || w.player.vehicle) return false;
-  const e = entryKind(w, S.jobs[kind].startKind);
+  const e = jobStartEntry(w, S.jobs[kind].startKind);
   if (!e || !atBoard(w, e)) return false;
   const ids = taskItems(w, kind, kind === 'repair' ? 1 : S.jobs[kind].count, kind === 'cleaning' ? 'bag' : kind === 'repair' ? 'wrench' : 'box', e);
   if (ids.length !== (kind === 'repair' ? 1 : S.jobs[kind].count)) { toast(w, 'Cannot create shift supplies; no money was charged.'); return false; }
-  w.sandbox.save.active = { kind, run: ++w.sandbox.save.serial, items: ids, delivered: [], repairDone: [], tool: kind === 'repair' ? ids[0] : null };
+  w.sandbox.save.active = { kind, run: ++w.sandbox.save.serial, startEntryId: e.id, items: ids, delivered: [], repairDone: [], tool: kind === 'repair' ? ids[0] : null };
   w.sandbox.workTime = 0;
   void saveGame(w);
   toast(w, `${S.jobs[kind].name} started · E enter ${esc(e.name)}. J shows instructions.`, 5);
@@ -215,7 +235,7 @@ function finishJob(w: World): void {
   toast(w, `${S.jobs[a.kind].name} complete · +$${pay}`, 4);
 }
 function destination(w: World, a: ActiveWork): Entry | undefined {
-  return entryKind(w, a.kind === 'delivery' ? 'cafe' : S.jobs[a.kind].startKind);
+  return a.kind === 'delivery' ? entryKind(w, 'cafe') : workStart(w, a);
 }
 function workPoint(w: World, a: ActiveWork): { e: Entry; p: { x: number; y: number; z: number }; repair: number } | null {
   const e = destination(w, a);
@@ -258,7 +278,8 @@ export function transactApartment(w: World, id: string, action: 'rent' | 'buy'):
   if (!e || w.interiors.active !== e.id || w.player.vehicle) return false;
   const old = w.sandbox.save.properties[id];
   if (old?.mode === 'owned' || (action === 'rent' && hasApartmentAccess(w, id))) return false;
-  const price = action === 'buy' ? S.apartmentBuyPrice : S.apartmentLeasePrice;
+  const quote = apartmentPrices(w, id);
+  const price = action === 'buy' ? quote.buy : quote.rent;
   if (w.cash < price) { toast(w, `You need $${price}. No payment taken.`); return false; }
   w.cash -= price;
   w.sandbox.save.properties[id] = { mode: action === 'buy' ? 'owned' : 'lease', expiresDay: action === 'buy' ? 0 : totalDay(w) + S.apartmentLeaseDays, stored: old?.stored ?? [] };
@@ -302,8 +323,11 @@ export function payShopItem(w: World): boolean {
 
 function jobStatus(w: World): string {
   const a = w.sandbox.save.active;
-  if (!a) return '';
-  const start = entryKind(w, S.jobs[a.kind].startKind), target = destination(w, a);
+  if (!a) {
+    const point = w.interiors.entries.find(e => e.id === w.sandbox.waypoint);
+    return point ? `${esc(point.name)} · ${Math.round(Math.hypot(pos(w).x - point.exterior.x, pos(w).z - point.exterior.z))} m · J map destination` : '';
+  }
+  const start = workStart(w, a), target = destination(w, a);
   if (a.kind === 'repair') return `Use the shift wrench at office panels · ${a.repairDone.length}/3 repaired`;
   const carried = selectedItem(w);
   if (carried && a.items.includes(carried.id)) return `${a.kind === 'delivery' ? `Carry parcel to ${target?.name ?? 'café'}` : a.kind === 'cleaning' ? 'Bring bag to shop disposal point' : 'Bring box to loading point'} · ${a.delivered.length}/${S.jobs[a.kind].count}`;
@@ -315,8 +339,11 @@ class SandboxJobs implements JobSystem {
   status(w: World) { return jobStatus(w); }
   markers(w: World): JobMarker[] {
     const a = w.sandbox?.save.active;
-    if (!a) return [];
-    const e = selectedItem(w) && a.items.includes(selectedItem(w)!.id) ? destination(w, a) : entryKind(w, S.jobs[a.kind].startKind);
+    if (!a) {
+      const point = w.interiors.entries.find(e => e.id === w.sandbox?.waypoint);
+      return point ? [{ x: point.exterior.x, z: point.exterior.z, color: '#83dcbe', kind: 'tip' }] : [];
+    }
+    const e = selectedItem(w) && a.items.includes(selectedItem(w)!.id) ? destination(w, a) : workStart(w, a);
     return e ? [{ x: e.exterior.x, z: e.exterior.z, color: '#83dcbe', kind: 'dropoff' }] : [];
   }
   debug(w: World) { return `${w.sandbox?.save.completed ?? 0} shifts · ${w.sandbox?.save.active?.kind ?? 'idle'}`; }
@@ -327,6 +354,7 @@ export function updateSandbox(w: World, dt: number): void {
   if (!w.started || w.paused) return;
   s.prompt = '';
   const e = activeEntry(w), a = s.save.active;
+  if (e?.id === s.waypoint) s.waypoint = null;
   if (e?.id !== s.priorInterior) { s.priorInterior = e?.id ?? null; s.trespassTime = 0; s.trespassReported = false; }
   if (e?.kind === 'warehouse' && a?.kind !== 'warehouse' && a?.kind !== 'delivery') {
     if (s.trespassTime === 0) toast(w, 'Private warehouse · leave within 10 seconds or start a shift (J). Security will report trespassing.', 7);

@@ -10,16 +10,16 @@ cutscenes. See `CLAUDE.md` for the design, `docs/ROADMAP.md` for the plan and `D
 
 ## Playable improvements (2026-11-07)
 
-Marked teal doors open six furnished interiors: market, office, warehouse, workshop, apartment and café.
+Marked teal doors open fourteen furnished interiors: markets, offices, warehouses, workshops, four apartments and cafés.
 These use doorway transitions to physical rooms; unmarked real-map buildings remain exterior scenery.
 
 - **V** toggles first/third person walking or driving. On foot A/D turns the view and heading together;
   in a car A/D steers while mouse look is independent. Click for pointer lock, or hold right mouse to look.
-- **I** opens inventory, item inspection and manual save; **U** drinks a sealed drink; **G/Q** drops the selected item.
+- **I** opens inventory, item inspection and manual save; **U** uses food, sealed drinks, books or a pocket phone; **G/Q** drops the selected item.
 - **J** opens neighbourhood work, homes and the shop counter. Visit the indicated door to start a shift.
   Warehouse, delivery, cleaning and office maintenance pay for completed physical objectives; taxi work remains available.
-- Apartments can be viewed freely. A lease is **$90 prepaid for seven game days, with no automatic renewal**;
-  buying costs $1,800. Storage holds 18 existing item instances. Expired tenants can still retrieve their things.
+- Apartments can be viewed freely. Leases cost **$81–$117 prepaid for seven game days, with no automatic renewal**;
+  buying costs $1,620–$2,340 depending on the apartment. The original waterfront lease remains $90/$1,800. Storage holds 18 existing item instances. Expired tenants can still retrieve their things.
 - Carry shop stock to inspect it; pay for the selected item through J before leaving. Unpaid stock leaving the shop
   is reported. Warehouse trespass has a warning and grace period. Existing vehicle theft and police pursuits remain.
 - **E** enters/leaves marked buildings; **O** opens/closes an interior door. **R** recovers a car onto nearby clear
@@ -27,7 +27,7 @@ These use doorway transitions to physical rooms; unmarked real-map buildings rem
 
 Saves are versioned **IndexedDB records in this browser**, keyed by map and seed, with a ten-second autosave and
 manual save in I. Cash, item identity, inventory/storage, apartments, jobs, time, changed vehicles and NPC relationships
-persist. Saves do not sync between devices, browser profiles, or website origins. Unsupported saves are preserved
+persist. Published version-1 saves migrate even if corrected map geometry changes ambient item placement; stable object IDs and stored belongings are retained. Saves do not sync between devices, browser profiles, or website origins. Unsupported saves are preserved
 without overwriting. Keep the same URL, seed and browser for existing progress. Browser storage restrictions/full disks
 show a save error; clearing site data removes local saves.
 
@@ -55,7 +55,7 @@ interface, `src/systems/map/cityMap.ts`.
 | R | recover the car onto clear ground |
 | V | first/third person |
 | I / J | inventory and save / work, homes and shop counter |
-| G or Q / U / O | drop / use drink / open interior door |
+| G or Q / U / O | drop / use selected item / open interior door |
 | H | horn |
 | F3 or ` (backtick) | debug overlay |
 | F4 | collision view: the physics shapes near you, coloured by kind |
@@ -125,6 +125,8 @@ npm run test:systems
 npm run test:placement
 npm run test:controls                    # grid, controlled physical platform + real road recovery
 MAP=georgetown npm run test:controls     # real terrain/slopes/buildings
+npm run test:stairs                      # all 85 real exterior stairs, up and down
+npm run test:sky                         # cached sky parity/day/night/weather
 npm run test:gameplay                    # production game, all shifts, rent/storage, theft/pursuit, reload
 ```
 
@@ -132,3 +134,11 @@ Browser checks use Playwright. Set `CHROMIUM_PATH` or install its Chromium (`npx
 `/usr/bin/chromium` is detected automatically on Linux. They use software GL when a GPU is unavailable.
 Test teleportation only arranges locations; normal E interactions, physical item identities and guarded transactions
 perform the actual gameplay. Measurements and honest remaining limits are in `docs/IMPLEMENTATION-CHECKLIST.md`.
+
+The fifteen portable-object definitions in `src/data/itemCatalogue.ts` drive names, descriptions, icons, weights,
+one-hand eligibility and use effects. Shelf/table products are actual persistent items, including books, notebooks,
+mugs, fruit, sandwiches, phones and tools. Dropping, moving and storing them keeps the same object ID.
+`J` can mark apartment and work entrances on the minimap. Shifts can start at the corresponding additional workplace.
+
+To verify an upgrade from an earlier production build, set `OLD_BUILD=/absolute/path/to/old/dist` and run
+`npm run test:upgrade`; the test saves real v1 progress, switches builds at the same browser origin and reloads twice.

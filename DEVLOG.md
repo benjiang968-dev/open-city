@@ -1188,3 +1188,26 @@ J exposes four repeatable spatial shifts plus apartment lease/purchase/storage a
 Verification: npm build; real Rapier inventory/vehicle/interior tests; actual IndexedDB reload fixture; full placement audit; production Georgetown controls (flat/slope/building recovery, views, heading and blur); four job payouts and duplicate guards; rent/storage identity; shop theft/pursuit resolution; production save/reload. See docs/IMPLEMENTATION-CHECKLIST.md for exact scopes and limits. Existing outdoor stair, road smoothness and traffic audit defects are not claimed universally resolved.
 
 Published owner-private via Sites at https://open-city-play-benjiang.benjiang968.chatgpt.site (deployment succeeded). GitHub Pages enablement returned integration 403; no custom domain or paid hosting purchased. Final Low software profile and full combined browser reload pass are recorded in docs/verification and screenshots.
+
+
+## Follow-up completion checkpoint
+
+Expanded the six-site prototype to14 furnished locations and four separately priced apartments. Added entrance waypoints in J,
+work at additional matching workplaces, comfortable indoor chase distance and body hiding when the camera is forced near the head.
+Kept the original six Georgetown property IDs and original stock/task registry prefix stable. Seven more portable definitions plus272
+physical shelf/table goods use the shared pickup/inspect/use/drop/store path. Food is consumed once; books/phone have useful actions;
+unpaid consumption reports theft. Save migration reconstructs old numeric item IDs and appends missing authored keys only once.
+
+Fixed all85 exterior stair traversals: flat turning landings, bridge rail access, bank-surface stairwell cuts, physical end fitting,
+covering-floor/capsule clearance and steep-face filtering. Real-Rapier full-map test passes170 directions with max floor penetration0.
+Added shaped people and connected tree crowns within explicit instancing/geometry budgets; original procedural art remains stylized.
+
+Accepted cached physical sky with amortized face updates and day/night/storm parity. Rejected slower shader specializations and guards;
+full-city software rendering remains heavy and no real-GPU FPS claim is made. Fixed FPS measurement to use actual wall time rather
+than clamped simulation dt. Startup now shows loading stages. Fresh owned-car placement avoids the confirmed steep35th St sag;
+25m safe-start gate retains120health. An early saved generation contract preserves legacy parking reservations and parked-car IDs.
+
+Verification: production build, all system/geometry fixtures, complete four-job/food/multiple-home/theft/reload flow, published-v1
+save upgrade plus second reload, final camera/recovery controls, all85 outdoor stairs and visual sky/model fixtures. The checkpoint
+in docs/IMPLEMENTATION-CHECKLIST.md records exact evidence and remaining environment/map limits. Publication uses the existing private
+Sites URL and browser-local saves; GitHub PR1 contains the reviewable source.

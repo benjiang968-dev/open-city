@@ -16,3 +16,18 @@ export const INTERIOR_SITES: readonly { kind: InteriorKind; title: string; match
   { kind: 'apartment', title: 'Waterfront Apartment', matches: ['residential', 'home', 'hotel'], upstairs: true },
   { kind: 'cafe', title: 'The Copper Kettle', matches: ['cafe', 'restaurant', 'bar'], upstairs: false },
 ];
+
+// Keep the original six sites first: their entry IDs, room levels and saved item registry prefix are stable.
+export const EXTRA_INTERIOR_SITES: readonly { kind: InteriorKind; title: string; matches: readonly string[]; upstairs: boolean }[] = [
+  { kind: 'apartment', title: 'Canal Loft', matches: ['residential', 'home', 'hotel'], upstairs: true },
+  { kind: 'apartment', title: 'Georgetown Studio', matches: ['residential', 'home', 'hotel'], upstairs: false },
+  { kind: 'apartment', title: 'Riverside Maisonette', matches: ['residential', 'home', 'hotel'], upstairs: true },
+  { kind: 'shop', title: 'Paper & Pantry', matches: ['shop', 'convenience'], upstairs: false },
+  { kind: 'office', title: 'Neighbourhood Design Office', matches: ['office', 'bank'], upstairs: true },
+  { kind: 'workshop', title: 'Canal Repair Shop', matches: ['garage', 'hardware', 'repair'], upstairs: false },
+  { kind: 'cafe', title: 'Harbour Coffee', matches: ['cafe', 'restaurant'], upstairs: false },
+  { kind: 'warehouse', title: 'Northside Stores', matches: ['warehouse', 'industrial', 'shop'], upstairs: false },
+];
+
+// Published v1 property keys refer to these Georgetown POI ids. Do not reassign them after geometry repairs.
+export const LEGACY_GEORGETOWN_INTERIOR_POIS = [1569, 133, 1075, 5, 446, 749] as const;

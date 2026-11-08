@@ -7,6 +7,7 @@ export const SANDBOX = {
   apartmentBuyPrice: 1800,
   apartmentLeasePrice: 90,
   apartmentLeaseDays: 7,
+  apartmentPricePercentages: [100, 115, 90, 130], // stable first apartment price; location/space premiums for additional homes
   storageSlots: 18,
   shopDrinkPrice: 5,
   jobs: {

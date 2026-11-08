@@ -78,5 +78,11 @@
   },
   "thirdCar": true,
   "exited": true,
+  "roomEntered": true,
+  "closeCameraHidesBody": true,
+  "indoorThirdVisible": true,
+  "cameraInside": true,
+  "indoorFirst": true,
+  "indoorThird": true,
   "consoleErrors": []
 }
