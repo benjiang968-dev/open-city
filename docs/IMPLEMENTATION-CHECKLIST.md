@@ -20,7 +20,7 @@ Source: the owner's complete pasted request. Three.js/Rapier/Vite are retained. 
 | 12 | More jobs | Four spatial shifts (delivery, cleaning, repairs, warehouse) plus existing taxi; objectives, supplies, progress and payouts | All four complete in production at exact pay ($55/$40/$65/$50), repeated E guards; a repeated warehouse shift at a second workplace reuses IDs and pays once; cancellation pays nothing | Work is optional sandbox activity |
 | 13 | Buy/rent apartments | Four separately priced furnished homes, purchase/prepaid lease, independent persistent storage | Full browser rent/store/reload/retrieve, second home and book persistence, buy/funds/expiry/duplicate transaction fixtures | Leases $81–$117 for 7 game days, no automatic renewal; buy $1,620–$2,340. Original home remains $90/$1,800; 18 storage slots/home |
 | 14 | Fictional crime and consequences | Existing vehicle theft, unpaid shop goods/food, warned warehouse trespass, staff/NPC reports, wanted level and pursuits | Production shop report raises heat18; real unseen countdown resolves pursuit; paid food causes no report; trespass grace and one-shot reporting tested | Interior staff/security reports use the real exterior entrance location |
-| 15 | Standalone website and saves | Static production build, versioned browser-local IndexedDB, upgrade preservation | Production build, complete game reloads and actual published-v1 → new build → second reload; cash, NPC relationship, lease, item450 and first20 parked IDs/types/positions retained; new goods appended once | Updated publication pending final packaging; hosted access remains owner-private. No account/device/origin save sync |
+| 15 | Standalone website and saves | Static production build, versioned browser-local IndexedDB, upgrade preservation | Production build, complete game reloads and actual published-v1 → new build → second reload; cash, NPC relationship, lease, item450 and first20 parked IDs/types/positions retained; new goods appended once | Updated release published successfully; hosted access remains owner-private. No account/device/origin save sync |
 
 ## Full flows verified
 
@@ -56,4 +56,6 @@ Tests use setup teleports to arrange scenarios, then real E/U/G actions, physics
 ## Publication
 
 Owner-private playable URL: https://open-city-play-benjiang.benjiang968.chatgpt.site .
-The first publication was source b58a513fc629b66bb7aebed822adf1da391bbc9c. The updated verified release will reuse this URL and access policy; no domain or paid hosting is required.
+The first publication was source b58a513fc629b66bb7aebed822adf1da391bbc9c. The updated verified release reuses this URL and access policy; no domain or paid hosting is required.
+
+Updated Site source: `d48a2ff504b536e37494520885b5170973dafe4e`; deployment `appgdep_6aefca70c4f88191bdf6cfd85562f327` returned `succeeded`. Its13 static output files match the tested production output byte for byte. Detailed deployment identifiers and archive digest are in `docs/verification/deployment.json`.

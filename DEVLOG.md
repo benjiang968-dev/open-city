@@ -1211,3 +1211,5 @@ Verification: production build, all system/geometry fixtures, complete four-job/
 save upgrade plus second reload, final camera/recovery controls, all85 outdoor stairs and visual sky/model fixtures. The checkpoint
 in docs/IMPLEMENTATION-CHECKLIST.md records exact evidence and remaining environment/map limits. Publication uses the existing private
 Sites URL and browser-local saves; GitHub PR1 contains the reviewable source.
+
+Updated private publication succeeded: source d48a2ff504b536e37494520885b5170973dafe4e, deployment appgdep_6aefca70c4f88191bdf6cfd85562f327. All13 hosted static files match the tested production build. See docs/verification/deployment.json.
