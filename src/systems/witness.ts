@@ -45,6 +45,8 @@ export const witnessStats: WitnessStats = { callsStarted: 0, callsCompleted: 0, 
 
 function crimeFromEvent(e: GameEvent): { kind: CrimeKind; x: number; z: number; victim: number; radius?: number } | null {
   switch (e.type) {
+    case 'shopTheft': return { kind: 'shopTheft', x: e.x, z: e.z, victim: -1 };
+    case 'trespass': return { kind: 'trespass', x: e.x, z: e.z, victim: -1 };
     case 'pedHit': return { kind: 'pedHit', x: e.x, z: e.z, victim: e.pedId };
     case 'assault': return { kind: 'assault', x: e.x, z: e.z, victim: e.pedId };
     case 'harassment': return { kind: 'harassment', x: e.x, z: e.z, victim: e.pedId };
@@ -135,8 +137,13 @@ export function updateWitnesses(w: World, dt: number): void {
     const cy = w.city.heightAt(c.x, c.z, w.player.mesh.position.y);
     const crime: Crime = { id: nextCrime++, kind: c.kind, x: c.x, z: c.z, heat: WT.heat[c.kind], reported: false, victim: c.victim };
     crimes.set(crime.id, crime);
+    if (c.kind === 'shopTheft' || c.kind === 'trespass') {
+      // Staff/security are fixed witnesses in the streamed room. Their report goes to the real street entrance.
+      dispatchTo(w, c.x, c.z, crime.heat); crime.reported = true;
+      toast(w, c.kind === 'shopTheft' ? 'Shopkeeper reported unpaid merchandise · police responding' : 'Security reported trespassing · police responding', 4);
+    }
     // police who saw it react at once
-    if (policeCanSee(w, c.x, c.z, cy)) {
+    if (!crime.reported && policeCanSee(w, c.x, c.z, cy)) {
       addHeat(w, crime.heat);
       crime.reported = true;
     }

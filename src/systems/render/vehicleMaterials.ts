@@ -49,9 +49,9 @@ export function makeHubMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({ color: 0xc8ccd2, flatShading: true, roughness: 0.22, metalness: 1 });
 }
 
-/** People: cloth with a soft sheen (skin and hair keep the same response; their shapes stay low-poly for now). */
+/** Shared people material: soft cloth response and the shaped parts' smooth vertex normals. */
 export function makePersonMaterial(): THREE.MeshPhysicalMaterial {
-  const m = new THREE.MeshPhysicalMaterial({ vertexColors: true, flatShading: true, roughness: 0.85, metalness: 0, sheen: 0.5, sheenRoughness: 0.7, sheenColor: new THREE.Color(0xffffff) });
+  const m = new THREE.MeshPhysicalMaterial({ vertexColors: true, flatShading: false, roughness: 0.85, metalness: 0, sheen: 0.5, sheenRoughness: 0.7, sheenColor: new THREE.Color(0xffffff) });
   m.name = 'person';
   return m;
 }

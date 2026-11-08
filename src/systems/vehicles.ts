@@ -5,7 +5,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { TUNING, type CarSpec, type CarTypeName } from '../tuning';
 import type { World } from '../world';
 import { emit } from '../world';
-import { buildCarParts, carMaterial, makeWheel } from '../art/car';
+import { buildCarParts, carMaterial, makeWheel, makeCarInterior } from '../art/car';
 import { buildDamageableCar, applyImpact, type CarDamage } from './carDamage';
 import { GROUPS } from '../physicsGroups';
 import { act } from './input';
@@ -28,6 +28,7 @@ export interface Vehicle {
   mesh: THREE.Group;
   bodyMesh: THREE.Mesh;
   wheels: THREE.Group[];
+  steeringWheel: THREE.Object3D | null;
   health: number;
   maxHealth: number;
   steer: number; // current wheel angle (radians)
@@ -38,6 +39,7 @@ export interface Vehicle {
   rearGrip: number; // current rear friction slip (blends back after handbrake)
   prevVel: THREE.Vector3;
   upsideTimer: number;
+  lastRecovery: number;
   inWaterTimer: number;
   driven: boolean;
   wrecked: boolean;
@@ -125,6 +127,9 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   const group = new THREE.Group();
   const coat = paint ? paint.clone() : new THREE.Color(spec.color);
   const { bodyMesh, dmg } = buildDamageableCar({ mesh: group }, buildCarParts(type, coat));
+  const interior = makeCarInterior(type);
+  group.add(interior);
+  const steeringWheel = interior.getObjectByName('steeringWheel') ?? null;
   const wheels: THREE.Group[] = [];
   for (const p of wheelPos) {
     const wg = makeWheel(spec.wheelRadius);
@@ -134,9 +139,9 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   }
   w.scene.add(group);
   const v: Vehicle = {
-    id: w.vehicles.length, type, spec, body, collider, ctrl, mesh: group, bodyMesh, wheels,
+    id: w.vehicles.length, type, spec, body, collider, ctrl, mesh: group, bodyMesh, wheels, steeringWheel,
     health: spec.health, maxHealth: spec.health, steer: 0, speed: 0, heading, slip: 0, throttle: 0,
-    rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, inWaterTimer: 0,
+    rearGrip: spec.frictionSlipRear, prevVel: new THREE.Vector3(), upsideTimer: 0, lastRecovery: -Infinity, inWaterTimer: 0,
     driven: false, wrecked: false, lastHitTime: -10, px: x, py: (y ?? w.city.heightAt(x, z)) + rideY, pz: z, dmg,
     owner: 'nobody', owned: false, locked: false, stolen: false, forSale: null, alarmUntil: 0, spotCls: null, ownerLocal: false,
     pooled: false, idle: false, parked: null, inst: -1, paint: coat, paintMask: null,
@@ -147,12 +152,41 @@ export function spawnVehicle(w: World, type: CarTypeName, x: number, z: number, 
   return v;
 }
 
-/**
- * Spawns the starting cars at the kerb spots nearest the player's spawn (the first `ownedAtStart` are yours; the
- * others belong to locals: carTheft.assignCarOwners). Every other parked car is placed by parkedCars.ts, which keeps
- * clear of the returned spots and of `reserved` ones (dealership showrooms).
- */
+/** A gentle, unobstructed physical departure for a freshly spawned owned car, using current scene queries. */
+export function initialDepartureClear(w: Pick<World, 'city' | 'physics' | 'R'>, spot: ParkingSpot, spec: CarSpec): boolean {
+  const limits = TUNING.geo.roadLimits, [hx, hy, hz] = spec.halfExtents;
+  const sin = Math.sin(spot.heading), cos = Math.cos(spot.heading);
+  const rotation = { x: 0, y: Math.sin(spot.heading / 2), z: 0, w: Math.cos(spot.heading / 2) };
+  const shape = new w.R.Cuboid(hx, hy, hz);
+  const step = 0.5; // same baseline as the road-limit kink audit
+  let previous = NaN, grade = NaN, reference = spot.y;
+  // Two parking spaces give the first owned car a usable departure before it needs a turn. Validate the physical
+  // parking line, including its wheel tracks and chassis, rather than the nearby traffic lane's smoother profile.
+  for (let d = -hz; d <= V.kerbSlotSpacing * 2 + hz; d += step) {
+    const x = spot.x + sin * d, z = spot.z + cos * d;
+    if (!w.city.isRoad(x, z) || w.city.isBlocked(x, z) || w.city.isWater(x, z)) return false;
+    const y = w.city.heightAt(x, z, reference);
+    const left = w.city.heightAt(x + cos * spec.wheelX, z - sin * spec.wheelX, y);
+    const right = w.city.heightAt(x - cos * spec.wheelX, z + sin * spec.wheelX, y);
+    if (![y, left, right].every(Number.isFinite) || Math.abs(left - right) / (2 * spec.wheelX) > limits.maxCrossSlope) return false;
+    if (previous === previous) {
+      const nextGrade = (y - previous) / step;
+      if (Math.abs(nextGrade) > limits.maxGradeMain || (grade === grade && Math.abs(nextGrade - grade) * step > limits.maxStep)) return false;
+      grade = nextGrade;
+    }
+    const at = { x, y: Math.max(y, left, right) + rideHeight(spec) + V.recoveryClearance, z };
+    if (w.physics.intersectionWithShape(at, rotation, shape, w.R.QueryFilterFlags.ONLY_FIXED)) return false;
+    previous = reference = y;
+  }
+  return true;
+}
+
+/** Spawn one of each starting type, preserving ownership/IDs; the owned cars prefer a safe departure near spawn.
+ * Parked-car filling keeps clear of the returned spots and the dealership's reserved spots. */
 export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z: number }[] = []): { x: number; z: number }[] {
+  // Rapier's query tree must include fixed colliders just created by the map, including on the grid fallback.
+  // No vehicles exist yet; this refreshes queries before choosing any of their starting poses.
+  w.physics.step();
   const start = w.city.spawn;
   const taken: { x: number; z: number }[] = [];
   const isFree = (s: { x: number; z: number }) => ![...reserved, ...taken].some((t) => Math.hypot(t.x - s.x, t.z - s.z) < V.kerbSlotSpacing * 0.5);
@@ -160,15 +194,15 @@ export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z
   const spots = w.city.parkingSpots.filter((s) => s.cls !== 'lot').sort(
     (a, b) => (a.x - start.x) ** 2 + (a.z - start.z) ** 2 - ((b.x - start.x) ** 2 + (b.z - start.z) ** 2),
   );
-  let k = 0;
-  for (const s of spots) {
-    if (k >= V.playerCarSpawn.length) break;
-    if (!isFree(s)) continue;
+  for (let k = 0; k < V.playerCarSpawn.length; k++) {
+    const available = spots.filter(isFree);
+    // Legacy layout keeps the original reservations, hence the dense parked-car IDs used by old saves.
+    const s = (w.startingLayout !== 'legacy' && k < V.ownedAtStart ? available.find(s => initialDepartureClear(w, s, V.types[V.playerCarSpawn[k]])) : null) ?? available[0];
+    if (!s) break;
     taken.push(s);
     const v = spawnVehicle(w, V.playerCarSpawn[k], s.x, s.z, s.heading, undefined, s.y);
     v.owned = k < V.ownedAtStart;
     v.spotCls = s.cls;
-    k++;
   }
   return taken;
 }
@@ -245,7 +279,7 @@ export function updateVehicles(w: World, dt: number): void {
         if (v.speed > 1) brake = 1;
         else throttle = -1;
       }
-      if (act.reset(inp)) resetUpright(w, v);
+      if (act.reset(inp) && resetUpright(w, v)) continue; // no forces from the old pose after teleporting
     } else if (!v.driven || v.wrecked) {
       brake = 0.4; // parked or wrecked: wheels drag
     }
@@ -363,14 +397,53 @@ function wreck(v: Vehicle) {
   v.bodyMesh.material = wreckMaterial;
 }
 
-export function resetUpright(w: World, v: Vehicle): void {
-  const p = v.body.translation();
+/** Recover to an absolute ground pose, never relative to the current chassis altitude. The full
+ * rotated footprint is tested, so recovery next to a facade cannot place the chassis inside it. */
+export function resetUpright(w: World, v: Vehicle): boolean {
+  if (w.time - v.lastRecovery < V.recoveryCooldown) return false;
+  const p = v.body.translation(), R = w.R;
+  const [hx, hy, hz] = v.spec.halfExtents;
   const qq = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), v.heading);
-  v.body.setTranslation({ x: p.x, y: Math.max(p.y, w.city.heightAt(p.x, p.z)) + 1.2, z: p.z }, true);
-  v.body.setRotation({ x: qq.x, y: qq.y, z: qq.z, w: qq.w }, true);
+  const rotation = { x: qq.x, y: qq.y, z: qq.z, w: qq.w };
+  const shape = new R.Cuboid(hx + V.recoveryClearance, hy, hz + V.recoveryClearance);
+  const sin = Math.sin(v.heading), cos = Math.cos(v.heading);
+  const candidate = (x: number, z: number): { x: number; y: number; z: number } | null => {
+    let low = Infinity, high = -Infinity;
+    for (const lx of [-hx, 0, hx]) for (const lz of [-hz, 0, hz]) {
+      const sx = x + lx * cos + lz * sin, sz = z - lx * sin + lz * cos;
+      if (w.city.isBlocked(sx, sz) || w.city.isWater(sx, sz)) return null;
+      const gy = w.city.heightAt(sx, sz, p.y);
+      if (!Number.isFinite(gy)) return null;
+      low = Math.min(low, gy); high = Math.max(high, gy);
+    }
+    if (high - low > V.recoveryMaxGroundDelta) return null;
+    const pos = { x, y: high + Math.max(rideHeight(v.spec), hy) + V.recoveryClearance, z };
+    const blocked = w.physics.intersectionWithShape(pos, rotation, shape,
+      R.QueryFilterFlags.EXCLUDE_SENSORS, undefined, v.collider, v.body);
+    return blocked ? null : pos;
+  };
+  let spot = candidate(p.x, p.z);
+  for (let radius = V.recoverySearchStep; !spot && radius <= V.recoverySearchRadius; radius += V.recoverySearchStep) {
+    const count = Math.ceil(2 * Math.PI * radius / V.recoverySearchStep);
+    for (let k = 0; k < count && !spot; k++) {
+      const angle = k * Math.PI * 2 / count;
+      spot = candidate(p.x + Math.cos(angle) * radius, p.z + Math.sin(angle) * radius);
+    }
+  }
+  if (!spot) return false; // keep the existing pose if every nearby surface is unsafe
+  v.body.setTranslation(spot, true);
+  v.body.setRotation(rotation, true);
   v.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
   v.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
-  v.upsideTimer = 0;
+  v.body.resetForces(true); v.body.resetTorques(true);
+  for (let i = 0; i < 4; i++) {
+    v.ctrl.setWheelEngineForce(i, 0); v.ctrl.setWheelBrake(i, 0); v.ctrl.setWheelSteering(i, 0);
+  }
+  v.prevVel.set(0, 0, 0); v.speed = 0; v.steer = 0; v.throttle = 0; v.slip = 0;
+  v.px = spot.x; v.py = spot.y; v.pz = spot.z;
+  v.upsideTimer = 0; v.inWaterTimer = 0; v.lastRecovery = w.time;
+  syncMesh(v);
+  return true;
 }
 
 function syncMesh(v: Vehicle) {
@@ -378,6 +451,7 @@ function syncMesh(v: Vehicle) {
   const r = v.body.rotation();
   v.mesh.position.set(t.x, t.y, t.z);
   v.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+  if (v.steeringWheel) v.steeringWheel.rotation.z = -v.steer * 2;
   for (let i = 0; i < 4; i++) {
     const susp = v.ctrl.wheelSuspensionLength(i) ?? v.spec.suspensionRest;
     const wg = v.wheels[i];

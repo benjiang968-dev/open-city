@@ -1,0 +1,15 @@
+{
+  "status": "succeeded",
+  "url": "https://open-city-play-benjiang.benjiang968.chatgpt.site",
+  "project_id": "appgprj_6aef203abad081919c6dc65b5f3c473c",
+  "deployment_id": "appgdep_6aefca70c4f88191bdf6cfd85562f327",
+  "version_id": "appgprj_6aef203abad081919c6dc65b5f3c473c~appgver_18644e247d4081919b5eae67829d5d5b",
+  "site_source_commit": "d48a2ff504b536e37494520885b5170973dafe4e",
+  "review_branch": "codex/open-city-improvements",
+  "archive_sha256": "a4fa3fab2a5d2186bf7e0232394bc8640fc9df08edfce47b10d63842f458f176",
+  "production_file_count": 13,
+  "matches_tested_output": true,
+  "access": "owner-private",
+  "hosted_authenticated_browser_test": false,
+  "local_production_browser_flows": "passed"
+}

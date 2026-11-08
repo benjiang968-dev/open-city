@@ -2,6 +2,14 @@
 
 Source: the owner's master prompt of 2026-11-05 ("Open City — complete open-world game development master prompt"), merged with the earlier milestone plan. Status values: **done**, **partial**, **not started**. Keep this honest; DEVLOG.md has the details and test steps.
 
+## 2026-11-07 improvement checkpoint
+
+See [IMPLEMENTATION-CHECKLIST.md](IMPLEMENTATION-CHECKLIST.md) for current implementation and verification.
+Added safe ground recovery, faster walking, consistent first/third-person cameras, exact building placement,
+six furnished interiors, browser-local persistent items/property, four spatial jobs, prepaid apartments/storage,
+shop theft/trespass and six vehicle classes. The stages below remain partial at the full-city scale: most facades
+are not enterable, art is procedural, hardware-GPU performance and broad outdoor stair/road audits remain open.
+
 ## Where the project stands (2026-11-05, after the Stage 1 integration)
 
 | System | Status | Notes |

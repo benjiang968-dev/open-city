@@ -1171,3 +1171,45 @@ Format: date · what changed · what to test · known issues.
   - Synthesized street trees on M St and Wisconsin Ave are not moved to the kerb strip on real data: 136 trees and 60 posts stand within a person's reach of a walk link (none blocks a walkway).
   - The taxi can name a destination's street as "Georgetown" when the place has none.
   - Boot is 3-4 times slower than main (texture bake, bigger real map, three times the colliders); Stage 1 costs more draw calls, triangles, heap and frame time than main; real-GPU numbers are still unmeasured.
+
+
+## 2026-11-07 — Owner improvement request
+
+Implemented exact footprint placement against carriageways, pavement corner meshes, walking corridors and neighbouring polygons; exact concave roofs and collider decomposition; safe stoop extension validation. Full source audit: 4,713 → 4,620 retained (1,972 clipped, 93 omitted), zero intersections and roof/collider area errors. Decimal predicates handle near-coincident source boundaries.
+
+R recovery now anchors to the supporting ground, searches a clear rotated chassis pose, clears velocities/forces and wheel controls, and has a cooldown. Walking is 5.8 m/s with a separate faster sprint and acceleration, fixed-step movement and no diagonal translation boost. Camera heading/mouse clocks/focus are consistent; V switches foot/car views and cabin driver positions are model-specific. Indoor camera stays in the room. Vehicle exits test both sides and nearby clear poses. Street traffic no longer injures an interior player on another vertical level.
+
+Reduced asphalt aggregate contrast/normal strength, increased roughness and reduced wet-surface mirror sheen. Split plain and instance-coloured crowd/parked-car materials to avoid per-draw program churn. Isolated software-GL comparison sampled allocation 335→261 KB/frame, CPU median 18→6.8 ms; long software render stalls remain (docs/verification). Added hatch/saloon/SUV/van/sports/pickup silhouettes, detailed cabin openings, seats, dashboards and steering wheels, round wheel LOD, live rotation/steer.
+
+Six marked furnished physical rooms stream through E door transitions; office/apartment have tested stairs and upper floors. O operates collision-matched doors. I inspects/uses/drops/saves items, U drinks sealed stock, G/Q drops. Stable IDs and single locations prevent clones. Versioned IndexedDB saves item/world/container transforms, money, player, time, changed vehicles, NPC relationships and activity/property state; unsupported saves are retained. Autosave 10 seconds, manual save in inventory, no account sync.
+
+J exposes four repeatable spatial shifts plus apartment lease/purchase/storage and shop payment. Supplies use reserved item capacity so ambient litter cannot block work. Payouts are idempotent; apartment leases are prepaid $90/7 game days with no automatic renewal, purchase $1,800. Unpaid merchandise on exit and warned warehouse trespass cause police reports; existing crime/traffic/taxi systems retained.
+
+Verification: npm build; real Rapier inventory/vehicle/interior tests; actual IndexedDB reload fixture; full placement audit; production Georgetown controls (flat/slope/building recovery, views, heading and blur); four job payouts and duplicate guards; rent/storage identity; shop theft/pursuit resolution; production save/reload. See docs/IMPLEMENTATION-CHECKLIST.md for exact scopes and limits. Existing outdoor stair, road smoothness and traffic audit defects are not claimed universally resolved.
+
+Published owner-private via Sites at https://open-city-play-benjiang.benjiang968.chatgpt.site (deployment succeeded). GitHub Pages enablement returned integration 403; no custom domain or paid hosting purchased. Final Low software profile and full combined browser reload pass are recorded in docs/verification and screenshots.
+
+
+## Follow-up completion checkpoint
+
+Expanded the six-site prototype to14 furnished locations and four separately priced apartments. Added entrance waypoints in J,
+work at additional matching workplaces, comfortable indoor chase distance and body hiding when the camera is forced near the head.
+Kept the original six Georgetown property IDs and original stock/task registry prefix stable. Seven more portable definitions plus272
+physical shelf/table goods use the shared pickup/inspect/use/drop/store path. Food is consumed once; books/phone have useful actions;
+unpaid consumption reports theft. Save migration reconstructs old numeric item IDs and appends missing authored keys only once.
+
+Fixed all85 exterior stair traversals: flat turning landings, bridge rail access, bank-surface stairwell cuts, physical end fitting,
+covering-floor/capsule clearance and steep-face filtering. Real-Rapier full-map test passes170 directions with max floor penetration0.
+Added shaped people and connected tree crowns within explicit instancing/geometry budgets; original procedural art remains stylized.
+
+Accepted cached physical sky with amortized face updates and day/night/storm parity. Rejected slower shader specializations and guards;
+full-city software rendering remains heavy and no real-GPU FPS claim is made. Fixed FPS measurement to use actual wall time rather
+than clamped simulation dt. Startup now shows loading stages. Fresh owned-car placement avoids the confirmed steep35th St sag;
+25m safe-start gate retains120health. An early saved generation contract preserves legacy parking reservations and parked-car IDs.
+
+Verification: production build, all system/geometry fixtures, complete four-job/food/multiple-home/theft/reload flow, published-v1
+save upgrade plus second reload, final camera/recovery controls, all85 outdoor stairs and visual sky/model fixtures. The checkpoint
+in docs/IMPLEMENTATION-CHECKLIST.md records exact evidence and remaining environment/map limits. Publication uses the existing private
+Sites URL and browser-local saves; GitHub PR1 contains the reviewable source.
+
+Updated private publication succeeded: source d48a2ff504b536e37494520885b5170973dafe4e, deployment appgdep_6aefca70c4f88191bdf6cfd85562f327. All13 hosted static files match the tested production build. See docs/verification/deployment.json.

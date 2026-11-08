@@ -2,12 +2,13 @@
 // so 60 people cost about a dozen draw calls instead of five each. Limbs swing per instance.
 import * as THREE from 'three';
 import type { World } from '../world';
+import { buildHumanGeometry } from '../art/humanGeometry';
 import { GeoBuilder } from '../art/geo';
 import type { Ped } from './pedestrians';
 import { makePersonMaterial } from './render/vehicleMaterials';
 
 const WHITE = new THREE.Color(1, 1, 1);
-const PART_KEYS = ['torso', 'head', 'hair', 'legL', 'legR', 'armL', 'armR', 'phone', 'camera', 'parcel', 'cane', 'dog', 'dogTail'] as const;
+const PART_KEYS = ['torso', 'head', 'hair', 'legL', 'legR', 'armL', 'armR', 'handL', 'handR', 'phone', 'camera', 'parcel', 'cane', 'dog', 'dogTail'] as const;
 
 interface Part {
   mesh: THREE.InstancedMesh;
@@ -15,6 +16,7 @@ interface Part {
 }
 export interface CrowdRender {
   torso: Part; head: Part; hair: Part; legL: Part; legR: Part; armL: Part; armR: Part;
+  handL: Part; handR: Part;
   phone: Part; camera: Part; parcel: Part; cane: Part; dog: Part; dogTail: Part;
 }
 
@@ -25,9 +27,10 @@ function box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: num
 }
 
 export function createCrowd(w: World, capacity: number): CrowdRender {
-  const mat = makePersonMaterial(); // cloth with a soft sheen (render/vehicleMaterials.ts)
+  const mat = makePersonMaterial();
+  const plainMat = makePersonMaterial(); // stable program for props without instanceColor
   const make = (g: THREE.BufferGeometry, cap: number, colored: boolean, shadow: boolean): Part => {
-    const mesh = new THREE.InstancedMesh(g, mat, cap);
+    const mesh = new THREE.InstancedMesh(g, colored ? mat : plainMat, cap);
     if (colored) mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3).fill(1), 3);
     mesh.count = 0;
     mesh.frustumCulled = false;
@@ -35,9 +38,7 @@ export function createCrowd(w: World, capacity: number): CrowdRender {
     w.scene.add(mesh);
     return { mesh, n: 0 };
   };
-  // head: skin colour comes from the instance colour; the eye band stays dark
-  const head = box(-0.13, 1.45, -0.12, 0.13, 1.72, 0.13);
-  head.box(-0.09, 1.55, 0.13, 0.09, 1.6, 0.135, new THREE.Color(0.12, 0.12, 0.12));
+  const human = buildHumanGeometry();
   const camera = box(-0.07, -0.05, -0.04, 0.07, 0.05, 0.04, new THREE.Color('#2b2d31'));
   camera.box(-0.03, -0.03, 0.04, 0.03, 0.03, 0.08, new THREE.Color('#111'));
   const dog = new GeoBuilder();
@@ -48,13 +49,15 @@ export function createCrowd(w: World, capacity: number): CrowdRender {
   dog.box(0.06, 0.6, 0.28, 0.12, 0.68, 0.34, WHITE);
   for (const [x, z] of [[-0.09, 0.2], [0.09, 0.2], [-0.09, -0.24], [0.09, -0.24]]) dog.box(x - 0.04, 0, z - 0.04, x + 0.04, 0.27, z + 0.04, WHITE);
   return {
-    torso: make(box(-0.24, 0.85, -0.14, 0.24, 1.45, 0.14).build(), capacity, true, true),
-    head: make(head.build(), capacity, true, true),
-    hair: make(box(-0.14, 1.68, -0.14, 0.14, 1.78, 0.14).build(), capacity, true, false),
-    legL: make(box(-0.09, -0.86, -0.09, 0.09, 0, 0.09).build(), capacity, true, true),
-    legR: make(box(-0.09, -0.86, -0.09, 0.09, 0, 0.09).build(), capacity, true, true),
-    armL: make(box(-0.07, -0.6, -0.09, 0.07, 0, 0.09).build(), capacity, true, false),
-    armR: make(box(-0.07, -0.6, -0.09, 0.07, 0, 0.09).build(), capacity, true, false),
+    torso: make(human.torso, capacity, true, true),
+    head: make(human.head, capacity, true, true),
+    hair: make(human.hair, capacity, true, false),
+    legL: make(human.leg, capacity, true, true),
+    legR: make(human.leg, capacity, true, true),
+    armL: make(human.arm, capacity, true, false),
+    armR: make(human.arm, capacity, true, false),
+    handL: make(human.hand, capacity, true, false),
+    handR: make(human.hand, capacity, true, false),
     phone: make(box(-0.035, -0.065, -0.008, 0.035, 0.065, 0.008, new THREE.Color('#15171c')).build(), capacity, false, false),
     camera: make(camera.build(), capacity, false, false),
     parcel: make(box(-0.18, -0.13, -0.15, 0.18, 0.13, 0.15, new THREE.Color('#c69c6d')).build(), capacity, false, true),
@@ -127,9 +130,10 @@ function drawPed(C: CrowdRender, ped: Ped) {
   put(C.head, base, ped.skin);
   put(C.hair, base, ped.hair);
   const swing = Math.sin(ped.walkPhase) * 0.7 * Math.min(1.4, ped.moveAmount);
-  put(C.legL, limb(-0.12, 0.86, 0, swing), ped.pants);
-  put(C.legR, limb(0.12, 0.86, 0, -swing), ped.pants);
-  put(C.armL, limb(-0.31, 1.42, 0, ped.armPose === 'carry' ? -1.2 : -swing * 0.8), ped.shirt);
+  put(C.legL, limb(-0.105, 0.86, 0, swing), ped.pants);
+  put(C.legR, limb(0.105, 0.86, 0, -swing), ped.pants);
+  arm.copy(limb(-0.245, 1.36, 0, ped.armPose === 'carry' ? -1.2 : -swing * 0.8));
+  put(C.armL, arm, ped.shirt); put(C.handL, arm, ped.skin);
   // right arm pose: phone at the ear, camera held up, waving, carrying, cane, or swinging
   let rx = swing * 0.8, rz = 0;
   switch (ped.armPose) {
@@ -139,8 +143,8 @@ function drawPed(C: CrowdRender, ped: Ped) {
     case 'carry': rx = -1.2; break;
     case 'cane': rx = -0.35 + swing * 0.2; break;
   }
-  arm.copy(limb(0.31, 1.42, 0, rx, rz));
-  put(C.armR, arm, ped.shirt);
+  arm.copy(limb(0.245, 1.36, 0, rx, rz));
+  put(C.armR, arm, ped.shirt); put(C.handR, arm, ped.skin);
   if (ped.armPose === 'carry') put(C.parcel, limb(0, 1.12, 0.33, 0));
   // hand-held props at the end of the right arm
   if (ped.armPose === 'phone' || ped.armPose === 'film' || ped.prop === 'camera' || ped.armPose === 'cane') {

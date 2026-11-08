@@ -40,7 +40,7 @@ export function createHud(): HudState {
   const job = el('job');
   const toast = el('toast');
   const speedo = el('speedo', 'shadow', '<div class="v">0</div><div class="u">km/h</div><div id="health"><div></div></div>');
-  const help = el('help', 'shadow', 'W/S or ↑/↓ walk · A/D or ←/→ turn · Shift run · Space jump / handbrake · E car / talk / pick up · 1–9 hotbar · Q drop · Click throw/swing<br>Mouse look (click to lock) · R flip car · H horn · F3 or ` stats · F4 collisions · N weather · M mute · Esc pause');
+  const help = el('help', 'shadow', 'E interact · I inventory / save · J work / homes · V camera · Esc controls');
   for (const d of [cash, stars, clock, help]) d.style.visibility = 'hidden';
   return {
     root, title: document.getElementById('title')!, cash, stars, clock, prompt, job, toast, speedo,
@@ -91,7 +91,7 @@ export function updateHud(w: World, dt: number): void {
   show(h.prompt, !!prompt);
   set(h, 'prompt', h.prompt, prompt);
 
-  const jobText = w.jobs.statusText();
+  const jobText = w.interiors?.active ? (w.jobs.get('sandbox')?.status(w) ?? '') : w.jobs.statusText();
   show(h.job, !!jobText);
   set(h, 'job', h.job, jobText);
 

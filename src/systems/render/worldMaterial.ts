@@ -113,8 +113,8 @@ OcOut ocSurface(int s, vec3 Ng, vec3 vcol, float baseRough, float baseMetal) {
   float wet = uWet * C.w;
   float pud = uWet * o.up * smoothstep(0.6, 0.7, m2.b * 0.65 + m1.b * 0.55) * step(0.55, C.w) * textured;
   o.alb *= 1.0 - wet * mix(0.22, 0.42, o.up);
-  o.rough = mix(o.rough, mix(o.rough * 0.6, 0.14, o.up), wet);
-  o.rough = mix(o.rough, 0.035, pud);
+  o.rough = mix(o.rough, mix(o.rough * 0.75, 0.28, o.up), wet);
+  o.rough = mix(o.rough, 0.12, pud);
   // snow settles on what faces up
   float sn = uSnow * o.up * smoothstep(0.35, 0.65, m2.a + o.up * 0.35);
   o.alb = mix(o.alb, vec3(0.82, 0.84, 0.88), sn);

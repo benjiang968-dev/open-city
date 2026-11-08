@@ -1,0 +1,88 @@
+{
+  "map": "georgetown",
+  "distances": [
+    {
+      "fps": 30,
+      "distance": 11.025843770794769,
+      "steps": 120,
+      "speed": 5.8,
+      "hp": 100,
+      "knock": 0,
+      "y": 101.41810607910156,
+      "facing": -1.7732188900240138
+    },
+    {
+      "fps": 60,
+      "distance": 11.12184993347484,
+      "steps": 120,
+      "speed": 5.8,
+      "hp": 100,
+      "knock": 0,
+      "y": 101.42050170898438,
+      "facing": -1.7732188900240138
+    },
+    {
+      "fps": 120,
+      "distance": 11.12184993347484,
+      "steps": 120,
+      "speed": 5.8,
+      "hp": 100,
+      "knock": 0,
+      "y": 101.42050170898438,
+      "facing": -1.7732188900240138
+    }
+  ],
+  "sprint": 17.192719472041873,
+  "turningPath": 11.12025616665431,
+  "turnError": 0,
+  "mouseError": 4.440892098500626e-16,
+  "combinedError": 4.440892098500626e-16,
+  "firstFoot": true,
+  "eyeHeight": 1.6172192806011054,
+  "thirdFoot": true,
+  "focusCleared": true,
+  "entered": true,
+  "firstCar": true,
+  "steering": 0.5589887938834728,
+  "steeringCameraChange": 0,
+  "flat": {
+    "maxAltitude": 0.8972749710083008,
+    "finalAltitude": 0.7683942317962646,
+    "clear": true,
+    "position": {
+      "x": 123.9071044921875,
+      "y": 3.81089448928833,
+      "z": 425.3797607421875
+    }
+  },
+  "slope": {
+    "maxAltitude": 1.12695540157074,
+    "finalAltitude": 0.7799505516627505,
+    "clear": true,
+    "position": {
+      "x": -591.9281616210938,
+      "y": 8.758769989013672,
+      "z": 259.330322265625
+    }
+  },
+  "grade": 0.24613310404242555,
+  "wall": {
+    "maxAltitude": 0.9304902630413991,
+    "finalAltitude": 0.7661292835566655,
+    "clear": true,
+    "position": {
+      "x": -742.3450927734375,
+      "y": 61.04788589477539,
+      "z": -1002.9746704101562
+    }
+  },
+  "thirdCar": true,
+  "exited": true,
+  "roomEntered": true,
+  "closeCameraHidesBody": true,
+  "indoorThirdVisible": true,
+  "cameraInside": true,
+  "indoorFirst": true,
+  "indoorThird": true,
+  "consoleErrors": []
+}

@@ -6,6 +6,7 @@ import { TUNING } from '../../tuning';
 import type { GeoDoc, Pt } from './geoDoc';
 import { clamp, densify, lerp, offsetLine, pointInPoly, SegGrid } from './geoDoc';
 import { lin, segmentOutsideHoles, shade, type Holes, type MeshBuf, type PhysChunks, type RenderChunks } from './meshKit';
+import type { StairPlan } from './bridges';
 import { B, K, bakeAprons, type GeoRaster } from './terrain';
 
 const G = TUNING.geo;
@@ -183,6 +184,8 @@ export interface WaterMeshes {
   materials: THREE.MeshStandardMaterial[];
   update(time: number): void;
   walkDecks: WalkDeck[];
+  /** Build guard rails after adjoining stair ends are fitted to these decks. */
+  finishBridgeRails(): void;
 }
 
 function waterMaterial(color: number, waves: number, uTime: { value: number }): THREE.MeshStandardMaterial {
@@ -198,13 +201,39 @@ function waterMaterial(color: number, waves: number, uTime: { value: number }): 
   return m;
 }
 
-export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, scene: THREE.Object3D, holes: Holes): WaterMeshes {
+/** Retained parameter intervals of a footbridge rail after reserving stair-door widths at the same level. */
+export function bridgeRailSegments(a: { x: number; y: number; z: number }, b: { x: number; y: number; z: number }, stairs: StairPlan[]): [number, number][] {
+  const dx = b.x - a.x, dz = b.z - a.z, L2 = dx * dx + dz * dz;
+  if (L2 < 1e-6) return [];
+  let kept: [number, number][] = [[0, 1]];
+  for (const st of stairs) for (const endpoint of [0, st.pts.length - 1]) {
+    const p = st.pts[endpoint], t = ((p[0] - a.x) * dx + (p[1] - a.z) * dz) / L2;
+    const level = st.h(endpoint === 0 ? 0 : st.L), closest = clamp(t, 0, 1);
+    if (Math.abs(level - lerp(a.y, b.y, closest)) > 0.8) continue;
+    const distance = Math.hypot(p[0] - a.x - dx * t, p[1] - a.z - dz * t);
+    const halfWidth = st.w / 2 + 0.25;
+    if (distance >= halfWidth) continue;
+    const delta = Math.sqrt(halfWidth * halfWidth - distance * distance) / Math.sqrt(L2);
+    const lo = clamp(t - delta, 0, 1), hi = clamp(t + delta, 0, 1);
+    if (hi <= lo) continue;
+    const next: [number, number][] = [];
+    for (const [u, v] of kept) {
+      if (hi <= u || lo >= v) next.push([u, v]);
+      else { if (lo > u) next.push([u, lo]); if (hi < v) next.push([hi, v]); }
+    }
+    kept = next;
+  }
+  return kept;
+}
+
+export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: RenderChunks, phys: PhysChunks, scene: THREE.Object3D, holes: Holes, stairs: StairPlan[] = []): WaterMeshes {
   const uTime = { value: 0 };
   const riverMat = waterMaterial(COL.water, 0.16, uTime);
   const canalMat = waterMaterial(COL.canalWater, 0.015, uTime);
   const creekMat = waterMaterial(COL.creekWater, 0.03, uTime);
   const meshes: THREE.Mesh[] = [];
   const walkDecks: WalkDeck[] = [];
+  const railBuilders: (() => void)[] = [];
   const b = doc.meta.bounds;
 
   // ---- Potomac: one plane from just north of the shore to far south, 25 m facets
@@ -267,21 +296,34 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
     // water-edge walls (face the water)
     chunks.tag('wall');
     const toS = [south[i][0] - north[i][0], south[i][1] - north[i][1]];
-    buf.wall(north[i - 1][0], north[i - 1][1], north[i][0], north[i][1], bed, bankA, bed, bankC, COL.stone, toS[0], toS[1]);
-    buf.wall(south[i - 1][0], south[i - 1][1], south[i][0], south[i][1], bed, bankA, bed, bankC, COL.stone, -toS[0], -toS[1]);
-    pb.quad(north[i - 1][0], bed, north[i - 1][1], north[i][0], bed, north[i][1], north[i][0], bankC, north[i][1], north[i - 1][0], bankA, north[i - 1][1]);
-    pb.quad(south[i - 1][0], bed, south[i - 1][1], south[i][0], bed, south[i][1], south[i][0], bankC, south[i][1], south[i - 1][0], bankA, south[i - 1][1]);
+    const waterEdge = (p: Pt, q: Pt, nx: number, nz: number) => {
+      for (const [lo, hi] of segmentOutsideHoles(holes, p[0], p[1], q[0], q[1])) {
+        const ax = lerp(p[0], q[0], lo), az = lerp(p[1], q[1], lo), bx = lerp(p[0], q[0], hi), bz = lerp(p[1], q[1], hi);
+        const ya = lerp(bankA, bankC, lo), yb = lerp(bankA, bankC, hi);
+        buf.wall(ax, az, bx, bz, bed, ya, bed, yb, COL.stone, nx, nz);
+        pb.quad(ax, bed, az, bx, bed, bz, bx, yb, bz, ax, ya, az);
+      }
+    };
+    waterEdge(north[i - 1], north[i], toS[0], toS[1]);
+    waterEdge(south[i - 1], south[i], -toS[0], -toS[1]);
     chunks.tag('ground');
     // banks: north stone/grass, south coping + towpath
+    // Bank tops need the same stairwell openings as terrain and retaining walls. Otherwise their uncut triangles
+    // bury the top of short canal stairs and present a vertical collision edge halfway up an otherwise valid ramp.
+    const bankStrip = (p0: Pt, p1: Pt, q0: Pt, q1: Pt, color: number) => {
+      const a = [p0[0], bankA, p0[1]], b = [q0[0], bankA, q0[1]], c = [q1[0], bankC, q1[1]], d = [p1[0], bankC, p1[1]];
+      for (const [p, q, r] of [[a, b, c], [a, c, d]]) holes.clipTri(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2], (v) => {
+        buf.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14], color, 0, 1, 0);
+        pb.tri(v[0], v[1], v[2], v[6], v[7], v[8], v[12], v[13], v[14]);
+      });
+    };
     const nb0 = northB[i - 1], nb1 = northB[i], sb0 = southB[i - 1], sb1 = southB[i];
     const nc0: Pt = [lerp(north[i - 1][0], nb0[0], 0.25), lerp(north[i - 1][1], nb0[1], 0.25)], nc1: Pt = [lerp(north[i][0], nb1[0], 0.25), lerp(north[i][1], nb1[1], 0.25)];
-    buf.quad(north[i - 1][0], bankA, north[i - 1][1], nc0[0], bankA, nc0[1], nc1[0], bankC, nc1[1], north[i][0], bankC, north[i][1], (i & 1) ? COL.coping : shade(COL.coping, 0.95), 0, 1, 0);
-    buf.quad(nc0[0], bankA, nc0[1], nb0[0], bankA, nb0[1], nb1[0], bankC, nb1[1], nc1[0], bankC, nc1[1], shade(COL.grassBank, 0.97 + (i % 3) * 0.02), 0, 1, 0);
-    pb.quad(north[i - 1][0], bankA, north[i - 1][1], nb0[0], bankA, nb0[1], nb1[0], bankC, nb1[1], north[i][0], bankC, north[i][1]);
+    bankStrip(north[i - 1], north[i], nc0, nc1, (i & 1) ? COL.coping : shade(COL.coping, 0.95));
+    bankStrip(nc0, nc1, nb0, nb1, shade(COL.grassBank, 0.97 + (i % 3) * 0.02));
     const sc0: Pt = [lerp(south[i - 1][0], sb0[0], 0.12), lerp(south[i - 1][1], sb0[1], 0.12)], sc1: Pt = [lerp(south[i][0], sb1[0], 0.12), lerp(south[i][1], sb1[1], 0.12)];
-    buf.quad(south[i - 1][0], bankA, south[i - 1][1], sc0[0], bankA, sc0[1], sc1[0], bankC, sc1[1], south[i][0], bankC, south[i][1], COL.coping, 0, 1, 0);
-    buf.quad(sc0[0], bankA, sc0[1], sb0[0], bankA, sb0[1], sb1[0], bankC, sb1[1], sc1[0], bankC, sc1[1], shade(COL.towpath, (i % 3) * 0.02 + 0.97), 0, 1, 0);
-    pb.quad(south[i - 1][0], bankA, south[i - 1][1], sb0[0], bankA, sb0[1], sb1[0], bankC, sb1[1], south[i][0], bankC, south[i][1]);
+    bankStrip(south[i - 1], south[i], sc0, sc1, COL.coping);
+    bankStrip(sc0, sc1, sb0, sb1, shade(COL.towpath, (i % 3) * 0.02 + 0.97));
     // retaining walls at the corridor edges up (or down) to the land outside
     for (const [f0, f1, sgn] of [[nb0, nb1, 1], [sb0, sb1, -1]] as [Pt, Pt, number][]) {
      // a stair climbing out of the corridor passes through its retaining wall: the wall stops either side of it
@@ -434,13 +476,23 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
         buf.quad(prev[0], prev[1] - 0.35, prev[2], prev[3], prev[4] - 0.35, prev[5], cur[3], cur[4] - 0.35, cur[5], cur[0], cur[1] - 0.35, cur[2], COL.darkWood, 0, -1, 0);
         for (const s of [0, 3]) {
           buf.wall(prev[s], prev[s + 2], cur[s], cur[s + 2], prev[s + 1] - 0.35, prev[s + 1], cur[s + 1] - 0.35, cur[s + 1], COL.darkWood, s ? rx : -rx, s ? rz : -rz);
-          // railing: posts + top rail
-          chunks.tag('railing');
-          buf.obox(prev[s], prev[s + 1], prev[s + 2], 0.06, 0.06, prev[s + 1] + 1.05, ux, uz, COL.rail);
-          const tx = (prev[s] + cur[s]) / 2, tz = (prev[s + 2] + cur[s + 2]) / 2;
-          const seg = Math.hypot(cur[s] - prev[s], cur[s + 2] - prev[s + 2]);
-          buf.obox(tx, (prev[s + 1] + cur[s + 1]) / 2 + 0.95, tz, seg / 2 + 0.05, 0.05, (prev[s + 1] + cur[s + 1]) / 2 + 1.05, ux, uz, COL.rail);
-          chunks.tag('decor');
+          // Real stairs can meet a bridge from its side. Reserve the same entrance opening in the visible rail
+          // and its collider, at the deck's height only (stairs underneath a bridge must not remove its guard rail).
+          const A = { x: prev[s], y: prev[s + 1], z: prev[s + 2] }, B = { x: cur[s], y: cur[s + 1], z: cur[s + 2] };
+          railBuilders.push(() => { for (const [lo, hi] of bridgeRailSegments(A, B, stairs)) {
+            const x0 = lerp(A.x, B.x, lo), z0 = lerp(A.z, B.z, lo), y0 = lerp(A.y, B.y, lo);
+            const x1 = lerp(A.x, B.x, hi), z1 = lerp(A.z, B.z, hi), y1 = lerp(A.y, B.y, hi);
+            const tx = (x0 + x1) / 2, tz = (z0 + z1) / 2, half = Math.hypot(x1 - x0, z1 - z0) / 2;
+            if (half < 0.04) continue;
+            chunks.tag('railing');
+            buf.obox(x0, y0, z0, 0.06, 0.06, y0 + 1.05, ux, uz, COL.rail);
+            buf.obox(x1, y1, z1, 0.06, 0.06, y1 + 1.05, ux, uz, COL.rail);
+            buf.obox(tx, (y0 + y1) / 2 + 0.95, tz, half, 0.05, (y0 + y1) / 2 + 1.05, ux, uz, COL.rail);
+            // The infill prevents a walking capsule crossing between posts; it ends exactly at the rendered opening.
+            const low = Math.min(y0, y1), high = Math.max(y0, y1) + 1.05;
+            phys.box(tx, (low + high) / 2, tz, half, (high - low) / 2, 0.06, ux, uz, 'railing');
+            chunks.tag('decor');
+          } });
         }
       }
       prev = cur;
@@ -453,15 +505,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
       pb.quad(q0[0], y0, q0[1], q0[2], y0, q0[3], q1[2], y1, q1[3], q1[0], y1, q1[1]);
       for (const sd of [0, 2]) buf.wall(q0[sd], q0[sd + 1], q1[sd], q1[sd + 1], y0 - 0.35, y0, y1 - 0.05, y1, COL.darkWood, sd ? rx : -rx, sd ? rz : -rz);
     }
-    // side rails keep people on: a thin slab per side and segment, following the arch (not one box down the middle)
-    for (let q = 1; q < wd.pts.length; q++) {
-      const p0 = wd.pts[q - 1], p1 = wd.pts[q], y0 = Math.min(wd.h[q - 1], wd.h[q]), y1 = Math.max(wd.h[q - 1], wd.h[q]);
-      const sl = Math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / 2;
-      for (const sd of [-1, 1]) {
-        const cx = (p0[0] + p1[0]) / 2 + rx * (hw - 0.05) * sd, cz = (p0[1] + p1[1]) / 2 + rz * (hw - 0.05) * sd;
-        phys.box(cx, (y0 + y1 + 1.05) / 2, cz, sl + 0.02, (y1 + 1.05 - y0) / 2, 0.05, ux, uz, 'railing');
-      }
-    }
+
   }
 
   // ---- Rock Creek water: a sloped ribbon a little wider than the cut (its edges hide under the banks)
@@ -533,6 +577,7 @@ export function buildWater(doc: GeoDoc, W: WaterModel, ras: GeoRaster, chunks: R
   return {
     meshes,
     walkDecks,
+    finishBridgeRails() { for (const build of railBuilders.splice(0)) build(); },
     materials: [riverMat, canalMat, creekMat],
     update(time: number) {
       uTime.value = time;

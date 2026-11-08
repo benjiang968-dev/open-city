@@ -1,0 +1,352 @@
+{
+  "before": {
+    "faces": 6,
+    "swaps": 1,
+    "envFaces": 6,
+    "environment": 1
+  },
+  "afterDay": {
+    "faces": 13,
+    "swaps": 2,
+    "envFaces": 6,
+    "environment": 1
+  },
+  "latest": {
+    "faces": 42,
+    "swaps": 7,
+    "envFaces": 18,
+    "environment": 3
+  },
+  "radiance": [
+    {
+      "label": "clear day",
+      "samples": [
+        {
+          "direction": [
+            0,
+            0.5,
+            -1
+          ],
+          "cached": [
+            165,
+            207,
+            240
+          ],
+          "physical": [
+            165,
+            207,
+            240
+          ]
+        },
+        {
+          "direction": [
+            0,
+            0.5,
+            1
+          ],
+          "cached": [
+            203,
+            228,
+            247
+          ],
+          "physical": [
+            203,
+            228,
+            247
+          ]
+        },
+        {
+          "direction": [
+            1,
+            0.5,
+            0
+          ],
+          "cached": [
+            206,
+            230,
+            247
+          ],
+          "physical": [
+            206,
+            230,
+            247
+          ]
+        },
+        {
+          "direction": [
+            -1,
+            0.5,
+            0
+          ],
+          "cached": [
+            163,
+            206,
+            239
+          ],
+          "physical": [
+            163,
+            205,
+            239
+          ]
+        },
+        {
+          "direction": [
+            0,
+            1,
+            0.01
+          ],
+          "cached": [
+            169,
+            207,
+            239
+          ],
+          "physical": [
+            169,
+            206,
+            238
+          ]
+        },
+        {
+          "direction": [
+            0,
+            -0.6,
+            -1
+          ],
+          "cached": [
+            247,
+            250,
+            251
+          ],
+          "physical": [
+            247,
+            250,
+            251
+          ]
+        }
+      ]
+    },
+    {
+      "label": "storm night",
+      "samples": [
+        {
+          "direction": [
+            0,
+            0.5,
+            -1
+          ],
+          "cached": [
+            6,
+            8,
+            20
+          ],
+          "physical": [
+            6,
+            8,
+            20
+          ]
+        },
+        {
+          "direction": [
+            0,
+            0.5,
+            1
+          ],
+          "cached": [
+            6,
+            8,
+            20
+          ],
+          "physical": [
+            6,
+            8,
+            19
+          ]
+        },
+        {
+          "direction": [
+            1,
+            0.5,
+            0
+          ],
+          "cached": [
+            6,
+            8,
+            20
+          ],
+          "physical": [
+            6,
+            8,
+            19
+          ]
+        },
+        {
+          "direction": [
+            -1,
+            0.5,
+            0
+          ],
+          "cached": [
+            6,
+            8,
+            20
+          ],
+          "physical": [
+            6,
+            8,
+            20
+          ]
+        },
+        {
+          "direction": [
+            0,
+            1,
+            0.01
+          ],
+          "cached": [
+            5,
+            7,
+            20
+          ],
+          "physical": [
+            5,
+            7,
+            20
+          ]
+        },
+        {
+          "direction": [
+            0,
+            -0.6,
+            -1
+          ],
+          "cached": [
+            39,
+            33,
+            31
+          ],
+          "physical": [
+            39,
+            33,
+            31
+          ]
+        }
+      ]
+    },
+    {
+      "label": "clear day after storm",
+      "samples": [
+        {
+          "direction": [
+            0,
+            0.5,
+            -1
+          ],
+          "cached": [
+            157,
+            202,
+            238
+          ],
+          "physical": [
+            157,
+            202,
+            238
+          ]
+        },
+        {
+          "direction": [
+            0,
+            0.5,
+            1
+          ],
+          "cached": [
+            198,
+            225,
+            246
+          ],
+          "physical": [
+            198,
+            225,
+            246
+          ]
+        },
+        {
+          "direction": [
+            1,
+            0.5,
+            0
+          ],
+          "cached": [
+            209,
+            231,
+            248
+          ],
+          "physical": [
+            209,
+            231,
+            248
+          ]
+        },
+        {
+          "direction": [
+            -1,
+            0.5,
+            0
+          ],
+          "cached": [
+            151,
+            198,
+            237
+          ],
+          "physical": [
+            151,
+            198,
+            236
+          ]
+        },
+        {
+          "direction": [
+            0,
+            1,
+            0.01
+          ],
+          "cached": [
+            146,
+            192,
+            234
+          ],
+          "physical": [
+            146,
+            192,
+            233
+          ]
+        },
+        {
+          "direction": [
+            0,
+            -0.6,
+            -1
+          ],
+          "cached": [
+            246,
+            249,
+            250
+          ],
+          "physical": [
+            246,
+            249,
+            250
+          ]
+        }
+      ]
+    }
+  ],
+  "nightState": {
+    "night": 1,
+    "sunHeight": -0.4189266490337133
+  },
+  "maxDisplayFacesPerFrame": 1,
+  "maxEnvironmentFacesPerFrame": 1,
+  "targetsReused": true,
+  "groundBounceVisible": true,
+  "errors": []
+}

@@ -11,9 +11,19 @@ import { GROUPS } from '../physicsGroups';
 
 const IT = TUNING.items;
 
+export type ItemLocation = 'world' | 'inventory' | 'storage' | 'consumed';
+
 export interface WorldItem {
   id: number;
   type: ItemId;
+  /** Stable optional authored placement key; ambient legacy objects keep numeric IDs only. */
+  authoredKey: string | null;
+  /** Persistent single owner/container; moving an item never creates another instance. */
+  location: ItemLocation;
+  owner: string | null;
+  price: number;
+  sealed: boolean;
+  reportedTheft: boolean;
   body: RAPIER.RigidBody;
   collider: RAPIER.Collider;
   inWorld: boolean; // false while in the inventory
@@ -39,9 +49,10 @@ export interface ItemsState {
   eventQueue: RAPIER.EventQueue;
   /** Seeded items left out at load because their spot was no good (in a wall, water, at an edge). */
   skipped: number;
+  scattering: boolean; // reserve authored/job instances beyond the ambient scatter budget
 }
 
-const CAPACITY = 160; // per item type
+const CAPACITY = 256; // per item type
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const m4 = new THREE.Matrix4();
 const q4 = new THREE.Quaternion();
@@ -64,7 +75,7 @@ export function createItems(w: World): ItemsState {
   const marker = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.25, 4).rotateX(Math.PI), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
   marker.visible = false;
   w.scene.add(marker);
-  return { items: [], art, meshes, material, byCollider: new Map(), target: null, marker, eventQueue: new w.R.EventQueue(true), skipped: 0 };
+  return { items: [], art, meshes, material, byCollider: new Map(), target: null, marker, eventQueue: new w.R.EventQueue(true), skipped: 0, scattering: false };
 }
 
 /**
@@ -73,8 +84,9 @@ export function createItems(w: World): ItemsState {
  */
 export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: number, lift?: number, near?: number): WorldItem | null {
   const S = w.itemsState;
-  const im = S.meshes[type];
-  if (im.count >= CAPACITY) return null;
+  let im = S.meshes[type];
+  if (S.scattering && im.count >= 160) return null;
+  if (im.count >= im.instanceMatrix.count) { growItemInstances(w, type); im = S.meshes[type]; }
   const R = w.R;
   const a = S.art[type];
   const def = IT.defs[type];
@@ -91,17 +103,34 @@ export function spawnItem(w: World, type: ItemId, x: number, z: number, yaw: num
   const cd = a.collider.kind === 'box' ? R.ColliderDesc.cuboid(a.collider.hx, a.collider.hy, a.collider.hz) : R.ColliderDesc.cylinder(a.collider.hh, a.collider.r);
   const collider = w.physics.createCollider(cd.setMass(def.mass).setFriction(0.75).setRestitution(0.2).setCollisionGroups(GROUPS.item), body);
   const item: WorldItem = {
-    id: S.items.length, type, body, collider, inWorld: true, inst: im.count, px: x, py: y + a.restY, pz: z,
+    id: S.items.length, type, authoredKey: null, body, collider, inWorld: true, location: 'world', owner: null, price: 0, sealed: false, reportedTheft: false, inst: im.count, px: x, py: y + a.restY, pz: z,
     thrown: false, thrownAt: -10, speed: 0, stolen: false, illegal: false,
   };
   im.count++;
   S.items.push(item);
   S.byCollider.set(collider.handle, item);
-  writeMatrix(S, item);
+  writeItemMatrix(S, item);
   return item;
 }
 
-function writeMatrix(S: ItemsState, it: WorldItem) {
+/** Grow only when authored content is registered, never in the per-frame update. */
+function growItemInstances(w: World, type: ItemId): void {
+  const S = w.itemsState, old = S.meshes[type];
+  const next = new THREE.InstancedMesh(S.art[type].geo, S.material, Math.max(CAPACITY, old.instanceMatrix.count * 2));
+  (next.instanceMatrix.array as Float32Array).set(old.instanceMatrix.array as Float32Array);
+  next.count = old.count; next.castShadow = old.castShadow; next.frustumCulled = false;
+  w.scene.remove(old); old.dispose(); w.scene.add(next); S.meshes[type] = next;
+}
+
+/** Save migration may rebuild IDs after an imported map changes ambient placement. */
+export function resetItemRegistry(w: World): void {
+  const S = w.itemsState;
+  for (const item of S.items) w.physics.removeRigidBody(item.body);
+  S.items.length = 0; S.byCollider.clear(); S.target = null; S.marker.visible = false; S.eventQueue.clear();
+  for (const type of ITEM_IDS) S.meshes[type].count = 0;
+}
+
+export function writeItemMatrix(S: ItemsState, it: WorldItem) {
   const im = S.meshes[it.type];
   if (!it.inWorld) im.setMatrixAt(it.inst, ZERO);
   else {
@@ -116,14 +145,16 @@ function writeMatrix(S: ItemsState, it: WorldItem) {
 /** Take an item out of the world (picked up). */
 export function removeFromWorld(w: World, it: WorldItem): void {
   it.inWorld = false;
+  it.location = 'storage';
   it.thrown = false;
   it.body.setEnabled(false);
-  writeMatrix(w.itemsState, it);
+  writeItemMatrix(w.itemsState, it);
 }
 
 /** Put an item back into the world at a position with a velocity (dropped or thrown). */
 export function placeInWorld(w: World, it: WorldItem, x: number, y: number, z: number, yaw: number, vx: number, vy: number, vz: number): void {
   it.inWorld = true;
+  it.location = 'world';
   it.body.setEnabled(true);
   q4.setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ'));
   it.body.setTranslation({ x, y, z }, true);
@@ -131,7 +162,7 @@ export function placeInWorld(w: World, it: WorldItem, x: number, y: number, z: n
   it.body.setLinvel({ x: vx, y: vy, z: vz }, true);
   it.body.setAngvel({ x: (Math.random() - 0.5) * 4, y: (Math.random() - 0.5) * 4, z: (Math.random() - 0.5) * 4 }, true);
   it.px = x; it.py = y; it.pz = z;
-  writeMatrix(w.itemsState, it);
+  writeItemMatrix(w.itemsState, it);
 }
 
 /** Per frame: copy moving items into their instances, settle thrown items, pick the look-at target. */
@@ -151,7 +182,7 @@ export function updateWorldItems(w: World, dt: number): void {
       removeFromWorld(w, it);
       continue;
     }
-    writeMatrix(S, it);
+    writeItemMatrix(S, it);
     if (it.thrown && (w.time - it.thrownAt > 4 || it.speed < 0.5)) settle(it);
   }
   // look-at target for E (on foot only)
@@ -164,7 +195,7 @@ export function updateWorldItems(w: World, dt: number): void {
     for (const it of S.items) {
       if (!it.inWorld || it.thrown) continue;
       const dx = it.px - pp.x, dz = it.pz - pp.z;
-      if (Math.abs(dx) > IT.pickupRange || Math.abs(dz) > IT.pickupRange || it.py > pp.y + 1.6) continue;
+      if (Math.abs(dx) > IT.pickupRange || Math.abs(dz) > IT.pickupRange || (it.py > pp.y + IT.pickupMaxHeight || it.py < pp.y - 0.3)) continue;
       const d = Math.hypot(dx, dz);
       if (d > IT.pickupRange) continue;
       const dot = d > 0.01 ? (dx * fx + dz * fz) / d : 1;
@@ -188,6 +219,7 @@ function settle(it: WorldItem) {
 
 /** Spawn the city's litter and props from the seed. */
 export function scatterItems(w: World): void {
+  w.itemsState.scattering = true;
   const rng = new Rng(w.seed ^ 0x17e5);
   const c = w.city;
   const pois = c.pois;
@@ -281,6 +313,7 @@ export function scatterItems(w: World): void {
     for (let i = 0; i < IT.wrenchesPerGarage; i++) atDoor('wrench', p, 1.5 + i * 0.6, 1.0, rng.range(0, 6));
   }
   w.itemsState.skipped = skipped;
+  w.itemsState.scattering = false;
 }
 /** Render a small icon for each item type (used by the hotbar). */
 export function renderItemIcons(w: World): Record<ItemId, string> {

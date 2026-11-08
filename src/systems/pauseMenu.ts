@@ -30,8 +30,10 @@ export function createPauseMenu(w: World): void {
       <button id="pause-mute">Sound: on</button>
       <div class="controls">
         <b>Controls</b><br>
-        W/S walk · A/D turn · Shift run · Space jump / handbrake · E use / talk / pick up<br>
-        1–9 or mouse wheel: hotbar · Left click (or F): throw / swing · Q drop · R flip car · H horn<br>
+        Walking: W/S or ↑/↓ move · A/D or ←/→ turn view and heading · Shift sprint · Space jump<br>
+        Driving: W/S or ↑/↓ accelerate / brake / reverse · A/D or ←/→ steer · Space handbrake<br>
+        V first / third person · Mouse look (click to lock, or hold right mouse and drag) · E use / talk / pick up<br>
+        I inventory / save · J jobs / homes / shops · O doors · U use selected item · 1–9 or mouse wheel: hotbar · Left click (or F): throw / swing · G/Q drop · R recover car safely · H horn<br>
         N weather · M mute · \` or F3 stats · F4 collision shapes · Esc or P pause
       </div>
       <div class="attrib"></div>
@@ -63,6 +65,8 @@ export function openPause(w: World): void {
   if (w.paused || !w.started) return;
   w.paused = true;
   w.input.keys.clear();
+  w.input.pressed.clear();
+  w.input.mouseDX = 0; w.input.mouseDY = 0; w.input.mouse0 = false;
   if (document.pointerLockElement) {
     w.input.expectUnlock = true;
     document.exitPointerLock();
@@ -76,6 +80,8 @@ export function closePause(w: World): void {
   if (!w.paused) return;
   w.paused = false;
   w.input.keys.clear();
+  w.input.pressed.clear();
+  w.input.mouseDX = 0; w.input.mouseDY = 0; w.input.mouse0 = false;
   root.style.display = 'none';
 }
 
