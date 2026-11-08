@@ -196,8 +196,8 @@ export function spawnInitialVehicles(w: World, reserved: readonly { x: number; z
   );
   for (let k = 0; k < V.playerCarSpawn.length; k++) {
     const available = spots.filter(isFree);
-    // Existing saves restore their own vehicle transforms later; this only chooses a fresh world's starting pose.
-    const s = (k < V.ownedAtStart ? available.find(s => initialDepartureClear(w, s, V.types[V.playerCarSpawn[k]])) : null) ?? available[0];
+    // Legacy layout keeps the original reservations, hence the dense parked-car IDs used by old saves.
+    const s = (w.startingLayout !== 'legacy' && k < V.ownedAtStart ? available.find(s => initialDepartureClear(w, s, V.types[V.playerCarSpawn[k]])) : null) ?? available[0];
     if (!s) break;
     taken.push(s);
     const v = spawnVehicle(w, V.playerCarSpawn[k], s.x, s.z, s.heading, undefined, s.y);

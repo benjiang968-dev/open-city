@@ -39,7 +39,12 @@ try{
  assert.equal(initialDepartureClear(fresh,spot,spec),true,'new colliders are absent from Rapier queries before refresh');
  spawnInitialVehicles(fresh);
  assert.equal(fresh.vehicles[0].px,30,'spawn boundary refresh rejects an unstepped pole before choosing a pose');
+ const legacy=fixture((x,z)=>x<10?-z*.36:0);legacy.startingLayout='legacy';
+ legacy.city.parkingSpots=[{...spot},{...spot,x:30},{...spot,x:45}];
+ spawnInitialVehicles(legacy);
+ assert.equal(legacy.vehicles[0].px,0,'legacy saves retain the exact original nearest-spot reservations');
+ assert.deepEqual(legacy.vehicles.map(v=>v.id),[0,1,2]);
  delete globalThis.document;
- for(const w of[flat,gentle,steep,cross,lip,selection,fresh])w.physics.free();
- console.log('PASS initial-car gentle/steep grades, cross-slope, ground lip, static pole and stable save slot IDs');
+ for(const w of[flat,gentle,steep,cross,lip,selection,fresh,legacy])w.physics.free();
+ console.log('PASS initial-car gentle/steep grades, cross-slope, ground lip, static pole, stable slots and legacy reservations');
 }finally{await server.close();}
